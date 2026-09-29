@@ -1,0 +1,213 @@
+{#
+  گزارش فروش — درآمد، تفکیک‌ها، دفتر پرداخت‌ها و خروجی CSV.
+
+  نمودار بدون هیچ کتابخانه‌ای و به‌صورت SVG درون‌خطی ساخته می‌شود؛ ارتفاع هر
+  ستون نسبت به اوج همان بازه حساب می‌شود تا بازه‌های ۷ و ۳۶۵ روزه هر دو خوانا
+  بمانند. همه‌ی مبالغ در دیتابیس ریال‌اند و فقط با فیلتر |money نمایش داده می‌شوند.
+#}
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, stat, bar_list, empty_state with context %}
+
+{% block title %}گزارش فروش{% endblock %}
+{% block header %}گزارش فروش{% endblock %}
+
+{% block page_actions %}
+  <a class="btn" href="{{ panel_prefix }}/reports/orders.csv?days={{ days }}">{{ icon('download') }} خروجی سفارش‌ها</a>
+  <a class="btn" href="{{ panel_prefix }}/reports/services.csv">{{ icon('download') }} خروجی سرویس‌ها</a>
+{% endblock %}
+
+{% block content %}
+
+{# ------------------------------------------------------------ انتخاب بازه #}
+<div class="card">
+  <div class="card__body">
+    <div class="row row--between">
+      <div class="tabs">
+        {% for option in day_options %}
+        <a class="tab {% if option == days %}is-active{% endif %}" href="{{ base_url }}?days={{ option }}">
+          {{ option|fa }} روز
+        </a>
+        {% endfor %}
+      </div>
+      <span class="hint">فایل‌های CSV با احترام به همین بازه ساخته می‌شوند (سرویس‌ها کامل صادر می‌شوند).</span>
+    </div>
+  </div>
+</div>
+
+{# ------------------------------------------------------------- نوار آمار #}
+<section class="grid grid--stats">
+  {{ stat('درآمد ' ~ days|fa ~ ' روز', summary.revenue_rial|money, 'money',
+          'امروز: ' ~ (summary.revenue_today_rial|money), 'success') }}
+  {{ stat('سفارش تکمیل‌شده', summary.orders_completed|fa, 'check-circle',
+          'میانگین هر سفارش: ' ~ (summary.average_order_rial|money), 'info') }}
+  {{ stat('کل سفارش‌ها', summary.orders_total|fa, 'receipt',
+          'در انتظار: ' ~ summary.orders_pending|fa ~ ' · ناموفق: ' ~ summary.orders_failed|fa, 'warning') }}
+  {{ stat('کاربران جدید', summary.new_users|fa, 'user-plus',
+          'سرویس فعال: ' ~ summary.active_services|fa ~ ' · تا ۳ روز آینده: ' ~ summary.expiring_soon|fa, 'info') }}
+  {{ stat('موجودی کیف پول کاربران', summary.wallet_liability_rial|money, 'credit',
+          'بدهی فروشگاه به مشتریان', 'warning') }}
+  {{ stat('رسید در انتظار تأیید', summary.pending_receipts|fa, 'clock',
+          'تیکت باز: ' ~ summary.open_tickets|fa, 'danger') }}
+</section>
+
+{# ------------------------------------------------------------------ نمودار #}
+<div class="card">
+  <div class="card__head">
+    <div class="card__title">{{ icon('chart') }} درآمد روزانه ({{ days|fa }} روز گذشته)</div>
+    <div class="card__spacer"></div>
+    <span class="chip">اوج روزانه: {{ peak_revenue|money }}</span>
+    <span class="chip">مجموع: {{ summary.revenue_rial|money }}</span>
+  </div>
+  <div class="card__body">
+    {% if series %}
+      {% set peak = peak_revenue or 1 %}
+      <svg class="chart" viewBox="0 0 720 160" preserveAspectRatio="none" role="img"
+           aria-label="نمودار درآمد روزانه">
+        <defs>
+          <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#7c5cff"></stop>
+            <stop offset="100%" stop-color="#22d3ee"></stop>
+          </linearGradient>
+        </defs>
+        <line class="axis" x1="0" y1="159" x2="720" y2="159"></line>
+        <line class="grid-line" x1="0" y1="80" x2="720" y2="80"></line>
+        {% set step = 720 / (series|length) %}
+        {% set barw = step * 0.62 %}
+        {% for point in series %}
+          {% set raw_h = ((point.revenue_rial / peak) * 150)|int %}
+          {% set bar_h = raw_h if raw_h > 2 else 2 %}
+          <rect class="bar" data-h="{{ bar_h }}" height="{{ bar_h }}" y="{{ 158 - bar_h }}"
+                x="{{ (loop.index0 * step + (step - barw) / 2)|round(1) }}"
+                width="{{ barw|round(1) }}" rx="3">
+            <title>{{ point.label }} — {{ point.revenue_rial|money }} ({{ point.orders|fa }} سفارش)</title>
+          </rect>
+        {% endfor %}
+      </svg>
+      <div class="chart-labels">
+        <span>{{ series[0].label }}</span>
+        <span>{{ series[(series|length // 2)].label }}</span>
+        <span>{{ series[-1].label }}</span>
+      </div>
+      <div class="hint mt-2">
+        هر ستون یک روز است؛ با نگه‌داشتن نشانگر روی ستون، تاریخ شمسی و مبلغ همان روز دیده می‌شود.
+      </div>
+    {% else %}
+      {{ empty_state('داده‌ای برای نمایش نیست', 'به‌محض ثبت اولین فروش، نمودار اینجا نمایش داده می‌شود.', 'chart') }}
+    {% endif %}
+  </div>
+</div>
+
+{# -------------------------------------------------------------- تفکیک‌ها #}
+<div class="grid grid--3">
+  <div class="card">
+    <div class="card__head">
+      <div class="card__title">{{ icon('box') }} پرفروش‌ترین پلن‌ها</div>
+      <div class="card__spacer"></div>
+      <span class="card__sub">{{ by_plan|length|fa }} پلن</span>
+    </div>
+    <div class="card__body">
+      {% if by_plan %}
+        {{ bar_list(by_plan) }}
+      {% else %}
+        <div class="small dim">در این بازه فروشی ثبت نشده است.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__head">
+      <div class="card__title">{{ icon('card') }} روش‌های پرداخت</div>
+      <div class="card__spacer"></div>
+      <span class="card__sub">{{ by_method|length|fa }} روش</span>
+    </div>
+    <div class="card__body">
+      {% if by_method %}
+        {{ bar_list(by_method) }}
+      {% else %}
+        <div class="small dim">در این بازه پرداختی ثبت نشده است.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__head">
+      <div class="card__title">{{ icon('server') }} پنل‌ها</div>
+      <div class="card__spacer"></div>
+      <span class="card__sub">{{ by_panel|length|fa }} پنل</span>
+    </div>
+    <div class="card__body">
+      {% if by_panel %}
+        {{ bar_list(by_panel) }}
+      {% else %}
+        <div class="small dim">در این بازه فروشی روی پنل‌ها ثبت نشده است.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# --------------------------------------------------------- دفتر پرداخت‌ها #}
+<div class="card">
+  <div class="card__head">
+    <div class="card__title">{{ icon('money') }} دفتر پرداخت‌ها</div>
+    <div class="card__spacer"></div>
+    <div class="row">
+      {% for row in kind_totals %}
+      <span class="chip">{{ row.label }} <span class="strong num">{{ row.total_rial|money }}</span></span>
+      {% else %}
+      <span class="chip">تراکنشی ثبت نشده</span>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="card__body card__body--flush">
+    {% if ledger %}
+      <div class="table-wrap">
+        <table class="table table--compact">
+          <thead>
+            <tr>
+              <th>تاریخ</th>
+              <th>کاربر</th>
+              <th>نوع</th>
+              <th>روش</th>
+              <th>مبلغ</th>
+              <th>مانده</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in ledger %}
+            <tr {% if row.description %}title="{{ row.description }}"{% endif %}>
+              <td class="small dim nowrap">{{ row.created_at|jdatetime }}</td>
+              <td>
+                <div class="truncate">{{ row.user_name }}</div>
+                {% if row.user_telegram_id %}
+                <div class="small dim mono">{{ row.user_telegram_id }}</div>
+                {% endif %}
+              </td>
+              <td>
+                {% if row.kind == 'deposit' %}{{ badge(row.kind_label, 'success') }}
+                {% elif row.kind == 'purchase' %}{{ badge(row.kind_label, 'info') }}
+                {% elif row.kind in ('refund', 'adjustment') %}{{ badge(row.kind_label, 'warning') }}
+                {% else %}{{ badge(row.kind_label, 'brand') }}{% endif %}
+              </td>
+              <td class="dim">{{ row.method_label }}</td>
+              <td class="num {% if row.amount_rial >= 0 %}text-success{% else %}text-danger{% endif %}">
+                {% if row.amount_rial >= 0 %}+{% else %}−{% endif %}{{ row.amount_rial|abs|money }}
+              </td>
+              <td class="num">{{ row.balance_after_rial|money }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if ledger|length >= ledger_limit %}
+      <div class="card__foot">
+        <span class="hint">
+          فقط {{ ledger_limit|fa }} تراکنش آخر نمایش داده می‌شود؛ برای فهرست کامل با بازه‌ی دلخواه از خروجی CSV استفاده کنید.
+        </span>
+      </div>
+      {% endif %}
+    {% else %}
+      {{ empty_state('تراکنشی در این بازه ثبت نشده', 'بازه‌ی بزرگ‌تری را انتخاب کنید یا پس از اولین پرداخت دوباره سر بزنید.', 'money') }}
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

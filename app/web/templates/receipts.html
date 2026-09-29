@@ -1,0 +1,274 @@
+{#
+  رسیدهای پرداخت — بررسی کارت‌به‌کارت.
+  زبانه‌ها بر اساس وضعیت‌اند و «در انتظار بررسی» پیش‌فرض است؛ هر ردیف یک
+  مودال جزئیات و (اگر در انتظار باشد) یک مودال رد با دلیل اجباری دارد.
+#}
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, pagination, empty_state, csrf with context %}
+
+{% block title %}رسیدهای پرداخت{% endblock %}
+{% block header %}رسیدهای پرداخت{% endblock %}
+
+{% block content %}
+{# ---------------------------------------------------------------- راهنما #}
+<div class="alert alert--info">
+  {{ icon('info') }}
+  <div>
+    <div class="strong">تأیید از پنل، نسخهٔ همهٔ بررسی‌کننده‌ها را داخل ربات ویرایش می‌کند</div>
+    <div class="small mt-1">
+      هر رسید به‌صورت خصوصی برای همهٔ مدیران و پشتیبان‌ها فرستاده می‌شود. با اولین تصمیم
+      (تأیید یا رد) متن همهٔ آن نسخه‌ها به‌روز می‌شود و نام تصمیم‌گیرنده روی آن می‌نشیند؛ پس
+      دو نفر نمی‌توانند یک رسید را دو بار بررسی کنند. اگر رسید مربوط به یک سفارش باشد، تأیید
+      آن بلافاصله سرویس را می‌سازد و برای مشتری می‌فرستد.
+    </div>
+  </div>
+</div>
+
+{# ------------------------------------------------------- نوار جست‌وجو #}
+<div class="card">
+  <div class="card__body">
+    <form class="searchbar" method="get" action="{{ panel_prefix }}/receipts">
+      <input type="hidden" name="status" value="{{ selected_status }}">
+      <input class="input" type="search" name="q" value="{{ page.search }}"
+             placeholder="جست‌وجو در کد رسید یا شماره پیگیری…">
+      <button class="btn" type="submit">{{ icon('search') }} جست‌وجو</button>
+      {% if page.search %}
+      <a class="btn btn--ghost" href="{{ panel_prefix }}/receipts?status={{ selected_status }}">پاک کردن</a>
+      {% endif %}
+    </form>
+
+    <div class="tabs mt-2">
+      {% for tab in tabs %}
+      <a class="tab {% if tab.active %}is-active{% endif %}"
+         href="{{ panel_prefix }}/receipts?status={{ tab.key }}{% if page.search %}&q={{ page.search|urlencode }}{% endif %}">
+        {{ tab.label }} <span class="dim small">({{ tab.count|fa }})</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{# ------------------------------------------------------------- جدول #}
+<div class="card">
+  <div class="card__body card__body--flush">
+    {% if rows %}
+    <div class="table-wrap">
+      <table class="table table--compact">
+        <thead>
+          <tr>
+            <th>کد</th>
+            <th>کاربر</th>
+            <th>مبلغ</th>
+            <th>نوع</th>
+            <th>شماره پیگیری</th>
+            <th>زمان</th>
+            <th>وضعیت</th>
+            <th>بررسی‌کننده</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td><span class="code">{{ row.code }}</span></td>
+            <td>
+              <div class="truncate">{{ row.user.display_name if row.user else '—' }}</div>
+              {% if row.user %}
+              <div class="small dim mono">{{ row.user.telegram_id }}</div>
+              {% endif %}
+            </td>
+            <td class="num">{{ row.amount_rial|money }}</td>
+            <td class="nowrap">
+              {{ purpose_labels.get(row.purpose, row.purpose) }}
+              {% if row.purpose == 'deposit' %}{{ badge('کیف پول', 'brand') }}{% endif %}
+            </td>
+            <td>
+              <div class="mono small">{{ row.tracking_code|none_dash }}</div>
+              <div class="small dim">کارت: <span class="mono">••••&nbsp;{{ row.payer_card_last4|none_dash }}</span></div>
+            </td>
+            <td class="nowrap">
+              <div class="small">{{ row.created_at|jdatetime }}</div>
+              <div class="small dim">{{ row.created_at|relative }}</div>
+            </td>
+            <td class="nowrap">
+              {{ badge(status_label(row.status), tones.get(row.status.value, '')) }}
+            </td>
+            <td class="nowrap">
+              {% if row.reviewed_by_staff_id %}
+              <div class="small">{{ reviewers.get(row.reviewed_by_staff_id, '—') }}</div>
+              <div class="small dim">{{ row.reviewed_at|jdatetime if row.reviewed_at else '' }}</div>
+              {% else %}
+              <span class="dim">—</span>
+              {% endif %}
+            </td>
+            <td class="actions">
+              {% if row.status.value == 'pending' %}
+              <form method="post" action="{{ panel_prefix }}/receipts/{{ row.id }}/approve"
+                    data-confirm="رسید {{ row.code }} تأیید شود؟ موجودی یا سرویس کاربر بلافاصله به‌روز می‌شود.">
+                {{ csrf(csrf_token) }}
+                <button class="btn btn--sm btn--success" type="submit">{{ icon('check') }} تأیید</button>
+              </form>
+              <button class="btn btn--sm btn--danger" type="button"
+                      data-modal-open="receipt-reject-{{ row.id }}">{{ icon('x') }} رد</button>
+              {% endif %}
+              <button class="btn btn--sm btn--ghost" type="button" title="جزئیات رسید"
+                      data-modal-open="receipt-detail-{{ row.id }}">{{ icon('eye') }}</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      {% if page.search %}
+        {{ empty_state('رسیدی با این مشخصات پیدا نشد', 'عبارت جست‌وجو را کوتاه‌تر کنید یا زبانهٔ «همه» را ببینید.', 'receipt') }}
+      {% elif selected_status == 'pending' %}
+        {{ empty_state('رسیدی در انتظار بررسی نیست', 'وقتی مشتری رسید کارت‌به‌کارت بفرستد، همین‌جا نمایش داده می‌شود.', 'check-circle') }}
+      {% else %}
+        {{ empty_state('رسیدی در این وضعیت نیست', 'زبانهٔ دیگری را انتخاب کنید.', 'receipt') }}
+      {% endif %}
+    {% endif %}
+  </div>
+  {{ pagination(page, base_url, extra) }}
+</div>
+
+{#
+  مودال‌ها بیرون از جدول رندر می‌شوند تا ساختار سلول‌ها ساده بماند؛ دکمه‌های
+  هر ردیف با data-modal-open به همین شناسه‌ها وصل می‌شوند.
+#}
+{% for row in rows %}
+<div class="modal" id="receipt-detail-{{ row.id }}" hidden>
+  <div class="modal__panel">
+    <div class="modal__head">
+      <div class="modal__title">جزئیات رسید {{ row.code }}</div>
+      <div class="card__spacer"></div>
+      <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+    </div>
+    <div class="modal__body">
+      <dl class="kv">
+        <dt>مبلغ</dt>
+        <dd class="num">{{ row.amount_rial|money }}</dd>
+
+        <dt>نوع</dt>
+        <dd>{{ purpose_labels.get(row.purpose, row.purpose) }}</dd>
+
+        <dt>وضعیت</dt>
+        <dd>{{ badge(status_label(row.status), tones.get(row.status.value, '')) }}</dd>
+
+        <dt>کاربر</dt>
+        <dd>
+          {{ row.user.display_name if row.user else '—' }}
+          {% if row.user %}<span class="dim small mono">{{ row.user.telegram_id }}</span>{% endif %}
+        </dd>
+
+        <dt>شماره پیگیری</dt>
+        <dd class="mono">{{ row.tracking_code|none_dash }}</dd>
+
+        <dt>۴ رقم آخر کارت</dt>
+        <dd class="mono">{{ row.payer_card_last4|none_dash }}</dd>
+
+        <dt>زمان ثبت</dt>
+        <dd>{{ row.created_at|jdatetime }} <span class="dim small">({{ row.created_at|relative }})</span></dd>
+
+        <dt>سفارش</dt>
+        <dd>
+          {% if row.order %}
+          <a class="code" href="{{ panel_prefix }}/orders?q={{ row.order.order_code|urlencode }}">{{ row.order.order_code }}</a>
+          {% else %}<span class="dim">—</span>{% endif %}
+        </dd>
+
+        {% if row.reviewed_by_staff_id %}
+        <dt>بررسی‌کننده</dt>
+        <dd>
+          {{ reviewers.get(row.reviewed_by_staff_id, '—') }}
+          {% if row.reviewed_at %}<span class="dim small">{{ row.reviewed_at|jdatetime }}</span>{% endif %}
+        </dd>
+        {% endif %}
+
+        {% if row.reject_reason %}
+        <dt>دلیل رد</dt>
+        <dd class="text-danger">{{ row.reject_reason }}</dd>
+        {% endif %}
+
+        <dt>یادداشت کاربر</dt>
+        <dd>{{ row.note|none_dash }}</dd>
+
+        <dt>کد فایل (file_id)</dt>
+        <dd>
+          {% if row.file_id %}
+          <span class="code copyable" data-copy="{{ row.file_id }}" title="برای کپی کلیک کنید">{{
+            row.file_id if row.file_id|length <= 34 else row.file_id[:34] ~ '…'
+          }}</span>
+          <div class="hint mt-1">
+            خودِ تصویر رسید در چت تلگرام کارکنان است؛ این شناسه فقط برای پیگیری فنی و
+            جست‌وجوی همان پیام در ربات به کار می‌رود.
+          </div>
+          {% else %}
+          <span class="dim">—</span>
+          {% endif %}
+        </dd>
+      </dl>
+
+      <div class="mt-3">
+        <div class="label">نسخه‌های ارسالی به بررسی‌کننده‌ها</div>
+        {% if row.messages %}
+        <div class="col mt-1">
+          {% for copy in row.messages %}
+          <div class="row row--between">
+            <div class="small">
+              <span class="mono">{{ copy.chat_id }}</span>
+              <span class="dim"> · {{ reviewers.get(copy.staff_id, 'نامشخص') }}</span>
+            </div>
+            {% if copy.edited %}
+              {{ badge('ویرایش‌شده', 'info') }}
+            {% else %}
+              {{ badge('دست‌نخورده', '') }}
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        <div class="hint mt-1">
+          هر نسخه با تصمیم شما ویرایش می‌شود تا بقیهٔ همکاران وضعیت را ببینند و دوباره تصمیم نگیرند.
+        </div>
+        {% else %}
+        <div class="small dim mt-1">هیچ نسخه‌ای برای بررسی‌کننده‌ها ثبت نشده است.</div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost" type="button" data-modal-close>بستن</button>
+    </div>
+  </div>
+</div>
+
+{% if row.status.value == 'pending' %}
+<div class="modal" id="receipt-reject-{{ row.id }}" hidden>
+  <div class="modal__panel modal__panel--sm">
+    <form method="post" action="{{ panel_prefix }}/receipts/{{ row.id }}/reject">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title">رد رسید {{ row.code }}</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        <div class="field">
+          <label class="label" for="reason-{{ row.id }}">دلیل رد <span class="req">*</span></label>
+          <textarea class="textarea" id="reason-{{ row.id }}" name="reason" required maxlength="200"
+                    placeholder="مثلاً: مبلغ واریزی با مبلغ رسید هم‌خوانی ندارد."></textarea>
+          <div class="hint">
+            این متن عیناً برای کاربر ارسال می‌شود؛ محترمانه و شفاف بنویسید. اگر رسید مربوط به
+            سفارش باشد، کاربر فرصت تازه‌ای برای ارسال رسید درست می‌گیرد.
+          </div>
+        </div>
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--danger" type="submit">{{ icon('x') }} رد رسید</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endfor %}
+{% endblock %}

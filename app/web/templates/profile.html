@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, csrf with context %}
+
+{% block title %}حساب کاربری من{% endblock %}
+{% block header %}حساب کاربری من{% endblock %}
+
+{% block content %}
+{% if error %}
+  <div class="alert alert--danger">{{ icon('alert') }}<span>{{ error }}</span></div>
+{% endif %}
+
+<div class="grid grid--2">
+  <div class="card">
+    <div class="card__head"><div class="card__title">{{ icon('user') }} مشخصات</div></div>
+    <div class="card__body">
+      <dl class="kv">
+        <dt>نام</dt><dd>{{ staff_row.name or '—' }}</dd>
+        <dt>نام کاربری پنل</dt><dd><span class="code">{{ staff_row.login or '—' }}</span></dd>
+        <dt>نقش</dt>
+        <dd>
+          {% if staff_row.role.value == 'owner' %}{{ badge('مالک', 'brand') }}
+          {% elif staff_row.role.value == 'admin' %}{{ badge('مدیر', 'info') }}
+          {% else %}{{ badge('پشتیبان', 'warning') }}{% endif %}
+        </dd>
+        <dt>شناسه تلگرام</dt>
+        <dd>{% if staff_row.telegram_id %}<span class="code" data-copy="{{ staff_row.telegram_id }}">{{ staff_row.telegram_id }}</span>{% else %}<span class="dim">ثبت نشده</span>{% endif %}</dd>
+        <dt>دریافت رسیدها</dt><dd>{{ 'بله' if staff_row.receive_receipts else 'خیر' }}</dd>
+        <dt>آخرین ورود</dt><dd>{{ last_login }}</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__head"><div class="card__title">{{ icon('key') }} تغییر رمز عبور</div></div>
+    <div class="card__body">
+      <form method="post" action="{{ panel_prefix }}/profile/password">
+        {{ csrf(csrf_token) }}
+        <div class="field mb-2">
+          <label class="label" for="current_password">رمز عبور فعلی</label>
+          <input class="input" id="current_password" name="current_password" type="password" required dir="ltr">
+        </div>
+        <div class="field mb-2">
+          <label class="label" for="new_password">رمز عبور جدید</label>
+          <input class="input" id="new_password" name="new_password" type="password" required dir="ltr">
+          <div class="hint">حداقل ۸ کاراکتر و ترکیبی از حرف و رقم.</div>
+        </div>
+        <div class="field mb-2">
+          <label class="label" for="confirm_password">تکرار رمز عبور جدید</label>
+          <input class="input" id="confirm_password" name="confirm_password" type="password" required dir="ltr">
+        </div>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ذخیره رمز جدید</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

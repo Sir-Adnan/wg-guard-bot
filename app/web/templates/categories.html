@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, empty_state, csrf with context %}
+
+{% block title %}دسته‌بندی‌ها{% endblock %}
+{% block header %}دسته‌بندی‌ها{% endblock %}
+{% block page_actions %}
+  <button class="btn btn--primary" data-modal-open="category-create" data-title="دسته‌بندی جدید">
+    {{ icon('plus') }} دسته‌بندی جدید
+  </button>
+{% endblock %}
+
+{% block content %}
+
+<div class="alert alert--info">
+  {{ icon('info') }}
+  <div>
+    دسته‌بندی‌ها می‌توانند چند سطحی باشند (دسته ← زیردسته ← زیرِ‌زیردسته) و در ربات به‌صورت پله‌پله نمایش داده می‌شوند.
+    حداکثر عمق مجاز <b>{{ max_depth|fa }}</b> سطح است. اگر هیچ دسته‌بندی نسازید، ربات فهرست ساده پلن‌ها را نشان می‌دهد.
+  </div>
+</div>
+
+{% macro category_fields(node) -%}
+<div class="form-grid">
+  <div class="field">
+    <label class="label" for="cat-name-{{ node.id if node else 'new' }}">نام <span class="req">*</span></label>
+    <input class="input" id="cat-name-{{ node.id if node else 'new' }}" name="name" required
+           value="{{ node.name if node else '' }}" placeholder="مثلاً: سرویس‌های اقتصادی">
+  </div>
+
+  <div class="field">
+    <label class="label" for="cat-parent-{{ node.id if node else 'new' }}">دسته والد</label>
+    <select class="select" id="cat-parent-{{ node.id if node else 'new' }}" name="parent_id">
+      <option value="">— سطح اول (بدون والد) —</option>
+      {% for depth, option in category_options %}
+        {% if not node or option.id != node.id %}
+          <option value="{{ option.id }}" {% if node and node.parent_id == option.id %}selected{% endif %}>
+            {{ '—' * depth }} {{ option.name }}
+          </option>
+        {% endif %}
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label class="label" for="cat-icon-{{ node.id if node else 'new' }}">آیکون</label>
+    <select class="select" id="cat-icon-{{ node.id if node else 'new' }}" name="icon">
+      <option value="">— بدون آیکون —</option>
+      {% for key, char, label in emoji_choices %}
+        <option value="{{ key }}" {% if node and node.icon == key %}selected{% endif %}>{{ char }} — {{ label }}</option>
+      {% endfor %}
+    </select>
+    <div class="hint">آیکون روی دکمه این دسته در ربات نمایش داده می‌شود.</div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="cat-sort-{{ node.id if node else 'new' }}">ترتیب</label>
+    <input class="input input--num" id="cat-sort-{{ node.id if node else 'new' }}" name="sort_order" type="number"
+           value="{{ node.sort_order if node else 0 }}">
+  </div>
+
+  <div class="field field--full">
+    <label class="label" for="cat-desc-{{ node.id if node else 'new' }}">توضیح (اختیاری)</label>
+    <textarea class="textarea" id="cat-desc-{{ node.id if node else 'new' }}" name="description" rows="2"
+      placeholder="یک خط توضیح که بالای فهرست پلن‌های این دسته نمایش داده می‌شود.">{{ node.description if node and node.description else '' }}</textarea>
+  </div>
+
+  <div class="field field--full">
+    <div class="row" style="gap:22px">
+      <label class="switch">
+        <input type="checkbox" name="is_active" value="1" {% if not node or node.is_active %}checked{% endif %}>
+        <span class="switch__track"></span><span class="switch__label">فعال</span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" name="is_visible" value="1" {% if not node or node.is_visible %}checked{% endif %}>
+        <span class="switch__track"></span><span class="switch__label">نمایش در ربات</span>
+      </label>
+    </div>
+  </div>
+</div>
+{%- endmacro %}
+
+{% macro render_node(node, depth) -%}
+  {% set category = node.category %}
+  <div class="tree__row" style="margin-inline-start: {{ depth * 22 }}px">
+    <span style="font-size:18px">{{ emoji_chars.get(category.icon, '🗂') }}</span>
+    <div>
+      <span class="tree__name">{{ category.name }}</span>
+      <span class="tree__count">
+        · {{ node.plan_count|fa }} پلن
+        {% if node.children %}· {{ node.children|length|fa }} زیردسته{% endif %}
+      </span>
+    </div>
+    {% if not category.is_active %}{{ badge('غیرفعال', 'danger') }}{% endif %}
+    {% if not category.is_visible %}{{ badge('مخفی', 'warning') }}{% endif %}
+
+    <div class="tree__actions">
+      <button class="btn btn--sm btn--ghost" type="button"
+              data-modal-open="category-{{ category.id }}" data-title="ویرایش «{{ category.name }}»">{{ icon('edit') }}</button>
+
+      <form method="post" action="{{ base_url }}/{{ category.id }}/move">
+        {{ csrf(csrf_token) }}
+        <input type="hidden" name="direction" value="-1">
+        <button class="btn btn--sm btn--ghost" type="submit" title="یک پله بالاتر">{{ icon('arrow-up') }}</button>
+      </form>
+      <form method="post" action="{{ base_url }}/{{ category.id }}/move">
+        {{ csrf(csrf_token) }}
+        <input type="hidden" name="direction" value="1">
+        <button class="btn btn--sm btn--ghost" type="submit" title="یک پله پایین‌تر">{{ icon('arrow-down') }}</button>
+      </form>
+
+      <form method="post" action="{{ base_url }}/{{ category.id }}/delete"
+            data-confirm="دسته‌بندی «{{ category.name }}» و همه زیردسته‌هایش حذف شوند؟ پلن‌های داخل آن‌ها به «بدون دسته» منتقل می‌شوند.">
+        {{ csrf(csrf_token) }}
+        <button class="btn btn--sm btn--danger" type="submit" title="حذف">{{ icon('trash') }}</button>
+      </form>
+    </div>
+  </div>
+
+  {% for child in node.children %}
+    {{ render_node(child, depth + 1) }}
+  {% endfor %}
+{%- endmacro %}
+
+<div class="card">
+  <div class="card__head">
+    <div class="card__title">{{ icon('folder') }} درخت دسته‌بندی‌ها</div>
+    <div class="card__spacer"></div>
+    <span class="chip">{{ nodes|length|fa }} شاخه اصلی</span>
+  </div>
+  <div class="card__body">
+    {% if nodes %}
+      <div class="tree">
+        {% for node in nodes %}{{ render_node(node, 0) }}{% endfor %}
+      </div>
+    {% else %}
+      {{ empty_state('هنوز دسته‌بندی نساخته‌اید', 'با ساخت دسته‌بندی، فروشگاه ربات مرتب و حرفه‌ای‌تر می‌شود.', 'folder') }}
+    {% endif %}
+  </div>
+</div>
+
+<div class="modal" id="category-create" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ base_url }}">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>دسته‌بندی جدید</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        <input type="hidden" id="new-parent-hidden">
+        {{ category_fields(None) }}
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ساخت</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% for depth, category in category_options %}
+<div class="modal" id="category-{{ category.id }}" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ base_url }}/{{ category.id }}">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>ویرایش «{{ category.name }}»</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">{{ category_fields(category) }}</div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ذخیره</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

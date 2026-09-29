@@ -1,0 +1,53 @@
+# ===========================================================================
+#  WG-Guard Bot — Caddy 2 reverse proxy (automatic HTTPS)
+#
+#  Certificates:
+#    Let's Encrypt certificates are issued on the first request for {$DOMAIN}
+#    and stored in the `caddy_data` volume (/data/caddy/certificates/...).
+#    Caddy renews them AUTOMATICALLY about 30 days before expiry — there is no
+#    cron job, no `certbot renew` timer and nothing to do by hand.  Do not
+#    delete the `caddy_data` volume unless you want new certificates.
+#
+#  Variables (from .env, see docker-compose.yml):
+#    DOMAIN      the domain/subdomain to serve, WITHOUT scheme — e.g. bot.example.com
+#    ACME_EMAIL  contact address for Let's Encrypt.  May be empty; the default
+#                below then applies, so Caddy issues the certificate without
+#                sending expiry notices.  Setting a real address is recommended.
+#
+#  Everything the application serves — /panel, /healthz, /readyz,
+#  /tg/webhook/<secret>, /wg/webhook/<secret> — is one ASGI app on one port, so
+#  a single reverse_proxy is all that is needed.  Do not split paths.
+# ===========================================================================
+{
+	# The `:default` part matters: an empty {$ACME_EMAIL} would make `email`
+	# take zero arguments, which Caddy rejects as a config error.  With the
+	# fallback the block always parses, and an empty ACME_EMAIL simply means no
+	# expiry-notice mail is sent.
+	email {$ACME_EMAIL:admin@example.invalid}
+}
+
+# `{$DOMAIN}` is empty when unset, so this block only ever becomes useful while
+# the compose `tls` profile is active — i.e. when a domain IS configured.
+{$DOMAIN} {
+	encode zstd gzip
+
+	# The bot and the admin panel live in the same process.
+	reverse_proxy bot:8080
+
+	header {
+		# Do not advertise the server software.
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+		format console
+	}
+}

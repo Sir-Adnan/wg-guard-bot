@@ -1,0 +1,90 @@
+{#
+  Reusable macros.  Import at the top of a page:
+      {% from "macros.html" import stat, badge, pagination, empty_state with context %}
+#}
+
+{% macro icon(name) -%}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-{{ name }}"></use></svg>
+{%- endmacro %}
+
+{% macro badge(text, tone) -%}
+<span class="badge {% if tone %}badge--{{ tone }}{% endif %}">{{ text }}</span>
+{%- endmacro %}
+
+{% macro dot(tone) -%}
+<span class="dot dot--{{ tone|default('muted') }}"></span>
+{%- endmacro %}
+
+{% macro stat(label, value, ico, hint, tone, spark) -%}
+<div class="stat {% if tone %}stat--{{ tone }}{% endif %}">
+  <div class="stat__icon">{{ icon(ico) }}</div>
+  <div class="stat__label">{{ label }}</div>
+  <div class="stat__value">{{ value }}</div>
+  {% if hint %}<div class="stat__hint">{{ hint }}</div>{% endif %}
+  {% if spark %}{{ spark|safe }}{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro pagination(page_obj, base_url, extra) -%}
+{% if page_obj.pages > 1 %}
+<nav class="pagination" aria-label="صفحه‌بندی">
+  <a class="{% if not page_obj.has_prev %}is-disabled{% endif %}"
+     href="{{ base_url }}?page={{ page_obj.number - 1 }}&size={{ page_obj.size }}{% if page_obj.search %}&q={{ page_obj.search|urlencode }}{% endif %}{{ extra|default('') }}">قبلی</a>
+  {% for number in page_obj.window() %}
+    {% if number is none %}
+      <span class="gap">…</span>
+    {% elif number == page_obj.number %}
+      <span class="is-current">{{ number|fa }}</span>
+    {% else %}
+      <a href="{{ base_url }}?page={{ number }}&size={{ page_obj.size }}{% if page_obj.search %}&q={{ page_obj.search|urlencode }}{% endif %}{{ extra|default('') }}">{{ number|fa }}</a>
+    {% endif %}
+  {% endfor %}
+  <a class="{% if not page_obj.has_next %}is-disabled{% endif %}"
+     href="{{ base_url }}?page={{ page_obj.number + 1 }}&size={{ page_obj.size }}{% if page_obj.search %}&q={{ page_obj.search|urlencode }}{% endif %}{{ extra|default('') }}">بعدی</a>
+</nav>
+{% endif %}
+{%- endmacro %}
+
+{% macro empty_state(title, hint, ico) -%}
+<div class="empty">
+  {{ icon(ico|default('inbox')) }}
+  <div class="empty__title">{{ title }}</div>
+  {% if hint %}<div class="small">{{ hint }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro csrf(token) -%}
+<input type="hidden" name="csrf_token" value="{{ token }}">
+{%- endmacro %}
+
+{% macro switch_field(name, label, checked, hint) -%}
+<label class="switch">
+  <input type="checkbox" name="{{ name }}" value="1" {% if checked %}checked{% endif %}>
+  <span class="switch__track"></span>
+  <span class="switch__label">{{ label }}</span>
+</label>
+{% if hint %}<div class="hint">{{ hint }}</div>{% endif %}
+{%- endmacro %}
+
+{% macro bar_list(rows) -%}
+<div class="bar-list">
+  {% for row in rows %}
+  <div class="bar-row">
+    <span class="bar-row__label">{{ row.label }}</span>
+    <span class="bar-row__value">{{ row.value }}</span>
+    <span class="bar-row__track">
+      <span class="bar-row__fill" data-w="{{ row.percent }}%" style="width:{{ row.percent }}%"></span>
+    </span>
+  </div>
+  {% endfor %}
+</div>
+{%- endmacro %}
+
+{% macro toolbar(search_action, placeholder, q) -%}
+<form class="searchbar" method="get" action="{{ search_action }}">
+  <input class="input" type="search" name="q" value="{{ q|default('') }}" placeholder="{{ placeholder|default('جست‌وجو…') }}">
+  <button class="btn" type="submit">{{ icon('search') }} جست‌وجو</button>
+  {% if q %}<a class="btn btn--ghost" href="{{ search_action }}">پاک کردن</a>{% endif %}
+</form>
+{%- endmacro %}

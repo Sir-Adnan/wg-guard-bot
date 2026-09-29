@@ -1,0 +1,6 @@
+-r requirements.txt
+
+# Development / CI only
+pytest==9.1.1
+pytest-asyncio==1.4.0
+ruff==0.14.2

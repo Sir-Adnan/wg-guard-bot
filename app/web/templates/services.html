@@ -1,0 +1,172 @@
+{#
+  سرویس‌ها — فهرست سرویس‌های ساخته‌شده روی نودهای WG-Guard.
+  هر دکمهٔ ردیف یک فرم POST مستقل است (فرم تودرتو نداریم) و عملیات
+  حساس با data-confirm تأیید می‌گیرد.
+#}
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, stat, pagination, empty_state, csrf with context %}
+
+{% macro action(url, ico, title, confirm) -%}
+<form method="post" action="{{ url }}"{% if confirm %} data-confirm="{{ confirm }}"{% endif %}>
+  {{ csrf(csrf_token) }}
+  <button class="btn btn--sm btn--ghost" type="submit" title="{{ title }}" aria-label="{{ title }}">{{ icon(ico) }}</button>
+</form>
+{%- endmacro %}
+
+{% block title %}سرویس‌ها{% endblock %}
+{% block header %}سرویس‌ها{% endblock %}
+
+{% block content %}
+{# ------------------------------------------------------------ نوار آمار #}
+<section class="grid grid--stats">
+  {{ stat('سرویس فعال', stats.active|fa, 'wifi', 'در حال ارائه به مشتریان', 'success') }}
+  {{ stat('منقضی‌شده', stats.expired|fa, 'clock', 'منتظر تمدید یا حذف', 'warning') }}
+  {{ stat('اتمام حجم', stats.traffic_exceeded|fa, 'alert', 'حجم پلن مصرف شده است', 'danger') }}
+  {{ stat('سرویس آزمایشی', stats.test|fa, 'bulb', 'سرویس‌های تست رایگان', 'info') }}
+</section>
+
+{# ----------------------------------------------------------- نوار فیلتر #}
+<div class="card">
+  <div class="card__body">
+    <form class="searchbar" method="get" action="{{ panel_prefix }}/services">
+      <input class="input" type="search" name="q" value="{{ page.search }}"
+             placeholder="جست‌وجو در نام کاربری یا شناسهٔ کاربر پنل…">
+      <select class="select" name="status" data-autosubmit aria-label="فیلتر وضعیت">
+        <option value="">همهٔ وضعیت‌ها</option>
+        {% for value, label in status_options %}
+        <option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <select class="select" name="panel_id" data-autosubmit aria-label="فیلتر پنل">
+        <option value="">همهٔ پنل‌ها</option>
+        {% for panel in panels %}
+        <option value="{{ panel.id }}" {% if selected_panel == panel.id %}selected{% endif %}>{{ panel.name }}</option>
+        {% endfor %}
+      </select>
+      <button class="btn" type="submit">{{ icon('search') }} اعمال فیلتر</button>
+      {% if page.search or selected_status or selected_panel %}
+      <a class="btn btn--ghost" href="{{ panel_prefix }}/services">پاک کردن</a>
+      {% endif %}
+    </form>
+    <div class="hint mt-2">
+      «همگام‌سازی» وضعیت سرویس را از نود می‌خواند و «ارسال دوباره» کانفیگ، کیو‌آر و لینک
+      اشتراک را برای مشتری می‌فرستد؛ بقیهٔ عملیات‌ها فقط برای مدیر است. حذف، ردیف سرویس را
+      پاک نمی‌کند و فقط آن را از چرخهٔ سرویس‌دهی بیرون می‌برد.
+    </div>
+  </div>
+</div>
+
+{# ---------------------------------------------------------------- جدول #}
+<div class="card">
+  <div class="card__body card__body--flush">
+    {% if rows %}
+    <div class="table-wrap">
+      <table class="table table--compact">
+        <thead>
+          <tr>
+            <th>کاربر</th>
+            <th>نام کاربری</th>
+            <th>پنل</th>
+            <th>پلن</th>
+            <th>وضعیت</th>
+            <th>مصرف</th>
+            <th>دستگاه</th>
+            <th>انقضا</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td>
+              <div class="truncate">{{ row.user.display_name if row.user else '—' }}</div>
+              {% if row.user %}
+              <div class="small dim mono">{{ row.user.telegram_id }}</div>
+              {% endif %}
+            </td>
+            <td>
+              <span class="mono">{{ row.wg_username }}</span>
+              {% if row.is_test %}{{ badge('آزمایشی', 'brand') }}{% endif %}
+            </td>
+            <td class="truncate small">{{ row.panel.name if row.panel else '—' }}</td>
+            <td class="truncate small">{{ row.plan.name if row.plan else '—' }}</td>
+            <td class="nowrap">{{ badge(status_labels.get(row.status.value, row.status.value), tones.get(row.status.value, '')) }}</td>
+            <td>
+              <div class="bar-row">
+                <span class="bar-row__label">مصرف</span>
+                <span class="bar-row__value nowrap">{{ row.traffic_used_bytes|bytes }} / {{ row.traffic_limit_bytes|bytes }}</span>
+                <span class="bar-row__track">
+                  <span class="bar-row__fill" data-w="{{ row.usage_percent|round(1) }}%"
+                        style="width:{{ row.usage_percent|round(1) }}%"></span>
+                </span>
+              </div>
+            </td>
+            <td class="nowrap num">{{ row.devices|length|fa }} / {{ row.device_limit|fa }}</td>
+            <td class="nowrap">
+              <div class="small">{{ row.expires_at|jdate }}</div>
+              <div class="small dim">{{ row.expires_at|relative }}</div>
+            </td>
+            <td class="actions">
+              {{ action(panel_prefix ~ '/services/' ~ row.id ~ '/sync', 'refresh', 'همگام‌سازی با نود', none) }}
+              {{ action(panel_prefix ~ '/services/' ~ row.id ~ '/resend', 'send', 'ارسال دوبارهٔ کانفیگ و لینک اشتراک', none) }}
+              {% if row.status.value == 'active' %}
+              {{ action(panel_prefix ~ '/services/' ~ row.id ~ '/toggle', 'pause', 'غیرفعال کردن سرویس', none) }}
+              {% else %}
+              {{ action(panel_prefix ~ '/services/' ~ row.id ~ '/toggle', 'play', 'فعال کردن سرویس', none) }}
+              {% endif %}
+              {{ action(panel_prefix ~ '/services/' ~ row.id ~ '/reset-traffic', 'zap', 'صفر کردن مصرف',
+                        'مصرف سرویس ' ~ row.wg_username ~ ' صفر شود؟ گزارش مصرف کاربر پاک می‌شود.') }}
+              <button class="btn btn--sm btn--ghost" type="button" title="تمدید سرویس"
+                      data-modal-open="service-extend-{{ row.id }}">{{ icon('calendar') }}</button>
+              {{ action(panel_prefix ~ '/services/' ~ row.id ~ '/rotate', 'key', 'بازنشانی کلیدها و لینک اشتراک',
+                        'کلیدها و لینک اشتراک ' ~ row.wg_username ~ ' بازنشانی شود؟ کاربر باید کانفیگ تازه بگیرد.') }}
+              {{ action(panel_prefix ~ '/services/' ~ row.id ~ '/delete', 'trash', 'حذف سرویس',
+                        'سرویس ' ~ row.wg_username ~ ' حذف شود؟ ردیف آن به‌عنوان تاریخ فروش باقی می‌ماند.') }}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      {% if page.search or selected_status or selected_panel %}
+        {{ empty_state('سرویسی با این فیلترها پیدا نشد', 'فیلترها را ساده‌تر کنید یا «پاک کردن» را بزنید.', 'wifi') }}
+      {% else %}
+        {{ empty_state('هنوز سرویسی ساخته نشده', 'به‌محض تأیید اولین خرید، سرویس مشتری این‌جا نمایش داده می‌شود.', 'wifi') }}
+      {% endif %}
+    {% endif %}
+  </div>
+  {{ pagination(page, base_url, extra) }}
+</div>
+
+{# ------------------------------------------------------- مودال تمدید #}
+{% for row in rows %}
+<div class="modal" id="service-extend-{{ row.id }}" hidden>
+  <div class="modal__panel modal__panel--sm">
+    <form method="post" action="{{ panel_prefix }}/services/{{ row.id }}/extend">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title">تمدید سرویس {{ row.wg_username }}</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        <div class="field">
+          <label class="label" for="days-{{ row.id }}">مدت تمدید (روز) <span class="req">*</span></label>
+          <input class="input input--num" id="days-{{ row.id }}" name="days" type="number"
+                 min="1" max="{{ max_extend_days }}" value="{{ default_extend_days }}" required>
+          <div class="hint">
+            تمدید از تاریخ انقضای فعلی حساب می‌شود؛ انقضای کنونی:
+            {{ row.expires_at|jdate }} ({{ row.expires_at|relative }}).
+          </div>
+        </div>
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('calendar') }} تمدید سرویس</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

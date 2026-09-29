@@ -1,0 +1,324 @@
+{#
+  دکمه‌ها و ایموجی — برچسب، رنگ و ایموجی پرمیوم هر دکمه و هر ایموجی ربات.
+
+  یک فرم، دو تب: تب «دکمه‌ها» و تب «ایموجی‌ها». هر دو بخش همیشه رندر می‌شوند و
+  فقط تب غیرفعال با یک اسکریپت کوچک پنهان می‌شود؛ پس بدون جاوااسکریپت هم همه‌ی
+  ردیف‌ها قابل ویرایش‌اند و کلیدهای یکتا (``field__key``) تداخلی ندارند.
+#}
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, csrf, empty_state with context %}
+
+{% block title %}دکمه‌ها و ایموجی{% endblock %}
+{% block header %}دکمه‌ها و ایموجی{% endblock %}
+
+{% block page_actions %}
+  <button class="btn btn--primary" type="submit" form="buttons-form">{{ icon('check') }} ذخیره تغییرات</button>
+  <form method="post" action="{{ base_url }}/reset"
+        data-confirm="همه‌ی برچسب‌ها، رنگ‌ها و ایموجی‌های سفارشی حذف شوند و ربات به ظاهر پیش‌فرض برگردد؟">
+    {{ csrf(csrf_token) }}
+    <button class="btn btn--danger" type="submit">{{ icon('refresh') }} بازنشانی همه</button>
+  </form>
+{% endblock %}
+
+{% block content %}
+
+{# ------------------------------------------------------------------ راهنما #}
+<div class="alert alert--info">
+  {{ icon('info') }}
+  <div>
+    <div class="strong">پیش از تغییر رنگ و ایموجی این‌ها را بدانید</div>
+    <ul class="small mt-1">
+      <li>رنگ دکمه‌ها و ایموجی پرمیوم فقط در کلاینت‌های نسبتاً جدید تلگرام دیده می‌شوند؛ کاربر با نسخه‌ی قدیمی همان دکمه‌ی ساده‌ی همیشگی را می‌بیند.</li>
+      <li>ایموجی پرمیوم روی دکمه‌ها تنها وقتی نمایش داده می‌شود که ربات یوزرنیم داشته باشد و آن یوزرنیم را از Fragment خریده باشید.</li>
+      <li>اگر تلگرام رنگ یا ایموجی را نپذیرد، ربات خودکار به دکمه‌های ساده برمی‌گردد؛ فروش و منوها هرگز از کار نمی‌افتند.</li>
+      <li>کلیدهای اصلی روشن/خاموش این قابلیت‌ها در «تنظیمات فروشگاه ← ظاهر و دکمه‌ها» است؛ اینجا فقط ظاهر هر دکمه را می‌چینید.</li>
+    </ul>
+    <div class="hint">
+      کادر خالی یعنی «پیش‌فرض ربات». برچسب را خالی بگذارید تا نام پیش‌فرض برگردد،
+      رنگ «پیش‌فرض» و شناسه‌ی خالی هم همین معنی را دارند.
+    </div>
+  </div>
+</div>
+
+{# ------------------------------------------------------------ فرم ویرایش #}
+<form id="buttons-form" method="post" action="{{ panel_prefix }}/buttons">
+  {{ csrf(csrf_token) }}
+
+  <div class="card">
+    <div class="card__head">
+      <div class="card__title">{{ icon('palette') }} ظاهر دکمه‌ها و ایموجی‌ها</div>
+      <div class="card__spacer"></div>
+      <span class="card__sub">
+        {{ buttons|length|fa }} دکمه · {{ emojis|length|fa }} ایموجی{% if custom_count %} ·
+        {{ custom_count|fa }} سفارشی‌شده{% endif %}
+      </span>
+    </div>
+    <div class="card__body">
+      <div class="tabs">
+        <a class="tab is-active" href="#tab-buttons" data-tab="buttons">
+          {{ icon('palette') }} دکمه‌ها <span class="dim small">({{ buttons|length|fa }})</span>
+        </a>
+        <a class="tab" href="#tab-emoji" data-tab="emoji">
+          {{ icon('star') }} ایموجی‌ها <span class="dim small">({{ emojis|length|fa }})</span>
+        </a>
+      </div>
+      <div class="hint mt-2">
+        هر ردیف یک عنصر ربات است: متن دکمه را در «برچسب»، رنگش را در «رنگ» و شناسه‌ی
+        ایموجی پرمیومش را در «شناسه ایموجی» بگذارید. تغییرات با یک بار ذخیره روی همه‌ی
+        بخش‌های ربات اعمال می‌شود.
+      </div>
+    </div>
+  </div>
+
+  {# ------------------------------------------------------------ تب دکمه‌ها #}
+  <section id="tab-buttons" data-tab-panel="buttons">
+    {% if button_groups %}
+      {% for section in button_groups %}
+      <div class="card mt-2">
+        <div class="card__head">
+          <div class="card__title">{{ icon('palette') }} {{ section.label }}</div>
+          <div class="card__spacer"></div>
+          <span class="card__sub">{{ section.rows|length|fa }} دکمه</span>
+        </div>
+        <div class="card__body card__body--flush">
+          <div class="table-wrap">
+            <table class="table table--compact">
+              <thead>
+                <tr>
+                  <th>کلید</th>
+                  <th>برچسب</th>
+                  <th>رنگ</th>
+                  <th>شناسه ایموجی پرمیوم</th>
+                  <th>ایموجی جانشین</th>
+                  <th>پیش‌نمایش</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in section.rows %}
+                <tr data-row>
+                  <td>
+                    <span class="code copyable" data-copy="{{ row.key }}" title="کپی کلید">{{ row.key }}</span>
+                    {% if row.overridden %}<div class="mt-1">{{ badge('سفارشی', 'brand') }}</div>{% endif %}
+                  </td>
+                  <td>
+                    <input class="input" type="text" name="label__{{ row.key }}" value="{{ row.value }}"
+                           placeholder="{{ row.label }}" data-field-label aria-label="برچسب {{ row.key }}">
+                  </td>
+                  <td>
+                    <div class="row">
+                      <span class="color-swatch swatch--{{ row.style or 'default' }}"></span>
+                      <select class="select" name="style__{{ row.key }}" data-field-style
+                              aria-label="رنگ {{ row.key }}">
+                        {% for option in style_options %}
+                        <option value="{{ option.value }}" {% if option.value == row.style %}selected{% endif %}>{{ option.label }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                  </td>
+                  <td>
+                    <input class="input input--mono" type="text" inputmode="numeric"
+                           name="emoji_id__{{ row.key }}" value="{{ row.icon_custom_emoji_id }}"
+                           placeholder="5368324170671202286" data-field-emoji-id
+                           aria-label="شناسه ایموجی پرمیوم {{ row.key }}">
+                  </td>
+                  <td>
+                    <input class="input small text-center" type="text" name="fallback__{{ row.key }}"
+                           value="{{ row.emoji_fallback }}" maxlength="8" data-field-emoji
+                           aria-label="ایموجی جانشین {{ row.key }}">
+                  </td>
+                  <td>
+                    <span class="preview-btn preview-btn--{{ row.style or 'default' }}"
+                          data-label="{{ row.value }}">{% if row.emoji %}{{ row.emoji }} {% endif %}{{ row.value }}</span>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="card mt-2">
+        {{ empty_state('دکمه‌ای در کاتالوگ نیست', 'کاتالوگ دکمه‌ها در app/services/appearance.py تعریف می‌شود.', 'palette') }}
+      </div>
+    {% endif %}
+  </section>
+
+  {# ------------------------------------------------------------ تب ایموجی #}
+  <section id="tab-emoji" data-tab-panel="emoji" hidden>
+    <div class="card mt-2">
+      <div class="card__head">
+        <div class="card__title">{{ icon('star') }} نگاه سریع</div>
+        <div class="card__spacer"></div>
+        <span class="card__sub">برای کپی کلید، روی خانه‌ی ایموجی بزنید</span>
+      </div>
+      <div class="card__body">
+        <div class="emoji-grid">
+          {% for row in emojis %}
+          <span class="emoji-cell" data-copy="{{ row.key }}" title="{{ row.label }} — {{ row.key }}">
+            <span>{% if row.emoji %}{{ row.emoji }}{% else %}؟{% endif %}</span>
+            <small>{{ row.key }}</small>
+          </span>
+          {% endfor %}
+        </div>
+        <div class="hint mt-2">
+          ایموجی‌ها داخل متن‌های ربات با جای‌گیرهایی مثل <code class="code">{e:cart}</code> استفاده می‌شوند؛
+          شناسه‌ی پرمیوم هر ایموجی، دکمه‌های پیوندشده به آن را هم رنگی و پرمیوم می‌کند.
+        </div>
+      </div>
+    </div>
+
+    {% for section in emoji_groups %}
+    <div class="card mt-2">
+      <div class="card__head">
+        <div class="card__title">{{ icon('type') }} {{ section.label }}</div>
+        <div class="card__spacer"></div>
+        <span class="card__sub">{{ section.rows|length|fa }} ایموجی</span>
+      </div>
+      <div class="card__body card__body--flush">
+        <div class="table-wrap">
+          <table class="table table--compact">
+            <thead>
+              <tr>
+                <th>کلید</th>
+                <th>برچسب</th>
+                <th>رنگ</th>
+                <th>شناسه ایموجی پرمیوم</th>
+                <th>ایموجی جانشین</th>
+                <th>پیش‌نمایش</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in section.rows %}
+              <tr data-row>
+                <td>
+                  <span class="code copyable" data-copy="{{ row.key }}" title="کپی کلید">{{ row.key }}</span>
+                  {% if row.overridden %}<div class="mt-1">{{ badge('سفارشی', 'brand') }}</div>{% endif %}
+                </td>
+                <td>
+                  <input class="input" type="text" name="label__{{ row.key }}" value="{{ row.value }}"
+                         placeholder="{{ row.label }}" data-field-label aria-label="برچسب {{ row.key }}">
+                </td>
+                <td>
+                  <div class="row">
+                    <span class="color-swatch swatch--{{ row.style or 'default' }}"></span>
+                    <select class="select" name="style__{{ row.key }}" data-field-style
+                            aria-label="رنگ {{ row.key }}">
+                      {% for option in style_options %}
+                      <option value="{{ option.value }}" {% if option.value == row.style %}selected{% endif %}>{{ option.label }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                </td>
+                <td>
+                  <input class="input input--mono" type="text" inputmode="numeric"
+                         name="emoji_id__{{ row.key }}" value="{{ row.icon_custom_emoji_id }}"
+                         placeholder="5368324170671202286" data-field-emoji-id
+                         aria-label="شناسه ایموجی پرمیوم {{ row.key }}">
+                </td>
+                <td>
+                  <input class="input small text-center" type="text" name="fallback__{{ row.key }}"
+                         value="{{ row.emoji_fallback }}" maxlength="8" data-field-emoji
+                         aria-label="ایموجی جانشین {{ row.key }}">
+                </td>
+                <td>
+                  <span class="preview-btn preview-btn--{{ row.style or 'default' }}"
+                        data-label="{{ row.value }}">{% if row.emoji %}{{ row.emoji }} {% endif %}{{ row.value }}</span>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+
+  <div class="row row--between mt-3">
+    <span class="hint">
+      فقط ردیف‌هایی که در همین صفحه فرستاده می‌شوند ذخیره خواهند شد؛ نگران پاک‌شدن
+      تنظیمات بقیه‌ی بخش‌ها نباشید.
+    </span>
+    <button class="btn btn--primary" type="submit">{{ icon('check') }} ذخیره تغییرات</button>
+  </div>
+</form>
+
+{# ------------------------------------------------------- پیش‌نمایش منوی اصلی #}
+<div class="card mt-3">
+  <div class="card__head">
+    <div class="card__title">{{ icon('phone') }} پیش‌نمایش منوی اصلی</div>
+    <div class="card__spacer"></div>
+    <span class="card__sub">همان چیزی که کاربر در تلگرام می‌بیند</span>
+  </div>
+  <div class="card__body">
+    <div class="preview-phone">
+      <div class="preview-bubble">سلام 👋
+به فروشگاه ما خوش آمدید.
+برای شروع، یکی از گزینه‌های زیر را انتخاب کنید.</div>
+      {% for row in menu_preview %}
+      <span class="preview-btn preview-btn--{{ row.style or 'default' }}">{% if row.emoji %}{{ row.emoji }} {% endif %}{{ row.value }}</span>
+      {% else %}
+      <span class="preview-btn preview-btn--default">منوی اصلی در دسترس نیست</span>
+      {% endfor %}
+    </div>
+    <div class="hint text-center mt-2">
+      این پیش‌نمایش از تنظیمات ذخیره‌شده ساخته شده است؛ بعد از ذخیره‌ی تغییرات تازه می‌شود.
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var root = document.getElementById("buttons-form");
+  if (!root) return;
+
+  /* -- تب‌ها: هر دو بخش رندر شده‌اند و فقط غیرفعال پنهان می‌شود ---------- */
+  var tabs = root.querySelectorAll("[data-tab]");
+  var panels = root.querySelectorAll("[data-tab-panel]");
+
+  function activate(name) {
+    tabs.forEach(function (tab) {
+      tab.classList.toggle("is-active", tab.getAttribute("data-tab") === name);
+    });
+    panels.forEach(function (panel) {
+      panel.hidden = panel.getAttribute("data-tab-panel") !== name;
+    });
+  }
+
+  tabs.forEach(function (tab) {
+    tab.addEventListener("click", function (event) {
+      event.preventDefault();
+      activate(tab.getAttribute("data-tab"));
+    });
+  });
+  if (tabs.length) activate(tabs[0].getAttribute("data-tab"));
+
+  /* -- پیش‌نمایش زنده‌ی هر ردیف ---------------------------------------- */
+  root.querySelectorAll("[data-row]").forEach(function (row) {
+    var label = row.querySelector("[data-field-label]");
+    var style = row.querySelector("[data-field-style]");
+    var emoji = row.querySelector("[data-field-emoji]");
+    var preview = row.querySelector(".preview-btn");
+    if (!preview) return;
+
+    function paint() {
+      var tone = style && style.value ? style.value : "default";
+      preview.className = "preview-btn preview-btn--" + tone;
+      var text = label && label.value ? label.value : (preview.getAttribute("data-label") || "");
+      var mark = emoji && emoji.value ? emoji.value + " " : "";
+      preview.textContent = mark + text;
+    }
+
+    [label, style, emoji].forEach(function (field) {
+      if (!field) return;
+      field.addEventListener("input", paint);
+      field.addEventListener("change", paint);
+    });
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,37 @@
+[project]
+name = "wg-guard-bot"
+version = "1.0.0"
+description = "Telegram VPN shop bot for WG-Guard (AmneziaWG) panels — sales, card-to-card receipts, admin panel"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = [".venv", "tools"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    "E501",   # line length handled by the formatter
+    "B008",   # FastAPI Depends() in defaults is intentional
+    "RUF001", # Persian/ambiguous unicode in strings is intentional
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"alembic/versions/*" = ["E501", "I001"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# The database engine fixture is session-scoped, so every test and fixture must
+# share one event loop; otherwise asyncpg connections cross loops.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+    "db: requires a live PostgreSQL (set TEST_DATABASE_URL)",
+    "panel: requires the mock WG-Guard panel",
+]
+filterwarnings = ["ignore::DeprecationWarning"]

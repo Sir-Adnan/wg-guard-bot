@@ -1,0 +1,314 @@
+{#
+  آموزش‌ها — مطالب آموزشی ربات.
+  هر ردیف دو مودال دارد: یکی برای ویرایش و یکی برای پیش‌نمایش قالب‌بندی.
+  متن مطلب HTML تلگرام است، پس فقط در پیش‌نمایش عمداً با |safe رندر می‌شود.
+#}
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, empty_state, csrf, switch_field with context %}
+
+{% block title %}آموزش‌ها{% endblock %}
+{% block header %}آموزش‌ها{% endblock %}
+
+{% block page_actions %}
+  <button class="btn btn--primary" type="button" data-modal-open="guide-modal-new">
+    {{ icon('plus') }} مطلب جدید
+  </button>
+{% endblock %}
+
+{% block content %}
+<div class="alert alert--info">
+  {{ icon('info') }}
+  <div>
+    <div class="strong">مطالب آموزشی چطور به مشتری نشان داده می‌شوند؟</div>
+    <ul class="small mt-1">
+      <li>هر مطلب در یک «بخش» دسته‌بندی می‌شود و مشتری از دکمه‌های ربات فقط مطالب <span class="strong">فعال</span> را می‌بیند.</li>
+      <li>ترتیب نمایش با فیلد «ترتیب» تعیین می‌شود؛ عدد کوچک‌تر بالاتر می‌آید.</li>
+      <li>برای هر پلتفرم می‌توانید مطلب جدا بسازید؛ گزینه‌ی «همه دستگاه‌ها» به همه نشان داده می‌شود.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card__body">
+    <div class="tabs">
+      <a class="tab {% if active_section == 'all' %}is-active{% endif %}"
+         href="{{ base_url }}{% if q %}?q={{ q|urlencode }}{% endif %}">
+        همه <span class="dim small">({{ all_count|fa }})</span>
+      </a>
+      {% for key, label in sections %}
+      <a class="tab {% if active_section == key %}is-active{% endif %}"
+         href="{{ base_url }}?section={{ key }}{% if q %}&q={{ q|urlencode }}{% endif %}">
+        {{ label }} <span class="dim small">({{ section_counts.get(key, 0)|fa }})</span>
+      </a>
+      {% endfor %}
+    </div>
+
+    <form class="searchbar mt-2" method="get" action="{{ base_url }}">
+      <input type="hidden" name="section" value="{{ active_section }}">
+      <input class="input" type="search" name="q" value="{{ q }}" data-filter-target="guides-table"
+             placeholder="جست‌وجو در عنوان یا متن مطلب…">
+      <button class="btn" type="submit">{{ icon('search') }} جست‌وجو</button>
+      {% if q %}<a class="btn btn--ghost" href="{{ base_url }}?section={{ active_section }}">پاک کردن</a>{% endif %}
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card__body card__body--flush">
+    {% if rows %}
+      <div class="table-wrap">
+        <table class="table" id="guides-table">
+          <thead>
+            <tr>
+              <th>ترتیب</th>
+              <th>عنوان</th>
+              <th>بخش</th>
+              <th>پلتفرم</th>
+              <th>بازدید</th>
+              <th>وضعیت</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for guide in rows %}
+            <tr>
+              <td class="num">{{ guide.sort_order|fa }}</td>
+              <td>
+                <div class="strong truncate">{{ guide.title }}</div>
+                <div class="small dim truncate">{{ guide.body|striptags|trim|truncate(70)|none_dash }}</div>
+              </td>
+              <td><span class="chip">{{ section_labels.get(guide.section, guide.section) }}</span></td>
+              <td class="small muted">{{ platform_labels.get(guide.platform, guide.platform) }}</td>
+              <td class="num">{{ guide.views|fa }}</td>
+              <td>
+                {% if guide.is_active %}{{ badge('فعال', 'success') }}{% else %}{{ badge('غیرفعال', None) }}{% endif %}
+              </td>
+              <td class="actions">
+                <button class="btn btn--sm btn--ghost" type="button" data-modal-open="guide-preview-{{ guide.id }}">
+                  {{ icon('eye') }} پیش‌نمایش
+                </button>
+                <button class="btn btn--sm" type="button" data-modal-open="guide-modal-{{ guide.id }}">
+                  {{ icon('edit') }} ویرایش
+                </button>
+                <form method="post" action="{{ panel_prefix }}/guides/{{ guide.id }}/toggle">
+                  {{ csrf(csrf_token) }}
+                  <input type="hidden" name="back_section" value="{{ active_section }}">
+                  <input type="hidden" name="back_q" value="{{ q }}">
+                  <button class="btn btn--sm btn--ghost" type="submit">
+                    {% if guide.is_active %}{{ icon('pause') }} غیرفعال{% else %}{{ icon('play') }} فعال{% endif %}
+                  </button>
+                </form>
+                <form method="post" action="{{ panel_prefix }}/guides/{{ guide.id }}/delete"
+                      data-confirm="مطلب «{{ guide.title }}» برای همیشه حذف شود؟">
+                  {{ csrf(csrf_token) }}
+                  <input type="hidden" name="back_section" value="{{ active_section }}">
+                  <input type="hidden" name="back_q" value="{{ q }}">
+                  <button class="btn btn--sm btn--danger" type="submit">{{ icon('trash') }} حذف</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {{ empty_state('مطلبی پیدا نشد',
+                     'عبارت جست‌وجو را کوتاه‌تر کنید یا بخش دیگری را انتخاب کنید.' if q
+                     else 'با دکمه‌ی «مطلب جدید» اولین آموزش را بسازید.', 'book') }}
+    {% endif %}
+  </div>
+  {% if truncated %}
+  <div class="card__foot">
+    <span class="hint">برای اینکه صفحه سنگین نشود فقط {{ row_limit|fa }} مطلب اول نمایش داده می‌شود؛
+      برای دیدن بقیه از فیلتر بخش‌ها استفاده کنید.</span>
+  </div>
+  {% endif %}
+</div>
+
+{# ------------------------------------------------------- مودال ساخت مطلب #}
+<div class="modal" id="guide-modal-new" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ panel_prefix }}/guides">
+      {{ csrf(csrf_token) }}
+      <input type="hidden" name="back_section" value="{{ active_section }}">
+      <input type="hidden" name="back_q" value="{{ q }}">
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>مطلب جدید</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        <div class="form-grid">
+          <div class="field">
+            <label class="label" for="new-title">عنوان <span class="req">*</span></label>
+            <input class="input" id="new-title" name="title" required maxlength="160"
+                   placeholder="مثلاً: آموزش اتصال در اندروید">
+          </div>
+          <div class="field">
+            <label class="label" for="new-section">بخش</label>
+            <select class="select" id="new-section" name="section">
+              {% for key, label in sections %}
+              <option value="{{ key }}" {% if key == 'connect' %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" for="new-platform">پلتفرم</label>
+            <select class="select" id="new-platform" name="platform">
+              {% for key, label in platforms %}
+              <option value="{{ key }}" {% if key == 'all' %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" for="new-sort">ترتیب</label>
+            <input class="input" id="new-sort" name="sort_order" type="number" value="0" step="1">
+          </div>
+          <div class="field field--full">
+            <label class="label" for="new-body">متن مطلب</label>
+            <textarea class="textarea" id="new-body" name="body" rows="12" spellcheck="false"
+                      placeholder="متن آموزشی…"></textarea>
+            <div class="hint">
+              تگ‌های HTML مجاز تلگرام مانند <code class="code">&lt;b&gt;</code>، <code class="code">&lt;i&gt;</code>،
+              <code class="code">&lt;code&gt;</code> و <code class="code">&lt;blockquote&gt;</code> در تلگرام قالب‌بندی می‌شوند.
+              جاگیرهایی مثل <code class="code">{e:fire}</code> هم ایموجی پرمیومِ همان کلید را درج می‌کنند؛
+              این ایموجی‌ها در صفحه‌ی «دکمه‌ها و ایموجی» تنظیم شده‌اند.
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" for="new-media-id">شناسه فایل پیوست</label>
+            <input class="input input--mono" id="new-media-id" name="media_file_id" placeholder="file_id تلگرام">
+            <div class="hint">اختیاری؛ همان شناسه‌ای که ربات برای رسانه استفاده می‌کند.</div>
+          </div>
+          <div class="field">
+            <label class="label" for="new-media-type">نوع پیوست</label>
+            <select class="select" id="new-media-type" name="media_type">
+              {% for key, label in media_types %}
+              <option value="{{ key }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <span class="label">وضعیت</span>
+            {{ switch_field('is_active', 'نمایش به مشتریان', True) }}
+          </div>
+        </div>
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ساخت مطلب</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# -------------------------------------------- مودال ویرایش و پیش‌نمایش #}
+{% for guide in rows %}
+<div class="modal" id="guide-modal-{{ guide.id }}" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ panel_prefix }}/guides/{{ guide.id }}">
+      {{ csrf(csrf_token) }}
+      <input type="hidden" name="back_section" value="{{ active_section }}">
+      <input type="hidden" name="back_q" value="{{ q }}">
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>ویرایش مطلب</div>
+        <div class="card__spacer"></div>
+        {% if guide.is_active %}{{ badge('فعال', 'success') }}{% else %}{{ badge('غیرفعال', None) }}{% endif %}
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        <div class="form-grid">
+          <div class="field">
+            <label class="label" for="title-{{ guide.id }}">عنوان <span class="req">*</span></label>
+            <input class="input" id="title-{{ guide.id }}" name="title" required maxlength="160"
+                   value="{{ guide.title }}">
+          </div>
+          <div class="field">
+            <label class="label" for="section-{{ guide.id }}">بخش</label>
+            <select class="select" id="section-{{ guide.id }}" name="section">
+              {% for key, label in sections %}
+              <option value="{{ key }}" {% if guide.section == key %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" for="platform-{{ guide.id }}">پلتفرم</label>
+            <select class="select" id="platform-{{ guide.id }}" name="platform">
+              {% for key, label in platforms %}
+              <option value="{{ key }}" {% if guide.platform == key %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" for="sort-{{ guide.id }}">ترتیب</label>
+            <input class="input" id="sort-{{ guide.id }}" name="sort_order" type="number" step="1"
+                   value="{{ guide.sort_order }}">
+          </div>
+          <div class="field field--full">
+            <label class="label" for="body-{{ guide.id }}">متن مطلب</label>
+            <textarea class="textarea" id="body-{{ guide.id }}" name="body" rows="12"
+                      spellcheck="false">{{ guide.body }}</textarea>
+            <div class="hint">
+              تگ‌های HTML مجاز تلگرام مانند <code class="code">&lt;b&gt;</code>، <code class="code">&lt;i&gt;</code>،
+              <code class="code">&lt;code&gt;</code> و <code class="code">&lt;blockquote&gt;</code> در تلگرام قالب‌بندی می‌شوند.
+              جاگیرهایی مثل <code class="code">{e:fire}</code> هم ایموجی پرمیومِ همان کلید را درج می‌کنند؛
+              این ایموجی‌ها در صفحه‌ی «دکمه‌ها و ایموجی» تنظیم شده‌اند.
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" for="media-id-{{ guide.id }}">شناسه فایل پیوست</label>
+            <input class="input input--mono" id="media-id-{{ guide.id }}" name="media_file_id"
+                   value="{{ guide.media_file_id or '' }}" placeholder="file_id تلگرام">
+            <div class="hint">برای برداشتن پیوست، این فیلد را خالی کنید.</div>
+          </div>
+          <div class="field">
+            <label class="label" for="media-type-{{ guide.id }}">نوع پیوست</label>
+            <select class="select" id="media-type-{{ guide.id }}" name="media_type">
+              {% for key, label in media_types %}
+              <option value="{{ key }}" {% if (guide.media_type or 'none') == key %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <span class="label">وضعیت</span>
+            {{ switch_field('is_active', 'نمایش به مشتریان', guide.is_active) }}
+          </div>
+        </div>
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ذخیره تغییرات</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="guide-preview-{{ guide.id }}" hidden>
+  <div class="modal__panel">
+    <div class="modal__head">
+      <div class="modal__title" data-modal-title>پیش‌نمایش «{{ guide.title }}»</div>
+      <div class="card__spacer"></div>
+      <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+    </div>
+    <div class="modal__body">
+      <div class="preview-phone">
+        <div class="preview-bubble">{% if guide.body %}{{ guide.body|safe }}{% else %}<span class="dim">برای این مطلب متنی ثبت نشده است.</span>{% endif %}</div>
+      </div>
+      <div class="hint mt-2">
+        این پیش‌نمایش تقریبی است و نشان می‌دهد مطلب در تلگرام چطور دیده می‌شود؛ تگ‌های HTML همین‌جا قالب‌بندی می‌شوند و
+        جاگیرهای <code class="code">{e:...}</code> در تلگرام به ایموجی پرمیوم تبدیل می‌شوند.
+      </div>
+      {% if guide.media_file_id %}
+      <div class="hint mt-1">
+        پیوست این مطلب: {{ 'تصویر' if guide.media_type == 'photo' else 'فایل' }}
+        <span class="mono small">{{ guide.media_file_id }}</span>
+      </div>
+      {% endif %}
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost" type="button" data-modal-close>بستن</button>
+    </div>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

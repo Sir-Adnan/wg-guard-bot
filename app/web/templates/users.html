@@ -1,0 +1,336 @@
+{#
+  کاربران — فهرست مشتریان با کیف پول، یادداشت و پیام مستقیم.
+  برای هر ردیف یک مودال اختصاصی ساخته می‌شود تا فرم‌های عملیات تودرتو نباشند؛
+  فرم‌های مسدودسازی و بازنشانی تست بیرون از جدول و پنهان‌اند.
+#}
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, stat, pagination, empty_state, csrf with context %}
+
+{% block title %}کاربران{% endblock %}
+{% block header %}کاربران{% endblock %}
+
+{% block page_actions %}
+  <a class="btn btn--ghost"
+     href="{{ base_url }}/export.csv?q={{ page.search|urlencode }}{% if selected_blocked %}&blocked={{ selected_blocked }}{% endif %}">
+    {{ icon('download') }} خروجی CSV
+  </a>
+{% endblock %}
+
+{% block content %}
+{# ------------------------------------------------------------- نوار آمار #}
+<section class="grid grid--stats">
+  {{ stat('کل کاربران', totals.all|fa, 'users', 'ثبت‌شده در ربات', None) }}
+  {{ stat('کاربران مسدود', totals.blocked|fa, 'ban', 'دسترسی‌شان بسته است', 'danger') }}
+  {{ stat('مجموع کیف پول', totals.wallet_rial|money, 'money', 'بدهی فروشگاه به کاربران', 'info') }}
+</section>
+
+{# ---------------------------------------------------------------- فیلترها #}
+<div class="card">
+  <div class="card__body">
+    <form class="searchbar" method="get" action="{{ base_url }}">
+      <input class="input" type="search" name="q" value="{{ page.search }}"
+             placeholder="نام، نام کاربری یا شناسه تلگرام…">
+      <select class="select" name="blocked" aria-label="وضعیت">
+        {% for value, label in blocked_choices %}
+          <option value="{{ value }}" {% if selected_blocked == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <button class="btn" type="submit">{{ icon('search') }} فیلتر</button>
+      {% if page.search or selected_blocked %}
+        <a class="btn btn--ghost" href="{{ base_url }}">پاک کردن</a>
+      {% endif %}
+    </form>
+  </div>
+</div>
+
+{# ------------------------------------------------------------------ جدول #}
+<div class="card">
+  <div class="card__head">
+    <div class="card__title">{{ icon('users') }} فهرست کاربران</div>
+    <div class="card__spacer"></div>
+    <span class="chip">
+      {{ page.first_index|fa }} تا {{ page.last_index|fa }} از {{ page.total|fa }}
+    </span>
+  </div>
+  <div class="card__body card__body--flush">
+    {% if rows %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>نام</th>
+              <th>نام کاربری تلگرام</th>
+              <th>شناسه</th>
+              <th>موجودی</th>
+              <th>وضعیت</th>
+              <th>عضویت</th>
+              <th>آخرین فعالیت</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for user in rows %}
+            <tr>
+              <td>
+                <div class="truncate">{{ user.display_name }}</div>
+                {% if user.note %}<div class="small dim truncate">یادداشت: {{ user.note }}</div>{% endif %}
+              </td>
+              <td class="mono">
+                {% if user.username %}<span class="copyable" data-copy="@{{ user.username }}">@{{ user.username }}</span>
+                {% else %}<span class="dim">—</span>{% endif %}
+              </td>
+              <td class="nowrap">
+                <span class="code copyable" data-copy="{{ user.telegram_id }}"
+                      title="برای کپی کلیک کنید">{{ user.telegram_id }}</span>
+              </td>
+              <td class="num">{{ user.balance_rial|money }}</td>
+              <td class="nowrap">
+                {% if user.is_blocked %}{{ badge('مسدود', 'danger') }}
+                {% elif user.is_bot_blocked %}{{ badge('ربات را بلاک کرده', 'warning') }}
+                {% else %}{{ badge('فعال', 'success') }}{% endif %}
+              </td>
+              <td class="small dim nowrap">{{ user.created_at|jdate }}</td>
+              <td class="small dim nowrap">{{ user.last_seen_at|relative }}</td>
+              <td class="actions">
+                <button class="btn btn--sm" type="button"
+                        data-modal-open="user-modal-{{ user.id }}" data-title="پروفایل {{ user.display_name }}">
+                  {{ icon('eye') }} پروفایل
+                </button>
+                <button class="btn btn--sm" type="button"
+                        data-modal-open="user-balance-modal-{{ user.id }}"
+                        data-title="تغییر موجودی {{ user.display_name }}">{{ icon('money') }} موجودی</button>
+                <button class="btn btn--sm btn--ghost" type="button"
+                        data-modal-open="user-note-modal-{{ user.id }}"
+                        data-title="یادداشت داخلی {{ user.display_name }}">{{ icon('edit') }} یادداشت</button>
+                <button class="btn btn--sm btn--ghost" type="button"
+                        data-modal-open="user-message-modal-{{ user.id }}"
+                        data-title="پیام به {{ user.display_name }}">{{ icon('send') }} پیام</button>
+                {% if user.is_blocked %}
+                  <button class="btn btn--sm btn--success" type="submit" form="user-unblock-{{ user.id }}"
+                          data-confirm="مسدودی «{{ user.display_name }}» برداشته شود؟">{{ icon('unlock') }} رفع مسدودی</button>
+                {% else %}
+                  <button class="btn btn--sm btn--danger" type="button"
+                          data-modal-open="user-block-modal-{{ user.id }}"
+                          data-title="مسدودسازی {{ user.display_name }}">{{ icon('ban') }} مسدود</button>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {{ empty_state('کاربری پیدا نشد', 'عبارت جست‌وجو را کوتاه‌تر کنید یا فیلتر وضعیت را بردارید.', 'users') }}
+    {% endif %}
+  </div>
+  {{ pagination(page, base_url, extra) }}
+</div>
+
+{# --------------------------------------- مودال‌های هر ردیف (پروفایل و …) #}
+{% for user in rows %}
+{% set stats = user_stats.get(user.id) %}
+<div class="modal" id="user-modal-{{ user.id }}" hidden>
+  <div class="modal__panel">
+    <div class="modal__head">
+      <div class="modal__title" data-modal-title>پروفایل کاربر</div>
+      <div class="card__spacer"></div>
+      <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+    </div>
+    <div class="modal__body">
+      <div class="row row--between mb-2">
+        <div>
+          <div class="strong">{{ user.display_name }}</div>
+          <div class="small dim mono">{{ user.telegram_id }}</div>
+        </div>
+        <div class="row">
+          {% if user.is_blocked %}{{ badge('مسدود', 'danger') }}
+          {% elif user.is_bot_blocked %}{{ badge('ربات را بلاک کرده', 'warning') }}
+          {% else %}{{ badge('فعال', 'success') }}{% endif %}
+          {% if user.test_used_at %}{{ badge('تست مصرف‌شده', None) }}{% endif %}
+        </div>
+      </div>
+
+      {% if user.is_blocked and user.block_reason %}
+        <div class="alert alert--danger mb-2">
+          {{ icon('ban') }}
+          <div>
+            <div class="strong">دلیل مسدودی</div>
+            <div class="small">{{ user.block_reason }}</div>
+          </div>
+        </div>
+      {% endif %}
+
+      <div class="strong">حساب</div>
+      <dl class="kv mt-1">
+        <dt>شناسه تلگرام</dt><dd><span class="code copyable" data-copy="{{ user.telegram_id }}">{{ user.telegram_id }}</span></dd>
+        <dt>نام کاربری</dt><dd class="mono">{{ ('@' ~ user.username) if user.username else '—' }}</dd>
+        <dt>زبان</dt><dd>{{ user.language_code|none_dash }}</dd>
+        <dt>موجودی کیف پول</dt><dd class="num strong">{{ user.balance_rial|money }}</dd>
+        <dt>کد معرف</dt><dd class="mono">{{ user.referral_code|none_dash }}</dd>
+        <dt>عضویت</dt><dd>{{ user.created_at|jdatetime }}</dd>
+        <dt>آخرین فعالیت</dt><dd>{{ user.last_seen_at|relative }}</dd>
+        <dt>تست</dt>
+        <dd>
+          {% if user.test_used_at %}{{ user.test_used_at|jdatetime }} ({{ user.test_count|fa }} بار)
+          {% else %}هنوز استفاده نشده{% endif %}
+        </dd>
+      </dl>
+
+      <div class="strong mt-3">آمار خرید</div>
+      <dl class="kv mt-1">
+        <dt>سفارش‌ها</dt><dd class="num">{{ (stats.orders_total if stats else 0)|fa }}</dd>
+        <dt>پرداخت‌شده</dt><dd class="num">{{ (stats.orders_paid if stats else 0)|fa }}</dd>
+        <dt>سرویس فعال</dt><dd class="num">{{ (stats.services_active if stats else 0)|fa }}</dd>
+        <dt>مجموع خرید</dt><dd class="num">{{ (stats.spent_rial if stats else 0)|money }}</dd>
+        <dt>زیرمجموعه</dt><dd class="num">{{ (stats.referrals if stats else 0)|fa }}</dd>
+      </dl>
+
+      {% if user.note %}
+        <div class="alert alert--info mt-3">
+          {{ icon('info') }}
+          <div>
+            <div class="strong">یادداشت داخلی</div>
+            <div class="small">{{ user.note }}</div>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost" type="button" data-modal-close>بستن</button>
+      {% if user.test_used_at %}
+        <button class="btn btn--sm" type="submit" form="user-reset-test-{{ user.id }}"
+                data-confirm="مجوز سرویس تست «{{ user.display_name }}» بازنشانی شود؟">
+          {{ icon('refresh') }} بازنشانی تست
+        </button>
+      {% endif %}
+      {% if user.is_blocked %}
+        <button class="btn btn--success" type="submit" form="user-unblock-{{ user.id }}"
+                data-confirm="مسدودی «{{ user.display_name }}» برداشته شود؟">{{ icon('unlock') }} رفع مسدودی</button>
+      {% else %}
+        <button class="btn btn--danger" type="button" data-modal-open="user-block-modal-{{ user.id }}"
+                data-title="مسدودسازی {{ user.display_name }}">{{ icon('ban') }} مسدودسازی</button>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="user-balance-modal-{{ user.id }}" hidden>
+  <div class="modal__panel modal__panel--sm">
+    <form method="post" action="{{ base_url }}/{{ user.id }}/balance">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>تغییر موجودی</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        <div class="row row--between mb-2">
+          <span class="muted">موجودی فعلی</span>
+          <span class="strong num">{{ user.balance_rial|money }}</span>
+        </div>
+        <div class="field">
+          <label class="label" for="balance-{{ user.id }}">مبلغ به تومان <span class="req">*</span></label>
+          <input class="input" id="balance-{{ user.id }}" name="amount" inputmode="numeric"
+                 placeholder="۵۰۰۰۰۰" required autocomplete="off">
+          <div class="hint">
+            برای افزایش، مبلغ مثبت و برای کاهش، همان مبلغ با علامت منفی بنویسید (نمونه: <code class="code">-250000</code>).
+          </div>
+        </div>
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ثبت تغییر</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="user-note-modal-{{ user.id }}" hidden>
+  <div class="modal__panel modal__panel--sm">
+    <form method="post" action="{{ base_url }}/{{ user.id }}/note">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>یادداشت داخلی</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        <div class="field">
+          <label class="label" for="note-{{ user.id }}">یادداشت</label>
+          <textarea class="textarea" id="note-{{ user.id }}" name="note"
+                    placeholder="نکته‌ای که همکاران بعدی باید بدانند…">{{ user.note or '' }}</textarea>
+          <div class="hint">این متن فقط در پنل دیده می‌شود و برای کاربر ارسال نمی‌گردد.</div>
+        </div>
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ذخیره یادداشت</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="user-message-modal-{{ user.id }}" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ base_url }}/{{ user.id }}/message"
+          data-confirm="این پیام برای «{{ user.display_name }}» ارسال شود؟">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>پیام مستقیم</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        <div class="field">
+          <label class="label" for="message-{{ user.id }}">متن پیام <span class="req">*</span></label>
+          <textarea class="textarea" id="message-{{ user.id }}" name="text" required
+                    placeholder="سلام! دربارهٔ سرویس شما…"></textarea>
+          <div class="hint">پیام با سرتیتر «پیام از پشتیبانی» و بدون فرمت اضافه برای کاربر فرستاده می‌شود.</div>
+        </div>
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('send') }} ارسال پیام</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="user-block-modal-{{ user.id }}" hidden>
+  <div class="modal__panel modal__panel--sm">
+    <form method="post" action="{{ base_url }}/{{ user.id }}/block"
+          data-confirm="کاربر «{{ user.display_name }}» مسدود شود؟">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>مسدودسازی کاربر</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        <div class="field">
+          <label class="label" for="block-reason-{{ user.id }}">دلیل مسدودی <span class="req">*</span></label>
+          <input class="input" id="block-reason-{{ user.id }}" name="reason" required
+                 placeholder="تخلف از قوانین استفاده، سوءاستفاده از تست و…">
+          <div class="hint">این دلیل در سابقه‌ی کاربر ثبت می‌شود و در پروفایل او دیده می‌شود.</div>
+        </div>
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--danger" type="submit">{{ icon('ban') }} مسدود کن</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+
+{# --------------------------- فرم‌های پنهان (بیرون از جدول، بدون تودرتو) #}
+{% for user in rows %}
+<form id="user-unblock-{{ user.id }}" method="post" action="{{ base_url }}/{{ user.id }}/unblock" hidden>
+  {{ csrf(csrf_token) }}
+</form>
+<form id="user-reset-test-{{ user.id }}" method="post" action="{{ base_url }}/{{ user.id }}/reset-test"
+      data-confirm="مجوز سرویس تست این کاربر بازنشانی شود؟" hidden>
+  {{ csrf(csrf_token) }}
+</form>
+{% endfor %}
+{% endblock %}

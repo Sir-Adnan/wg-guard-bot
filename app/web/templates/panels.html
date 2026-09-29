@@ -1,0 +1,292 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, empty_state, csrf with context %}
+
+{% block title %}پنل‌های VPN{% endblock %}
+{% block header %}پنل‌های VPN{% endblock %}
+{% block page_actions %}
+  <button class="btn btn--primary" data-modal-open="panel-create" data-title="افزودن پنل">
+    {{ icon('plus') }} افزودن پنل
+  </button>
+{% endblock %}
+
+{% block content %}
+
+<div class="alert alert--info">
+  {{ icon('info') }}
+  <div>
+    هر پنل یک سرور فروش است. ربات می‌تواند هم‌زمان از چند پنل سرویس بسازد و به‌صورت خودکار
+    کم‌بارترین نود را انتخاب کند. با دکمه «بررسی اتصال» صحت آدرس و توکن را تأیید کنید.
+    <div class="mt-2">
+      <b>انواع پشتیبانی‌شده:</b>
+      {% for provider in registered_providers %}
+        <span class="chip" title="{{ provider.description }}">{{ provider.label }}</span>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{% macro panel_fields(panel) -%}
+{% set key = panel.id if panel else 'new' %}
+<div class="form-grid">
+  <div class="field">
+    <label class="label" for="pkind-{{ key }}">نوع پنل <span class="req">*</span></label>
+    <select class="select" id="pkind-{{ key }}" name="kind">
+      {% for kind, label, description in provider_choices %}
+        <option value="{{ kind }}" title="{{ description }}"
+          {% if (panel and panel.kind == kind) or (not panel and kind == 'wg_guard') %}selected{% endif %}>
+          {{ label }}
+        </option>
+      {% endfor %}
+    </select>
+    <div class="hint">پس از افزودن پنل، نوع آن دیگر نباید بدون دلیل عوض شود چون پروتکل گفتگو را تغییر می‌دهد.</div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="pname-{{ key }}">نام نمایشی <span class="req">*</span></label>
+    <input class="input" id="pname-{{ key }}" name="name" required
+           value="{{ panel.name if panel else '' }}" placeholder="مثلاً: سرور آلمان">
+  </div>
+
+  <div class="field">
+    <label class="label" for="purl-{{ key }}">آدرس پنل <span class="req">*</span></label>
+    <input class="input input--mono" id="purl-{{ key }}" name="base_url" required dir="ltr"
+           value="{{ panel.base_url if panel else '' }}" placeholder="https://panel.example.com">
+    <div class="hint">آدرس پایه API، بدون مسیر انتهایی.</div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="psub-{{ key }}">آدرس عمومی لینک اشتراک</label>
+    <input class="input input--mono" id="psub-{{ key }}" name="subscription_base_url" dir="ltr"
+           value="{{ panel.subscription_base_url if panel and panel.subscription_base_url else '' }}"
+           placeholder="اختیاری — مثل https://sub.example.com">
+    <div class="hint">اگر دامنه اشتراک جداگانه‌ای دارید پر کنید، وگرنه آدرس پنل استفاده می‌شود.</div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="ptoken-{{ key }}">توکن API {% if not panel %}<span class="req">*</span>{% endif %}</label>
+    <input class="input input--mono" id="ptoken-{{ key }}" name="api_token" dir="ltr" autocomplete="off"
+           placeholder="{% if panel %}برای تغییر مقدار جدید را وارد کنید{% else %}wg_...{% endif %}">
+    <div class="hint">رمزنگاری‌شده ذخیره می‌شود و هرگز نمایش داده نمی‌شود.</div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="psecret-{{ key }}">کلید وب‌هوک</label>
+    <input class="input input--mono" id="psecret-{{ key }}" name="webhook_secret" dir="ltr" autocomplete="off"
+           placeholder="اختیاری — برای تأیید رویدادهای ورودی">
+  </div>
+
+  <div class="field">
+    <label class="label" for="piface-{{ key }}">اینترفیس پیش‌فرض</label>
+    <input class="input input--mono" id="piface-{{ key }}" name="default_interface_id" dir="ltr"
+           value="{{ panel.default_interface_id if panel and panel.default_interface_id else '' }}"
+           placeholder="خالی = انتخاب خودکار پنل">
+  </div>
+
+  <div class="field">
+    <label class="label" for="pmax-{{ key }}">حداکثر سرویس</label>
+    <input class="input input--num" id="pmax-{{ key }}" name="max_services" type="number" min="0"
+           value="{{ panel.max_services if panel and panel.max_services else '' }}" placeholder="خالی = نامحدود">
+    <div class="hint">پس از پر شدن ظرفیت، سرویس جدید روی این نود ساخته نمی‌شود.</div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="pprio-{{ key }}">اولویت</label>
+    <input class="input input--num" id="pprio-{{ key }}" name="priority" type="number"
+           value="{{ panel.priority if panel else 100 }}">
+    <div class="hint">عدد بزرگ‌تر یعنی زودتر انتخاب می‌شود.</div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="psort-{{ key }}">ترتیب نمایش</label>
+    <input class="input input--num" id="psort-{{ key }}" name="sort_order" type="number"
+           value="{{ panel.sort_order if panel else 0 }}">
+  </div>
+
+  <div class="field field--full">
+    <label class="label" for="poptions-{{ key }}">گزینه‌های پیشرفته (JSON)</label>
+    <textarea class="textarea textarea--code" id="poptions-{{ key }}" name="options" rows="2"
+      placeholder='{"verify_tls": true}'>{% if panel and panel.options %}{{ panel.options|json }}{% endif %}</textarea>
+    <div class="hint">برای تنظیمات خاص هر نوع پنل. اگر مطمئن نیستید خالی بگذارید.</div>
+  </div>
+
+  <div class="field field--full">
+    <label class="label" for="pnote-{{ key }}">یادداشت</label>
+    <input class="input" id="pnote-{{ key }}" name="note"
+           value="{{ panel.note if panel and panel.note else '' }}" placeholder="مثلاً: پهنای باند نامحدود">
+  </div>
+
+  <div class="field field--full">
+    <div class="row" style="gap:22px">
+      <label class="switch">
+        <input type="checkbox" name="is_active" value="1" {% if not panel or panel.is_active %}checked{% endif %}>
+        <span class="switch__track"></span><span class="switch__label">فعال</span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" name="is_default" value="1" {% if panel and panel.is_default %}checked{% endif %}>
+        <span class="switch__track"></span><span class="switch__label">پنل پیش‌فرض</span>
+      </label>
+      {% if panel %}
+      <label class="switch">
+        <input type="checkbox" name="clear_webhook_secret" value="1">
+        <span class="switch__track"></span><span class="switch__label">حذف کلید وب‌هوک</span>
+      </label>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{%- endmacro %}
+
+<div class="card">
+  <div class="card__head">
+    <div class="card__title">{{ icon('server') }} سرورها</div>
+    <div class="card__spacer"></div>
+    <span class="chip">{{ rows|length|fa }} پنل</span>
+  </div>
+  <div class="card__body card__body--flush">
+    {% if rows %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>نام</th><th>نوع</th><th>آدرس</th><th>سلامت</th><th>سرویس</th>
+              <th>نسخه</th><th>وضعیت</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for panel in rows %}
+            <tr>
+              <td>
+                <div class="strong">
+                  {{ panel.name }}
+                  {% if panel.is_default %}<span class="badge badge--brand">پیش‌فرض</span>{% endif %}
+                </div>
+                {% if panel.note %}<div class="small dim">{{ panel.note }}</div>{% endif %}
+              </td>
+              <td><span class="badge badge--info">{{ kind_labels.get(panel.kind, panel.kind) }}</span></td>
+              <td class="small mono truncate" style="max-width:220px">{{ panel.base_url }}</td>
+              <td>
+                {% if panel.health.value == 'online' %}{{ badge('آنلاین', 'success') }}
+                {% elif panel.health.value == 'degraded' %}{{ badge('نیمه‌فعال', 'warning') }}
+                {% elif panel.health.value == 'offline' %}{{ badge('آفلاین', 'danger') }}
+                {% else %}{{ badge('بررسی نشده', None) }}{% endif %}
+                {% if panel.health_message %}<div class="small dim truncate" style="max-width:200px">{{ panel.health_message }}</div>{% endif %}
+              </td>
+              <td class="num">
+                {{ counts.get(panel.id, 0)|fa }}
+                {% if panel.max_services %}<span class="dim">/ {{ panel.max_services|fa }}</span>{% endif %}
+              </td>
+              <td class="small mono">{{ panel.node_version|none_dash }}</td>
+              <td>
+                {% if panel.is_active %}{{ badge('فعال', 'success') }}{% else %}{{ badge('غیرفعال', 'danger') }}{% endif %}
+              </td>
+              <td>
+                <div class="actions">
+                  <form method="post" action="{{ base_url }}/{{ panel.id }}/check">
+                    {{ csrf(csrf_token) }}
+                    <button class="btn btn--sm btn--primary" type="submit" title="بررسی اتصال">{{ icon('zap') }}</button>
+                  </form>
+                  <button class="btn btn--sm" type="button"
+                          data-modal-open="panel-{{ panel.id }}" data-title="ویرایش «{{ panel.name }}»">{{ icon('edit') }}</button>
+                  <form method="post" action="{{ base_url }}/{{ panel.id }}/toggle">
+                    {{ csrf(csrf_token) }}
+                    <button class="btn btn--sm {% if panel.is_active %}btn--warning{% else %}btn--success{% endif %}"
+                            type="submit" title="{% if panel.is_active %}غیرفعال کردن{% else %}فعال کردن{% endif %}">{{ icon('zap') }}</button>
+                  </form>
+                  <form method="post" action="{{ base_url }}/{{ panel.id }}/delete"
+                        data-confirm="پنل «{{ panel.name }}» حذف شود؟ سرویس‌های روی آن باید قبلاً منتقل شده باشند.">
+                    {{ csrf(csrf_token) }}
+                    <button class="btn btn--sm btn--danger" type="submit">{{ icon('trash') }}</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {{ empty_state(
+        'هنوز پنلی اضافه نکرده‌اید',
+        'برای فروش، ابتدا یک پنل VPN اضافه کنید و توکن API آن را وارد کنید.',
+        'server') }}
+    {% endif %}
+  </div>
+</div>
+
+<div class="modal" id="panel-create" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ base_url }}">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>افزودن پنل</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">{{ panel_fields(None) }}</div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} افزودن</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% for panel in rows %}
+<div class="modal" id="panel-{{ panel.id }}" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ base_url }}/{{ panel.id }}">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>ویرایش «{{ panel.name }}»</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        <div class="alert alert--warning mb-2">
+          {{ icon('lock') }}
+          <span>توکن ذخیره‌شده نمایش داده نمی‌شود. فقط اگر می‌خواهید آن را عوض کنید، مقدار جدید را وارد کنید.</span>
+        </div>
+        {{ panel_fields(panel) }}
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ذخیره</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+
+<div class="card">
+  <div class="card__head">
+    <div class="card__title">{{ icon('layers') }} انواع پنل و قابلیت‌ها</div>
+    <div class="card__spacer"></div>
+    <span class="chip">توسعه‌پذیر</span>
+  </div>
+  <div class="card__body">
+    <div class="table-wrap">
+      <table class="table table--compact">
+        <thead><tr><th>نوع</th><th>توضیح</th><th>قابلیت‌ها</th></tr></thead>
+        <tbody>
+          {% for provider in registered_providers %}
+          <tr>
+            <td class="strong">{{ provider.label }}</td>
+            <td class="small muted">{{ provider.description }}</td>
+            <td>
+              {% for capability in provider.capabilities %}
+                <span class="chip">{{ capability }}</span>
+              {% endfor %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="hint mt-2">
+      افزودن پنل جدید فقط به یک فایل آداپتور نیاز دارد؛ راهنمای کامل در
+      <span class="code">app/panels/providers/example.py</span> و
+      <span class="code">docs/ARCHITECTURE.md</span> آمده است.
+    </div>
+  </div>
+</div>
+{% endblock %}

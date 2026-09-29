@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, empty_state, csrf with context %}
+
+{% block title %}کدهای تخفیف{% endblock %}
+{% block header %}کدهای تخفیف{% endblock %}
+{% block page_actions %}
+  <button class="btn btn--primary" data-modal-open="discount-create" data-title="کد تخفیف جدید">
+    {{ icon('plus') }} کد تخفیف جدید
+  </button>
+{% endblock %}
+
+{% block content %}
+
+<div class="alert alert--info">
+  {{ icon('info') }}
+  <div>
+    کد تخفیف را مشتری در مرحله پرداخت وارد می‌کند. کد می‌تواند <b>درصدی</b> یا <b>مبلغ ثابت</b> باشد.
+    اگر فیلد کد را خالی بگذارید، یک کد تصادفی با پیشوند <span class="code">{{ code_prefix }}</span> ساخته می‌شود.
+  </div>
+</div>
+
+{% macro discount_fields(code) -%}
+<div class="form-grid">
+  <div class="field">
+    <label class="label" for="dcode-{{ code.id if code else 'new' }}">کد</label>
+    <input class="input input--mono" id="dcode-{{ code.id if code else 'new' }}" name="code" dir="ltr"
+           value="{{ code.code if code else '' }}" placeholder="خالی = ساخت خودکار">
+    <div class="hint">حروف بزرگ انگلیسی و بدون فاصله.</div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="dkind-{{ code.id if code else 'new' }}">نوع</label>
+    <select class="select" id="dkind-{{ code.id if code else 'new' }}" name="kind">
+      {% for key, label in kinds %}
+        <option value="{{ key }}" {% if code and code.kind.value == key %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label class="label" for="dvalue-{{ code.id if code else 'new' }}">مقدار</label>
+    <input class="input input--num" id="dvalue-{{ code.id if code else 'new' }}" name="value"
+           value="{% if code %}{{ code.value if code.kind.value == 'percent' else code.value|toman }}{% endif %}"
+           placeholder="درصدی: 20 — مبلغی: 50000">
+    <div class="hint">برای نوع «مبلغ ثابت»، مقدار را به {{ currency_label }} وارد کنید.</div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="dmax-{{ code.id if code else 'new' }}">سقف تخفیف ({{ currency_label }})</label>
+    <input class="input input--num" id="dmax-{{ code.id if code else 'new' }}" name="max_discount_rial"
+           value="{{ code.max_discount_rial|toman if code and code.max_discount_rial else '' }}" placeholder="اختیاری">
+  </div>
+
+  <div class="field">
+    <label class="label" for="dmin-{{ code.id if code else 'new' }}">حداقل مبلغ خرید ({{ currency_label }})</label>
+    <input class="input input--num" id="dmin-{{ code.id if code else 'new' }}" name="min_amount_rial"
+           value="{{ code.min_amount_rial|toman if code and code.min_amount_rial else '' }}" placeholder="۰">
+  </div>
+
+  <div class="field">
+    <label class="label" for="duses-{{ code.id if code else 'new' }}">حداکثر تعداد استفاده</label>
+    <input class="input input--num" id="duses-{{ code.id if code else 'new' }}" name="max_uses" type="number" min="1"
+           value="{{ code.max_uses if code and code.max_uses else '' }}" placeholder="خالی = نامحدود">
+  </div>
+
+  <div class="field">
+    <label class="label" for="dper-{{ code.id if code else 'new' }}">سهم هر کاربر</label>
+    <input class="input input--num" id="dper-{{ code.id if code else 'new' }}" name="per_user_limit" type="number" min="1"
+           value="{{ code.per_user_limit if code else 1 }}">
+  </div>
+
+  <div class="field">
+    <label class="label" for="dexp-{{ code.id if code else 'new' }}">تاریخ انقضا</label>
+    <input class="input" id="dexp-{{ code.id if code else 'new' }}" name="expires_at" type="datetime-local"
+           value="{{ code.expires_at.strftime('%Y-%m-%dT%H:%M') if code and code.expires_at else '' }}">
+    <div class="hint">خالی = بدون انقضا.</div>
+  </div>
+
+  <div class="field field--full">
+    <label class="label" for="dnote-{{ code.id if code else 'new' }}">یادداشت</label>
+    <input class="input" id="dnote-{{ code.id if code else 'new' }}" name="note"
+           value="{{ code.note if code and code.note else '' }}" placeholder="مثلاً: کمپین اینستاگرام">
+  </div>
+
+  <div class="field field--full">
+    <label class="switch">
+      <input type="checkbox" name="is_active" value="1" {% if not code or code.is_active %}checked{% endif %}>
+      <span class="switch__track"></span><span class="switch__label">فعال</span>
+    </label>
+  </div>
+</div>
+{%- endmacro %}
+
+<div class="card">
+  <div class="card__head">
+    <div class="card__title">{{ icon('tag') }} کدهای ثبت‌شده</div>
+    <div class="card__spacer"></div>
+    <span class="chip">{{ rows|length|fa }} کد</span>
+  </div>
+  <div class="card__body card__body--flush">
+    {% if rows %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>کد</th><th>نوع</th><th>مقدار</th><th>استفاده</th><th>انقضا</th><th>وضعیت</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for code in rows %}
+            <tr>
+              <td>
+                <span class="code copyable" data-copy="{{ code.code }}">{{ code.code }}</span>
+                {% if code.note %}<div class="small dim">{{ code.note }}</div>{% endif %}
+              </td>
+              <td>
+                {% if code.kind.value == 'percent' %}{{ badge('درصدی', 'info') }}{% else %}{{ badge('مبلغ ثابت', 'brand') }}{% endif %}
+              </td>
+              <td class="num">
+                {% if code.kind.value == 'percent' %}{{ code.value|fa }}٪{% else %}{{ code.value|money }}{% endif %}
+                {% if code.max_discount_rial %}<div class="small dim">سقف {{ code.max_discount_rial|money }}</div>{% endif %}
+              </td>
+              <td class="num">
+                {{ code.used_count|fa }}{% if code.max_uses %} / {{ code.max_uses|fa }}{% endif %}
+                {% if code.max_uses %}
+                  <span class="bar-row__track" style="display:block;margin-top:4px">
+                    <span class="bar-row__fill" data-w="{{ ((code.used_count / code.max_uses) * 100)|round(1) }}%"
+                          style="width:{{ ((code.used_count / code.max_uses) * 100)|round(1) }}%"></span>
+                  </span>
+                {% endif %}
+              </td>
+              <td class="small">{{ code.expires_at|jdatetime if code.expires_at else '—' }}</td>
+              <td>
+                {% if code.is_active %}{{ badge('فعال', 'success') }}{% else %}{{ badge('غیرفعال', 'danger') }}{% endif %}
+              </td>
+              <td>
+                <div class="actions">
+                  <button class="btn btn--sm" type="button"
+                          data-modal-open="discount-{{ code.id }}" data-title="ویرایش کد {{ code.code }}">{{ icon('edit') }}</button>
+                  <form method="post" action="{{ base_url }}/{{ code.id }}/toggle">
+                    {{ csrf(csrf_token) }}
+                    <button class="btn btn--sm {% if code.is_active %}btn--warning{% else %}btn--success{% endif %}"
+                            type="submit">{{ icon('zap') }}</button>
+                  </form>
+                  <form method="post" action="{{ base_url }}/{{ code.id }}/delete"
+                        data-confirm="کد تخفیف «{{ code.code }}» حذف شود؟">
+                    {{ csrf(csrf_token) }}
+                    <button class="btn btn--sm btn--danger" type="submit">{{ icon('trash') }}</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {{ empty_state('هیچ کد تخفیفی نساخته‌اید', 'کد تخفیف یکی از مؤثرترین راه‌های افزایش فروش است.', 'tag') }}
+    {% endif %}
+  </div>
+</div>
+
+<div class="modal" id="discount-create" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ base_url }}">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>کد تخفیف جدید</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">{{ discount_fields(None) }}</div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ساخت کد</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% for code in rows %}
+<div class="modal" id="discount-{{ code.id }}" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ base_url }}/{{ code.id }}">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>ویرایش کد {{ code.code }}</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">{{ discount_fields(code) }}</div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ذخیره</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

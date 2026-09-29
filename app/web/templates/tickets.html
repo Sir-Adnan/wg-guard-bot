@@ -1,0 +1,192 @@
+{#
+  تیکت‌های پشتیبانی — فهرست + مودال گفت‌وگو برای هر ردیف.
+  آخرین پیام‌های هر تیکت سمت سرور خوانده شده است، پس باز کردن مودال
+  درخواست تازه‌ای به سرور نمی‌زند و همیشه همان چیزی را نشان می‌دهد که در
+  فهرست دیده می‌شود.
+#}
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, pagination, empty_state, csrf with context %}
+
+{% block title %}تیکت‌های پشتیبانی{% endblock %}
+{% block header %}تیکت‌های پشتیبانی{% endblock %}
+
+{% block page_actions %}
+  <a class="btn btn--ghost" href="{{ base_url }}?tab=unread">
+    {{ icon('inbox') }} بدون پاسخ
+    <span class="badge badge--warning">{{ counts.unread|fa }}</span>
+  </a>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card__body">
+    <div class="tabs">
+      {% for key, label in tabs %}
+      <a class="tab {% if tab == key %}is-active{% endif %}"
+         href="{{ base_url }}?tab={{ key }}{% if q %}&q={{ q|urlencode }}{% endif %}">
+        {{ label }} <span class="dim small">({{ counts[key]|fa }})</span>
+      </a>
+      {% endfor %}
+    </div>
+
+    <form class="searchbar mt-2" method="get" action="{{ base_url }}">
+      <input type="hidden" name="tab" value="{{ tab }}">
+      <input class="input" type="search" name="q" value="{{ q }}" data-filter-target="tickets-table"
+             placeholder="جست‌وجو در کد تیکت، موضوع یا نام مشتری…">
+      <button class="btn" type="submit">{{ icon('search') }} جست‌وجو</button>
+      {% if q %}<a class="btn btn--ghost" href="{{ base_url }}?tab={{ tab }}">پاک کردن</a>{% endif %}
+    </form>
+    <div class="hint mt-1">
+      «باز» تیکت‌هایی است که آخرین پیامشان از مشتری است و منتظر پاسخ مانده‌اند؛ «بدون پاسخ» آن‌هایی که پیام تازه‌ی
+      ندیده دارند. جست‌وجو روی همین صفحه اعمال می‌شود؛ برای دیدن موارد بیشتر بین صفحه‌ها جابه‌جا شوید.
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card__body card__body--flush">
+    {% if rows %}
+      <div class="table-wrap">
+        <table class="table" id="tickets-table">
+          <thead>
+            <tr>
+              <th>کد</th>
+              <th>کاربر</th>
+              <th>موضوع</th>
+              <th>وضعیت</th>
+              <th>خوانده‌نشده</th>
+              <th>آخرین پیام</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for ticket in rows %}
+            <tr>
+              <td><span class="code">{{ ticket.ticket_code }}</span></td>
+              <td>
+                <div class="strong">{{ ticket.user.display_name if ticket.user else '—' }}</div>
+                {% if ticket.user %}<div class="small dim mono">{{ ticket.user.telegram_id }}</div>{% endif %}
+              </td>
+              <td class="truncate">{{ ticket.subject|none_dash }}</td>
+              <td>{{ badge(status_labels[ticket.status.value], status_tones[ticket.status.value]) }}</td>
+              <td class="num">
+                {% if ticket.unread_for_staff %}
+                  {{ badge(ticket.unread_for_staff|fa, 'danger') }}
+                {% else %}
+                  <span class="dim">—</span>
+                {% endif %}
+              </td>
+              <td class="small dim nowrap">{{ ticket.last_message_at|relative }}</td>
+              <td class="actions">
+                <button class="btn btn--sm" type="button" data-modal-open="ticket-modal-{{ ticket.id }}">
+                  {{ icon('chat') }} گفت‌وگو
+                </button>
+                {% if ticket.status.value == 'closed' %}
+                <form method="post" action="{{ panel_prefix }}/tickets/{{ ticket.id }}/reopen">
+                  {{ csrf(csrf_token) }}
+                  <input type="hidden" name="tab" value="{{ tab }}">
+                  <button class="btn btn--sm btn--ghost" type="submit">{{ icon('refresh') }} بازکردن</button>
+                </form>
+                {% else %}
+                <form method="post" action="{{ panel_prefix }}/tickets/{{ ticket.id }}/close"
+                      data-confirm="تیکت «{{ ticket.ticket_code }}» بسته شود؟">
+                  {{ csrf(csrf_token) }}
+                  <input type="hidden" name="tab" value="{{ tab }}">
+                  <button class="btn btn--sm btn--ghost" type="submit">{{ icon('check') }} بستن</button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {{ empty_state('تیکتی پیدا نشد',
+                     'عبارت جست‌وجو را کوتاه‌تر کنید یا زبانه‌ی «همه» را ببینید.' if q
+                     else 'در این زبانه تیکتی وجود ندارد.', 'chat') }}
+    {% endif %}
+  </div>
+  {{ pagination(page, base_url, '&tab=' ~ tab) }}
+</div>
+
+{# ------------------------------------------------------- مودال هر تیکت #}
+{% for ticket in rows %}
+{% set thread = threads.get(ticket.id, []) %}
+{% set total_messages = thread_totals.get(ticket.id, 0) %}
+<div class="modal" id="ticket-modal-{{ ticket.id }}" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ panel_prefix }}/tickets/{{ ticket.id }}/reply">
+      {{ csrf(csrf_token) }}
+      <input type="hidden" name="tab" value="{{ tab }}">
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>تیکت {{ ticket.ticket_code }}</div>
+        <div class="card__spacer"></div>
+        {{ badge(status_labels[ticket.status.value], status_tones[ticket.status.value]) }}
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+
+      <div class="modal__body">
+        <dl class="kv">
+          <dt>مشتری</dt>
+          <dd>
+            {{ ticket.user.display_name if ticket.user else '—' }}
+            {% if ticket.user %}<span class="small dim mono">{{ ticket.user.telegram_id }}</span>{% endif %}
+          </dd>
+          <dt>موضوع</dt>
+          <dd>{{ ticket.subject|none_dash }}</dd>
+          <dt>آخرین پیام</dt>
+          <dd>{{ ticket.last_message_at|jdatetime }}{% if ticket.last_message_at %}
+            <span class="small dim">({{ ticket.last_message_at|relative }})</span>{% endif %}</dd>
+          <dt>پیام‌های پاسخ‌نداده</dt>
+          <dd>{{ ticket.unread_for_staff|fa }}</dd>
+        </dl>
+
+        <div class="col mt-3">
+          {% for message in thread %}
+          <div>
+            <div class="row row--between">
+              <span class="strong">
+                {% if message.sender.value == 'staff' %}🎧 پشتیبانی{% else %}👤 {{ ticket.user.display_name if ticket.user else 'مشتری' }}{% endif %}
+              </span>
+              <span class="small dim">{{ message.created_at|jdatetime }}</span>
+            </div>
+            <div class="preview-bubble mt-1">{{ message.text|e }}</div>
+            {% if message.file_id %}
+            <div class="hint mt-1">
+              📎 پیوست: {{ 'تصویر' if message.file_type == 'photo' else (message.file_type or 'فایل') }}
+            </div>
+            {% endif %}
+          </div>
+          {% else %}
+          <div class="hint">هنوز پیامی در این تیکت ثبت نشده است.</div>
+          {% endfor %}
+        </div>
+
+        {% if total_messages > thread|length %}
+        <div class="hint mt-2">
+          فقط {{ thread_preview|fa }} پیام آخر نمایش داده می‌شود؛ این تیکت در کل {{ total_messages|fa }} پیام دارد.
+        </div>
+        {% endif %}
+
+        <div class="field mt-3">
+          <label class="label" for="reply-{{ ticket.id }}">پاسخ شما <span class="req">*</span></label>
+          <textarea class="textarea" id="reply-{{ ticket.id }}" name="text" required
+                    placeholder="پاسخ خود را بنویسید…"></textarea>
+          <div class="hint">
+            پاسخ بلافاصله در تلگرام برای مشتری ارسال می‌شود و وضعیت تیکت به «پاسخ داده‌شده» تغییر می‌کند.
+            تگ‌های <code class="code">&lt;b&gt;</code>، <code class="code">&lt;i&gt;</code> و
+            <code class="code">&lt;code&gt;</code> در تلگرام قالب‌بندی می‌شوند.
+          </div>
+        </div>
+      </div>
+
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('send') }} ارسال پاسخ</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, empty_state, csrf with context %}
+
+{% block title %}کدهای هدیه{% endblock %}
+{% block header %}کدهای هدیه{% endblock %}
+{% block page_actions %}
+  <button class="btn btn--primary" data-modal-open="gift-create" data-title="کد هدیه جدید">
+    {{ icon('plus') }} کد هدیه
+  </button>
+  <button class="btn" data-modal-open="gift-bulk" data-title="تولید گروهی کد هدیه">
+    {{ icon('layers') }} تولید گروهی
+  </button>
+{% endblock %}
+
+{% block content %}
+
+<div class="alert alert--info">
+  {{ icon('info') }}
+  <div>
+    کد هدیه را مشتری خودش در ربات وارد می‌کند (منوی «کد هدیه»). سه نوع پشتیبانی می‌شود:
+    <b>شارژ کیف پول</b> (مبلغ ثابت)، <b>سرویس رایگان</b> (یک پلن از کاتالوگ) و
+    <b>درصد جایزه</b> (روی مبلغ شارژ کیف پول).
+  </div>
+</div>
+
+{% if fresh %}
+<div class="card">
+  <div class="card__head">
+    <div class="card__title">{{ icon('gift') }} کدهای تازه‌ساخته‌شده</div>
+    <div class="card__spacer"></div>
+    <span class="chip">در {{ fresh_minutes|fa }} دقیقه گذشته</span>
+  </div>
+  <div class="card__body">
+    <div class="row">
+      {% for row in fresh %}
+        <span class="code copyable" data-copy="{{ row.code }}" title="کلیک برای کپی">{{ row.code }}</span>
+      {% endfor %}
+    </div>
+    <div class="hint mt-2">روی هر کد کلیک کنید تا در حافظه کپی شود.</div>
+  </div>
+</div>
+{% endif %}
+
+{% macro gift_fields(gift) -%}
+<div class="form-grid">
+  <div class="field">
+    <label class="label" for="gcode-{{ gift.id if gift else 'new' }}">کد</label>
+    <input class="input input--mono" id="gcode-{{ gift.id if gift else 'new' }}" name="code" dir="ltr"
+           value="{{ gift.code if gift else '' }}" placeholder="خالی = ساخت خودکار GIFT-…">
+  </div>
+
+  <div class="field">
+    <label class="label" for="gkind-{{ gift.id if gift else 'new' }}">نوع</label>
+    <select class="select" id="gkind-{{ gift.id if gift else 'new' }}" name="kind">
+      {% for key, label in kinds %}
+        <option value="{{ key }}" {% if gift and gift.kind == key %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label class="label" for="gvalue-{{ gift.id if gift else 'new' }}">مقدار</label>
+    <input class="input input--num" id="gvalue-{{ gift.id if gift else 'new' }}" name="value"
+           value="{% if gift and gift.kind != 'plan' %}{{ gift.value if gift.kind == 'percent' else gift.value|toman }}{% endif %}"
+           placeholder="کیف پول: مبلغ به {{ currency_label }} — درصد: عدد ۱ تا ۱۰۰">
+  </div>
+
+  <div class="field">
+    <label class="label" for="gplan-{{ gift.id if gift else 'new' }}">پلن هدیه (فقط نوع «سرویس رایگان»)</label>
+    <select class="select" id="gplan-{{ gift.id if gift else 'new' }}" name="plan_id">
+      <option value="">— انتخاب پلن —</option>
+      {% for plan in plans %}
+        <option value="{{ plan.id }}" {% if gift and gift.kind == 'plan' and gift.value == plan.id %}selected{% endif %}>
+          {{ plan.name }} — {{ plan.price_rial|money }}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label class="label" for="guses-{{ gift.id if gift else 'new' }}">حداکثر تعداد استفاده</label>
+    <input class="input input--num" id="guses-{{ gift.id if gift else 'new' }}" name="max_uses" type="number" min="1"
+           value="{{ gift.max_uses if gift and gift.max_uses else '' }}" placeholder="خالی = نامحدود">
+  </div>
+
+  <div class="field">
+    <label class="label" for="gper-{{ gift.id if gift else 'new' }}">سهم هر کاربر</label>
+    <input class="input input--num" id="gper-{{ gift.id if gift else 'new' }}" name="per_user_limit" type="number" min="1"
+           value="{{ gift.per_user_limit if gift else 1 }}">
+  </div>
+
+  <div class="field">
+    <label class="label" for="gexp-{{ gift.id if gift else 'new' }}">تاریخ انقضا</label>
+    <input class="input" id="gexp-{{ gift.id if gift else 'new' }}" name="expires_at" type="datetime-local"
+           value="{{ gift.expires_at.strftime('%Y-%m-%dT%H:%M') if gift and gift.expires_at else '' }}">
+  </div>
+
+  <div class="field field--full">
+    <label class="label" for="gnote-{{ gift.id if gift else 'new' }}">یادداشت</label>
+    <input class="input" id="gnote-{{ gift.id if gift else 'new' }}" name="note"
+           value="{{ gift.note if gift and gift.note else '' }}">
+  </div>
+
+  <div class="field field--full">
+    <label class="switch">
+      <input type="checkbox" name="is_active" value="1" {% if not gift or gift.is_active %}checked{% endif %}>
+      <span class="switch__track"></span><span class="switch__label">فعال</span>
+    </label>
+  </div>
+</div>
+{%- endmacro %}
+
+<div class="card">
+  <div class="card__head">
+    <div class="card__title">{{ icon('gift') }} کدهای ثبت‌شده</div>
+    <div class="card__spacer"></div>
+    <span class="chip">{{ rows|length|fa }} کد</span>
+  </div>
+  <div class="card__body card__body--flush">
+    {% if rows %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>کد</th><th>نوع</th><th>مقدار</th><th>استفاده</th><th>انقضا</th><th>وضعیت</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for gift in rows %}
+            <tr>
+              <td><span class="code copyable" data-copy="{{ gift.code }}">{{ gift.code }}</span>
+                  {% if gift.note %}<div class="small dim">{{ gift.note }}</div>{% endif %}
+              </td>
+              <td>{{ badge(kind_labels.get(gift.kind, gift.kind), 'brand' if gift.kind == 'plan' else 'info') }}</td>
+              <td class="num">
+                {% if gift.kind == 'wallet' %}{{ gift.value|money }}
+                {% elif gift.kind == 'percent' %}{{ gift.value|fa }}٪
+                {% else %}{{ plan_names.get(gift.value, 'پلن حذف‌شده') }}{% endif %}
+              </td>
+              <td class="num">{{ gift.used_count|fa }}{% if gift.max_uses %} / {{ gift.max_uses|fa }}{% endif %}</td>
+              <td class="small">{{ gift.expires_at|jdatetime if gift.expires_at else '—' }}</td>
+              <td>{% if gift.is_active %}{{ badge('فعال', 'success') }}{% else %}{{ badge('غیرفعال', 'danger') }}{% endif %}</td>
+              <td>
+                <div class="actions">
+                  <button class="btn btn--sm" type="button"
+                          data-modal-open="gift-{{ gift.id }}" data-title="ویرایش کد {{ gift.code }}">{{ icon('edit') }}</button>
+                  <form method="post" action="{{ base_url }}/{{ gift.id }}/toggle">
+                    {{ csrf(csrf_token) }}
+                    <button class="btn btn--sm {% if gift.is_active %}btn--warning{% else %}btn--success{% endif %}"
+                            type="submit">{{ icon('zap') }}</button>
+                  </form>
+                  <form method="post" action="{{ base_url }}/{{ gift.id }}/delete"
+                        data-confirm="کد هدیه «{{ gift.code }}» حذف شود؟">
+                    {{ csrf(csrf_token) }}
+                    <button class="btn btn--sm btn--danger" type="submit">{{ icon('trash') }}</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {{ empty_state('هیچ کد هدیه‌ای نساخته‌اید', 'کد هدیه ابزار خوبی برای کمپین‌های تبلیغاتی و جشن‌هاست.', 'gift') }}
+    {% endif %}
+  </div>
+</div>
+
+<div class="modal" id="gift-create" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ base_url }}">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>کد هدیه جدید</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">{{ gift_fields(None) }}</div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ساخت کد</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="gift-bulk" hidden>
+  <div class="modal__panel modal__panel--sm">
+    <form method="post" action="{{ base_url }}/bulk">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>تولید گروهی کد هدیه</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        <div class="form-grid">
+          <div class="field">
+            <label class="label" for="bulk-count">تعداد کد</label>
+            <input class="input input--num" id="bulk-count" name="count" type="number"
+                   min="{{ bulk_min }}" max="{{ bulk_max }}" value="10" required>
+            <div class="hint">بین {{ bulk_min|fa }} و {{ bulk_max|fa }} کد.</div>
+          </div>
+          <div class="field">
+            <label class="label" for="bulk-kind">نوع</label>
+            <select class="select" id="bulk-kind" name="kind">
+              {% for key, label in kinds %}
+                <option value="{{ key }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" for="bulk-value">مقدار</label>
+            <input class="input input--num" id="bulk-value" name="value"
+                   placeholder="کیف پول: مبلغ — درصد: ۱ تا ۱۰۰">
+          </div>
+          <div class="field">
+            <label class="label" for="bulk-uses">حداکثر استفاده هر کد</label>
+            <input class="input input--num" id="bulk-uses" name="max_uses" type="number" min="1" value="1">
+          </div>
+          <div class="field">
+            <label class="label" for="bulk-per">سهم هر کاربر</label>
+            <input class="input input--num" id="bulk-per" name="per_user_limit" type="number" min="1" value="1">
+          </div>
+          <div class="field">
+            <label class="label" for="bulk-exp">انقضا</label>
+            <input class="input" id="bulk-exp" name="expires_at" type="datetime-local">
+          </div>
+          <div class="field field--full">
+            <label class="label" for="bulk-note">یادداشت</label>
+            <input class="input" id="bulk-note" name="note" placeholder="مثلاً: کمپین تلگرام">
+          </div>
+          <div class="field field--full">
+            <label class="switch">
+              <input type="checkbox" name="is_active" value="1" checked>
+              <span class="switch__track"></span><span class="switch__label">کدها فعال باشند</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('layers') }} تولید</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% for gift in rows %}
+<div class="modal" id="gift-{{ gift.id }}" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ base_url }}/{{ gift.id }}">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>ویرایش کد {{ gift.code }}</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">{{ gift_fields(gift) }}</div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ذخیره</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

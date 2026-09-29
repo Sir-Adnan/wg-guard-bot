@@ -1,0 +1,179 @@
+{#
+  رویدادهای سیستم — دو زبانه: رویدادهای ثبت‌شده و ردپای عملیات کارکنان.
+  پاک‌سازی و پشتیبان‌گیری فقط برای مالک نمایش داده می‌شود (سرور هم همین را
+  الزام می‌کند).
+#}
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, pagination, empty_state, csrf with context %}
+
+{% block title %}رویدادهای سیستم{% endblock %}
+{% block header %}رویدادهای سیستم{% endblock %}
+
+{% block page_actions %}
+  {% if staff and staff.is_owner %}
+  <form method="post" action="{{ panel_prefix }}/logs/backup">
+    {{ csrf(csrf_token) }}
+    <button class="btn btn--ghost" type="submit">{{ icon('database') }} پشتیبان‌گیری</button>
+  </form>
+  <form method="post" action="{{ panel_prefix }}/logs/purge"
+        data-confirm="رویدادهای قدیمی‌تر از {{ purge_days|fa }} روز برای همیشه پاک شوند؟">
+    {{ csrf(csrf_token) }}
+    <button class="btn btn--danger" type="submit">{{ icon('trash') }} پاک‌سازی رویدادهای قدیمی</button>
+  </form>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card__body">
+    <div class="tabs">
+      {% for key, label in tabs %}
+      <a class="tab {% if tab == key %}is-active{% endif %}" href="{{ base_url }}?tab={{ key }}">{{ label }}</a>
+      {% endfor %}
+    </div>
+
+    {% if tab == 'system' %}
+    <div class="alert alert--info mt-2">
+      {{ icon('info') }}
+      <div>
+        <div class="strong">این رویدادها هم‌زمان در لاگ کانتینر هم نوشته می‌شوند</div>
+        <div class="small mt-1">
+          برای دیدن جریان زنده روی سرور اجرا کنید:
+          <code class="code">{{ log_channel_cmd }}</code>
+          — هر رویدادی که اینجا می‌بینید، همان‌جا هم با سطح و منبعش ثبت شده است.
+        </div>
+      </div>
+    </div>
+
+    <form class="searchbar mt-2" method="get" action="{{ base_url }}">
+      <input type="hidden" name="tab" value="system">
+      <select class="select" name="level" data-autosubmit>
+        <option value="">همه‌ی سطح‌ها</option>
+        {% for key, label in level_labels.items() %}
+        <option value="{{ key }}" {% if level == key %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <select class="select" name="source" data-autosubmit>
+        <option value="">همه‌ی منابع</option>
+        {% for item in sources %}
+        <option value="{{ item }}" {% if source == item %}selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+      <button class="btn" type="submit">{{ icon('filter') }} اعمال فیلتر</button>
+      {% if level or source %}<a class="btn btn--ghost" href="{{ base_url }}?tab=system">پاک کردن</a>{% endif %}
+    </form>
+    {% else %}
+    <form class="searchbar mt-2" method="get" action="{{ base_url }}">
+      <input type="hidden" name="tab" value="audit">
+      <select class="select" name="action" data-autosubmit>
+        <option value="">همه‌ی عملیات‌ها</option>
+        {% for item in actions %}
+        <option value="{{ item }}" {% if action == item %}selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+      <select class="select" name="staff_id" data-autosubmit>
+        <option value="">همه‌ی کارکنان</option>
+        {% for member in staff_options %}
+        <option value="{{ member.id }}" {% if staff_id == member.id %}selected{% endif %}>
+          {{ member.name or member.login or ('#' ~ member.id) }}
+        </option>
+        {% endfor %}
+      </select>
+      <button class="btn" type="submit">{{ icon('filter') }} اعمال فیلتر</button>
+      {% if action or staff_id %}<a class="btn btn--ghost" href="{{ base_url }}?tab=audit">پاک کردن</a>{% endif %}
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card__body card__body--flush">
+    {% if rows %}
+      <div class="table-wrap">
+        {% if tab == 'system' %}
+        <table class="table">
+          <thead>
+            <tr>
+              <th>زمان</th>
+              <th>سطح</th>
+              <th>منبع</th>
+              <th>پیام</th>
+              <th>جزئیات</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+            <tr>
+              <td class="small nowrap">
+                {{ row.created_at|jdatetime }}
+                <div class="dim">{{ row.created_at|relative }}</div>
+              </td>
+              <td>{{ badge(level_labels.get(row.level.value, row.level.value), level_tones.get(row.level.value)) }}</td>
+              <td><span class="chip">{{ row.source }}</span></td>
+              <td>{{ row.message }}</td>
+              <td>
+                {% set raw = meta_json.get(row.id) %}
+                {% if raw %}
+                <details>
+                  <summary class="small muted">جزئیات</summary>
+                  <pre class="code">{{ raw }}</pre>
+                </details>
+                {% else %}
+                <span class="dim">—</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <table class="table">
+          <thead>
+            <tr>
+              <th>زمان</th>
+              <th>کاربر</th>
+              <th>عملیات</th>
+              <th>موجودیت</th>
+              <th>توضیح</th>
+              <th>IP</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+            <tr>
+              <td class="small nowrap">
+                {{ row.created_at|jdatetime }}
+                <div class="dim">{{ row.created_at|relative }}</div>
+              </td>
+              <td>{{ row.actor_label|none_dash }}</td>
+              <td><span class="chip">{{ row.action }}</span></td>
+              <td class="small">
+                {{ row.entity|none_dash }}
+                {% if row.entity_id %}<span class="code">{{ row.entity_id }}</span>{% endif %}
+              </td>
+              <td>
+                {{ row.description|none_dash }}
+                {% set raw = meta_json.get(row.id) %}
+                {% if raw %}
+                <details>
+                  <summary class="small muted">جزئیات</summary>
+                  <pre class="code">{{ raw }}</pre>
+                </details>
+                {% endif %}
+              </td>
+              <td class="small mono">{{ row.ip|none_dash }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+      </div>
+    {% else %}
+      {{ empty_state('رویدادی برای نمایش نیست',
+                     'با فیلترهای فعلی چیزی پیدا نشد؛ فیلترها را پاک کنید.' if (level or source or action or staff_id)
+                     else 'به‌محض ثبت اولین رویداد، اینجا نمایش داده می‌شود.', 'activity') }}
+    {% endif %}
+  </div>
+  {{ pagination(page, base_url, extra) }}
+</div>
+{% endblock %}

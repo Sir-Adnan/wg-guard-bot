@@ -1,0 +1,53 @@
+{# Login screen — standalone (does not extend base.html: no sidebar pre-auth). #}
+<!DOCTYPE html>
+<html lang="fa" dir="rtl" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>ورود به پنل · {{ app_name }}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%237c5cff'/><path d='M50 20 L76 32 V52 C76 68 64 78 50 82 C36 78 24 68 24 52 V32 Z' fill='white' opacity='.92'/></svg>">
+  <link rel="stylesheet" href="{{ panel_prefix }}/static/css/panel.css?v=1">
+</head>
+<body>
+{% include "partials/icons.html" %}
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <use href="#i-shield"></use>
+      </svg>
+    </div>
+    <h1 class="login-title">{{ app_name }}</h1>
+    <p class="login-sub">برای مدیریت فروشگاه وارد شوید</p>
+
+    {% if error %}
+      <div class="alert alert--danger mb-2">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><use href="#i-alert"></use></svg>
+        <span>{{ error }}</span>
+      </div>
+    {% endif %}
+
+    <form method="post" action="{{ panel_prefix }}/login" autocomplete="on">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="field mb-2">
+        <label class="label" for="login">نام کاربری</label>
+        <input class="input" id="login" name="login" required autofocus
+               autocomplete="username" dir="ltr" placeholder="admin">
+      </div>
+      <div class="field mb-2">
+        <label class="label" for="password">رمز عبور</label>
+        <input class="input" id="password" name="password" type="password" required
+               autocomplete="current-password" dir="ltr" placeholder="••••••••">
+      </div>
+      <button class="btn btn--primary btn--block mt-2" type="submit">ورود به پنل</button>
+    </form>
+
+    <p class="hint text-center mt-3">
+      این صفحه فقط برای مدیران است. کاربران عادی از طریق ربات تلگرام خرید می‌کنند.
+    </p>
+  </div>
+</div>
+<script src="{{ panel_prefix }}/static/js/panel.js?v=1" defer></script>
+</body>
+</html>

@@ -1,0 +1,303 @@
+{#
+  کارکنان و دسترسی — مدیریت اپراتورها (فقط مالک).
+  قواعد ایمنی سمت سرور اجرا می‌شوند و همین‌جا هم به اپراتور توضیح داده شده‌اند.
+#}
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, csrf, empty_state with context %}
+
+{#
+  فیلدهای مشترک فرم ساخت و ویرایش.
+  ``row=None`` یعنی کارمند تازه؛ در حالت ویرایش رمز خالی رمز فعلی را نگه می‌دارد.
+#}
+{% macro staff_fields(row, uid) %}
+<div class="form-grid">
+  <div class="field">
+    <label class="label" for="s-name-{{ uid }}">نام <span class="req">*</span></label>
+    <input class="input" id="s-name-{{ uid }}" name="name" maxlength="128" required
+           value="{{ row.name if row else '' }}" placeholder="مثلاً: مریم رضایی">
+  </div>
+
+  <div class="field">
+    <label class="label" for="s-tg-{{ uid }}">شناسه تلگرام</label>
+    <input class="input input--mono" id="s-tg-{{ uid }}" name="telegram_id" dir="ltr"
+           value="{{ row.telegram_id if row and row.telegram_id else '' }}" placeholder="123456789">
+    <div class="hint">
+      برای دریافت رسیدها و اعلان‌های ربات لازم است؛ خالی بگذارید اگر این کارمند فقط از پنل استفاده می‌کند.
+    </div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="s-role-{{ uid }}">نقش</label>
+    <select class="select" id="s-role-{{ uid }}" name="role">
+      {% for key, label in roles %}
+      <option value="{{ key }}"
+        {% if (row and row.role.value == key) or (not row and key == 'support') %}selected{% endif %}>
+        {{ label }}
+      </option>
+      {% endfor %}
+    </select>
+    <div class="hint">توضیح نقش‌ها در بالای همین صفحه آمده است.</div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="s-login-{{ uid }}">نام کاربری پنل</label>
+    <input class="input input--mono" id="s-login-{{ uid }}" name="login" dir="ltr"
+           autocomplete="off" maxlength="64"
+           value="{{ row.login if row and row.login else '' }}" placeholder="admin">
+    <div class="hint">خالی بگذارید تا این کارمند هیچ دسترسی‌ای به پنل نداشته باشد.</div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="s-pass-{{ uid }}">
+      رمز عبور{% if not row %} <span class="req">*</span>{% endif %}
+    </label>
+    <input class="input" id="s-pass-{{ uid }}" name="password" type="password" dir="ltr"
+           autocomplete="new-password"
+           placeholder="{{ 'خالی = بدون تغییر' if row else 'حداقل ۸ کاراکتر، حرف و رقم' }}">
+    <div class="hint">
+      {% if row %}خالی بگذارید تا رمز فعلی دست‌نخورده بماند.{% else %}اگر نام کاربری پنل را پر می‌کنید، رمز عبور الزامی است.{% endif %}
+      حداقل ۸ کاراکتر و ترکیبی از حرف و رقم.
+    </div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="s-note-{{ uid }}">یادداشت</label>
+    <input class="input" id="s-note-{{ uid }}" name="note" maxlength="255"
+           value="{{ (row.note or '') if row else '' }}" placeholder="مثلاً: شیفت شب پشتیبانی">
+  </div>
+
+  <div class="field">
+    <div class="label">وضعیت و اعلان‌ها</div>
+    <label class="checkbox">
+      <input type="checkbox" name="receive_receipts" value="1"
+             {% if not row or row.receive_receipts %}checked{% endif %}>
+      <span>رسیدهای پرداخت برای این کارمند ارسال شود</span>
+    </label>
+    <label class="checkbox">
+      <input type="checkbox" name="is_active" value="1"
+             {% if not row or row.is_active %}checked{% endif %}>
+      <span>حساب فعال باشد</span>
+    </label>
+    <div class="hint">
+      حساب فعالِ آخرین مالک را نمی‌توان غیرفعال کرد و هیچ‌کس نمی‌تواند حساب خودش را غیرفعال کند.
+    </div>
+  </div>
+</div>
+{% endmacro %}
+
+{% block title %}کارکنان و دسترسی{% endblock %}
+{% block header %}کارکنان و دسترسی{% endblock %}
+
+{% block page_actions %}
+  <button class="btn btn--primary" type="button" data-modal-open="staff-modal-new"
+          data-title="کارمند جدید">{{ icon('user-plus') }} کارمند جدید</button>
+{% endblock %}
+
+{% block content %}
+{# ------------------------------------------------------------- نقش‌ها #}
+<div class="alert alert--info">
+  {{ icon('info') }}
+  <div>
+    <div class="strong">سه نقش، سه سطح دسترسی</div>
+    <ul class="small mt-1">
+      <li><b>مالک:</b> همه‌چیز؛ از جمله کارکنان، پنل‌های WG-Guard و تنظیمات حساس. تنها نقشی که به این صفحه راه دارد.</li>
+      <li><b>مدیر:</b> همه‌چیز جز کارکنان؛ یعنی کاتالوگ، سفارش‌ها، مالی، کاربران و ارسال همگانی.</li>
+      <li><b>پشتیبان:</b> رسیدهای پرداخت، تیکت‌ها و مشاهده‌ی کاتالوگ؛ بدون دسترسی به تنظیمات و امور مالی.</li>
+    </ul>
+    <div class="hint">
+      نام کاربری پنل اختیاری است: کارمندی که نام کاربری ندارد فقط از طریق تلگرام کار می‌کند.
+    </div>
+  </div>
+</div>
+
+{# ---------------------------------------------------------- قواعد ایمنی #}
+<div class="alert alert--warning mt-2">
+  {{ icon('alert') }}
+  <div>
+    <div class="strong">محافظت‌های سیستمی</div>
+    <ul class="small mt-1">
+      <li>آخرین مالک فعال را نمی‌توان غیرفعال، تنزل (تغییر نقش) یا حذف کرد؛ پنل باید همیشه یک مالک فعال داشته باشد.</li>
+      <li>هیچ‌کس نمی‌تواند حساب خودش را غیرفعال یا حذف کند؛ برای کنار گذاشتن دسترسی خود، رمز را به دیگری بسپارید یا از مالک دیگری بخواهید.</li>
+      <li>حذف کارمند، تاریخچه‌ی رویدادها و سفارش‌های ثبت‌شده را پاک نمی‌کند؛ فقط دسترسی او برداشته می‌شود.</li>
+    </ul>
+  </div>
+</div>
+
+{# ---------------------------------------------------------------- جدول #}
+<div class="card mt-2">
+  <div class="card__head">
+    <div class="card__title">{{ icon('key') }} اپراتورها</div>
+    <div class="card__spacer"></div>
+    <input class="input" type="search" style="max-width: 240px"
+           data-filter-target="staff-table" placeholder="جست‌وجو در نام یا نام کاربری…">
+  </div>
+  <div class="card__body card__body--flush">
+    {% if rows %}
+    <div class="table-wrap">
+      <table class="table" id="staff-table">
+        <thead>
+          <tr>
+            <th>نام</th>
+            <th>شناسه تلگرام</th>
+            <th>نقش</th>
+            <th>نام کاربری پنل</th>
+            <th>دریافت رسیدها</th>
+            <th>آخرین ورود</th>
+            <th>وضعیت</th>
+            <th>عملیات</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td>
+              <div class="row">
+                <span class="strong">{{ row.name or '—' }}</span>
+                {% if row.id == staff.id %}<span class="badge badge--brand">خودتان</span>{% endif %}
+              </div>
+              {% if row.note %}<div class="small dim truncate">{{ row.note }}</div>{% endif %}
+            </td>
+            <td>
+              {% if row.telegram_id %}
+              <span class="code copyable" data-copy="{{ row.telegram_id }}">{{ row.telegram_id }}</span>
+              {% else %}<span class="dim">—</span>{% endif %}
+            </td>
+            <td>
+              {% if row.role.value == 'owner' %}{{ badge('مالک', 'brand') }}
+              {% elif row.role.value == 'admin' %}{{ badge('مدیر', 'info') }}
+              {% else %}{{ badge('پشتیبان', 'warning') }}{% endif %}
+            </td>
+            <td>
+              {% if row.login %}<span class="code">{{ row.login }}</span>
+              {% else %}<span class="small dim">بدون دسترسی پنل</span>{% endif %}
+            </td>
+            <td>
+              {% if row.receive_receipts %}{{ badge('بله', 'success') }}
+              {% else %}<span class="small dim">خیر</span>{% endif %}
+            </td>
+            <td class="small dim nowrap">{{ row.last_login_at|jdatetime }}</td>
+            <td>
+              {% if row.is_active %}{{ badge('فعال', 'success') }}
+              {% else %}{{ badge('غیرفعال', 'danger') }}{% endif %}
+            </td>
+            <td class="actions">
+              <button class="btn btn--sm" type="button" data-modal-open="staff-modal-{{ row.id }}"
+                      data-title="ویرایش {{ row.name or row.login or 'کارمند' }}">
+                {{ icon('edit') }} ویرایش
+              </button>
+              <button class="btn btn--sm btn--ghost" type="button"
+                      data-modal-open="staff-pass-modal-{{ row.id }}">
+                {{ icon('key') }} رمز
+              </button>
+              <form method="post" action="{{ base_url }}/{{ row.id }}/toggle"
+                    {% if row.is_active %}data-confirm="دسترسی «{{ row.name or row.login }}» غیرفعال شود؟ تا فعال‌سازی دوباره نمی‌تواند وارد پنل شود."{% endif %}>
+                {{ csrf(csrf_token) }}
+                {% if row.is_active %}
+                <button class="btn btn--sm btn--warning" type="submit">{{ icon('lock') }} غیرفعال</button>
+                {% else %}
+                <button class="btn btn--sm btn--success" type="submit">{{ icon('unlock') }} فعال</button>
+                {% endif %}
+              </form>
+              <form method="post" action="{{ base_url }}/{{ row.id }}/delete"
+                    data-confirm="کارمند «{{ row.name or row.login }}» برای همیشه حذف شود؟ این کار دسترسی او را قطع می‌کند.">
+                {{ csrf(csrf_token) }}
+                <button class="btn btn--sm btn--danger" type="submit">{{ icon('trash') }} حذف</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      {{ empty_state('هنوز کارمندی ثبت نشده', 'با دکمه‌ی «کارمند جدید» اولین اپراتور را اضافه کنید.', 'users') }}
+    {% endif %}
+  </div>
+</div>
+
+{# ------------------------------------------------------- مودال ساخت #}
+<div class="modal" id="staff-modal-new" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ base_url }}">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>کارمند جدید</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        {{ staff_fields(None, 'new') }}
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ساخت کارمند</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ------------------------------------------- مودال ویرایش و رمز هر ردیف #}
+{% for row in rows %}
+<div class="modal" id="staff-modal-{{ row.id }}" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ base_url }}/{{ row.id }}">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>ویرایش {{ row.name or row.login or 'کارمند' }}</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        {{ staff_fields(row, row.id) }}
+        <div class="hint mt-2">
+          برای تغییر رمز، فیلد رمز عبور را پر کنید یا از دکمه‌ی «رمز» در جدول استفاده کنید.
+        </div>
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ذخیره تغییرات</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="staff-pass-modal-{{ row.id }}" hidden>
+  <div class="modal__panel modal__panel--sm">
+    <form method="post" action="{{ base_url }}/{{ row.id }}/password">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>تغییر رمز {{ row.name or row.login or 'کارمند' }}</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        {% if row.login %}
+        <div class="field mb-2">
+          <label class="label" for="p-new-{{ row.id }}">رمز عبور جدید</label>
+          <input class="input" id="p-new-{{ row.id }}" name="password" type="password" dir="ltr"
+                 autocomplete="new-password" required>
+        </div>
+        <div class="field">
+          <label class="label" for="p-confirm-{{ row.id }}">تکرار رمز عبور جدید</label>
+          <input class="input" id="p-confirm-{{ row.id }}" name="password_confirm" type="password"
+                 dir="ltr" autocomplete="new-password" required>
+          <div class="hint">حداقل ۸ کاراکتر و ترکیبی از حرف و رقم.</div>
+        </div>
+        {% else %}
+        <div class="alert alert--warning">
+          {{ icon('alert') }}
+          <span>این کارمند نام کاربری پنل ندارد؛ ابتدا از دکمه‌ی «ویرایش» برای او نام کاربری تعیین کنید.</span>
+        </div>
+        {% endif %}
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        {% if row.login %}
+        <button class="btn btn--primary" type="submit">{{ icon('key') }} تغییر رمز</button>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

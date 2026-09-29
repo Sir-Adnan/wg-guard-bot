@@ -1,0 +1,255 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, stat, empty_state, bar_list with context %}
+
+{% block title %}داشبورد{% endblock %}
+{% block header %}داشبورد{% endblock %}
+
+{% block page_actions %}
+  <a class="btn btn--primary" href="{{ panel_prefix }}/reports">{{ icon('chart') }} گزارش کامل</a>
+{% endblock %}
+
+{% block content %}
+
+{% if warnings %}
+  {% for warning in warnings %}
+    <div class="alert alert--warning">
+      {{ icon('alert') }}<span>{{ warning }}</span>
+    </div>
+  {% endfor %}
+{% endif %}
+
+{# ------------------------------------------------------------- stat strip #}
+<section class="grid grid--stats">
+  {{ stat('درآمد ' ~ days|fa ~ ' روز', summary.revenue_rial|money, 'money',
+          'امروز: ' ~ (summary.revenue_today_rial|money), 'success') }}
+  {{ stat('سفارش‌های تکمیل‌شده', summary.orders_completed|fa, 'check-circle',
+          'میانگین: ' ~ (summary.average_order_rial|money), 'info') }}
+  {{ stat('در انتظار بررسی', (summary.pending_receipts + counters.orders)|fa, 'clock',
+          summary.pending_receipts|fa ~ ' رسید · ' ~ counters.orders|fa ~ ' سفارش', 'warning') }}
+  {{ stat('سرویس فعال', summary.active_services|fa, 'wifi',
+          summary.expiring_soon|fa ~ ' سرویس تا ۳ روز آینده منقضی می‌شود', 'info') }}
+  {{ stat('کاربران جدید', summary.new_users|fa, 'user-plus',
+          'مجموع موجودی کاربران: ' ~ (summary.wallet_liability_rial|money), 'success') }}
+  {{ stat('تیکت‌های باز', open_tickets|fa, 'chat', 'پاسخ‌گویی از بخش تیکت‌ها', 'warning') }}
+</section>
+
+{# ------------------------------------------------------------------ chart #}
+<div class="grid grid--sidebar">
+  <div class="card">
+    <div class="card__head">
+      <div class="card__title">{{ icon('chart') }} فروش {{ days|fa }} روز گذشته</div>
+      <div class="card__spacer"></div>
+      <span class="chip">اوج روزانه: {{ peak_revenue|money }}</span>
+    </div>
+    <div class="card__body">
+      {% if chart %}
+        <svg class="chart" viewBox="0 0 720 160" preserveAspectRatio="none" role="img"
+             aria-label="نمودار درآمد روزانه">
+          <defs>
+            <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#7c5cff"></stop>
+              <stop offset="100%" stop-color="#22d3ee"></stop>
+            </linearGradient>
+          </defs>
+          <line class="axis" x1="0" y1="159" x2="720" y2="159"></line>
+          <line class="grid-line" x1="0" y1="80" x2="720" y2="80"></line>
+          {% set step = 720 / (chart|length) %}
+          {% set barw = step * 0.62 %}
+          {% for point in chart %}
+            <rect class="bar" x="{{ (loop.index0 * step + (step - barw) / 2)|round(1) }}"
+                  y="{{ 158 - point.height }}" width="{{ barw|round(1) }}" height="{{ point.height }}"
+                  data-h="{{ point.height }}" rx="3">
+              <title>{{ point.label }} — {{ point.value|money }} ({{ point.orders|fa }} سفارش)</title>
+            </rect>
+          {% endfor %}
+        </svg>
+        <div class="chart-labels">
+          <span>{{ chart[0].label }}</span>
+          <span>{{ chart[(chart|length // 2)].label }}</span>
+          <span>{{ chart[-1].label }}</span>
+        </div>
+      {% else %}
+        {{ empty_state('داده‌ای برای نمایش نیست', 'به‌محض ثبت اولین فروش، نمودار اینجا نمایش داده می‌شود.', 'chart') }}
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__head">
+      <div class="card__title">{{ icon('server') }} وضعیت پنل‌ها</div>
+      <div class="card__spacer"></div>
+      <a class="btn btn--sm btn--ghost" href="{{ panel_prefix }}/panels">مدیریت</a>
+    </div>
+    <div class="card__body">
+      {% if panels %}
+        <div class="col">
+          {% for panel in panels %}
+            <div class="row row--between">
+              <div class="row">
+                <span class="dot dot--{% if panel.health.value == 'online' %}success{% elif panel.health.value == 'degraded' %}warning{% elif panel.health.value == 'offline' %}danger{% else %}muted{% endif %}"></span>
+                <div>
+                  <div class="strong">{{ panel.name }}</div>
+                  <div class="small dim mono">{{ panel.base_url }}</div>
+                </div>
+              </div>
+              <span class="chip">{{ panel.service_count|fa }} / {{ panel.max_services|fa if panel.max_services else '∞' }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        {{ empty_state('هنوز پنلی اضافه نشده', 'برای فروش سرویس، اولین نود WG-Guard خود را اضافه کنید.', 'server') }}
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# ------------------------------------------------------- receipts + orders #}
+<div class="grid grid--2">
+  <div class="card">
+    <div class="card__head">
+      <div class="card__title">{{ icon('receipt') }} رسیدهای در انتظار تأیید</div>
+      <div class="card__spacer"></div>
+      <a class="btn btn--sm" href="{{ panel_prefix }}/receipts">همه</a>
+    </div>
+    <div class="card__body card__body--flush">
+      {% if pending_receipts %}
+        <div class="table-wrap">
+          <table class="table table--compact">
+            <thead><tr><th>کد</th><th>کاربر</th><th>مبلغ</th><th>زمان</th><th></th></tr></thead>
+            <tbody>
+              {% for receipt in pending_receipts %}
+              <tr>
+                <td><span class="code">{{ receipt.code }}</span></td>
+                <td>{{ receipt.user.display_name if receipt.user else '—' }}</td>
+                <td class="num">{{ receipt.amount_rial|money }}</td>
+                <td class="small dim">{{ receipt.created_at|relative }}</td>
+                <td class="actions">
+                  <a class="btn btn--sm btn--success" href="{{ panel_prefix }}/receipts?q={{ receipt.code }}">بررسی</a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        {{ empty_state('رسیدی در انتظار نیست', 'وقتی مشتری رسید کارت به کارت بفرستد، اینجا نمایش داده می‌شود.', 'check-circle') }}
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__head">
+      <div class="card__title">{{ icon('receipt') }} آخرین سفارش‌ها</div>
+      <div class="card__spacer"></div>
+      <a class="btn btn--sm" href="{{ panel_prefix }}/orders">همه</a>
+    </div>
+    <div class="card__body card__body--flush">
+      {% if recent_orders %}
+        <div class="table-wrap">
+          <table class="table table--compact">
+            <thead><tr><th>کد</th><th>پلن</th><th>مبلغ</th><th>وضعیت</th></tr></thead>
+            <tbody>
+              {% for order in recent_orders %}
+              <tr>
+                <td><span class="code">{{ order.order_code }}</span></td>
+                <td class="truncate">{{ order.plan_name }}</td>
+                <td class="num">{{ order.payable_rial|money }}</td>
+                <td>
+                  {% if order.status.value == 'completed' %}{{ badge('تکمیل‌شده', 'success') }}
+                  {% elif order.status.value in ('paid', 'provisioning') %}{{ badge('در حال ساخت', 'info') }}
+                  {% elif order.status.value in ('pending_payment', 'awaiting_review') %}{{ badge('در انتظار پرداخت', 'warning') }}
+                  {% elif order.status.value == 'failed' %}{{ badge('ناموفق', 'danger') }}
+                  {% else %}{{ badge(order.status.value, None) }}{% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        {{ empty_state('هنوز سفارشی ثبت نشده', 'اولین فروش شما اینجا نمایش داده می‌شود.', 'receipt') }}
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# ------------------------------------------------- breakdowns & attention #}
+<div class="grid grid--3">
+  <div class="card">
+    <div class="card__head"><div class="card__title">{{ icon('box') }} پرفروش‌ترین پلن‌ها</div></div>
+    <div class="card__body">
+      {% if by_plan %}
+        <div class="bar-list">
+          {% set top = by_plan[0].revenue_rial or 1 %}
+          {% for row in by_plan %}
+            <div class="bar-row">
+              <span class="bar-row__label truncate">{{ row.label }}</span>
+              <span class="bar-row__value">{{ row.revenue_rial|money }}</span>
+              <span class="bar-row__track">
+                <span class="bar-row__fill" data-w="{{ ((row.revenue_rial / top) * 100)|round(1) }}%"
+                      style="width:{{ ((row.revenue_rial / top) * 100)|round(1) }}%"></span>
+              </span>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="small dim">داده‌ای موجود نیست.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__head"><div class="card__title">{{ icon('card') }} روش‌های پرداخت</div></div>
+    <div class="card__body">
+      {% if by_method %}
+        {% set topm = by_method[0].revenue_rial or 1 %}
+        <div class="bar-list">
+          {% for row in by_method %}
+            <div class="bar-row">
+              <span class="bar-row__label">{{ row.label }}</span>
+              <span class="bar-row__value">{{ row.revenue_rial|money }}</span>
+              <span class="bar-row__track">
+                <span class="bar-row__fill" data-w="{{ ((row.revenue_rial / topm) * 100)|round(1) }}%"
+                      style="width:{{ ((row.revenue_rial / topm) * 100)|round(1) }}%"></span>
+              </span>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="small dim">داده‌ای موجود نیست.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__head"><div class="card__title">{{ icon('alert') }} نیازمند پیگیری</div></div>
+    <div class="card__body">
+      {% if needs_attention or expiring_services %}
+        <div class="col">
+          {% for order in needs_attention %}
+            <div class="row row--between">
+              <div class="small">
+                <span class="code">{{ order.order_code }}</span>
+                {% if order.status.value == 'failed' %}{{ badge('ساخت ناموفق', 'danger') }}
+                {% else %}{{ badge('در صف ساخت', 'info') }}{% endif %}
+              </div>
+              <a class="btn btn--sm" href="{{ panel_prefix }}/orders?q={{ order.order_code }}">بررسی</a>
+            </div>
+          {% endfor %}
+          {% for service in expiring_services %}
+            <div class="row row--between">
+              <div class="small">
+                <span class="mono">{{ service.wg_username }}</span>
+                {{ badge('انقضا ' ~ (service.expires_at|relative), 'warning') }}
+              </div>
+              <a class="btn btn--sm" href="{{ panel_prefix }}/services?q={{ service.wg_username }}">مشاهده</a>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        {{ empty_state('همه‌چیز مرتب است', 'موردی نیاز به پیگیری فوری ندارد.', 'check-circle') }}
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

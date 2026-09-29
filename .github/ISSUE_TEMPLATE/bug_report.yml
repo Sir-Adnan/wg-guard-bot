@@ -1,0 +1,136 @@
+name: 🐞 Bug report / گزارش باگ
+description: Report a bug so we can fix it — گزارش یک مشکل در ربات یا پنل
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ممنون که وقت می‌گذارید و مشکل را گزارش می‌کنید. 🙏
+        لطفاً فرم زیر را کامل پر کنید تا سریع‌تر بتوانیم مشکل را پیدا و رفع کنیم.
+
+        **هشدار امنیتی:** اگر مشکل مربوط به امنیت است (دسترسی غیرمجاز، لو رفتن داده‌ها و…)
+        این فرم را پر نکنید؛ به‌جایش یک گزارش خصوصی (Security Advisory) ثبت کنید.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: پیش از ثبت گزارش / Before submitting
+      description: لطفاً موارد زیر را بررسی کنید.
+      options:
+        - label: جست‌وجو کردم و این مشکل قبلاً گزارش نشده است. / I searched existing issues.
+          required: true
+        - label: از آخرین نسخه‌ی پروژه استفاده می‌کنم (`bash update.sh`). / I am on the latest version.
+          required: true
+        - label: توکن ربات، رمز دیتابیس و کلید SECRET_KEY را در متن گزارش ننوشته‌ام. / I did not paste any secrets.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: نسخه‌ی نصب‌شده / Version
+      description: خروجی `bash update.sh` یا هش کامیت (commit) یا تگ نسخه را بنویسید.
+      placeholder: "مثال: 1.0.0 یا a1b2c3d"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: بخش مشکل‌دار / Affected component
+      description: کدام قسمت کار نمی‌کند؟
+      options:
+        - ربات تلگرام (خرید، کیف پول، رسید)
+        - پنل مدیریت وب
+        - اتصال به پنل WG-Guard / AmneziaWG
+        - دیتابیس یا مایگریشن‌ها (Alembic)
+        - نصب و داکر (install.sh / docker compose)
+        - پشتیبان‌گیری خودکار
+        - سایر / نمی‌دانم
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: چه اتفاقی افتاد؟ / What happened?
+      description: مشکل را واضح توضیح دهید؛ اگر پیام خطایی دیدید، متن کامل آن را بگذارید.
+      placeholder: وقتی روی دکمه‌ی «خرید» می‌زنم، ربات جواب نمی‌دهد و…
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: انتظار داشتید چه اتفاقی بیفتد؟ / Expected behaviour
+      description: رفتار درست از نظر شما چه بود؟
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: مراحل بازتولید مشکل / Steps to reproduce
+      description: قدم‌به‌قدم بنویسید تا ما هم بتوانیم همان مشکل را ببینیم.
+      placeholder: |
+        ۱. وارد ربات می‌شوم
+        ۲. روی «کیف پول» می‌زنم
+        ۳. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: روش نصب / Installation method
+      description: پروژه را چطور نصب کرده‌اید؟
+      options:
+        - اسکریپت خودکار (bash install.sh)
+        - دستی با docker compose
+        - اجرای مستقیم روی سیستم (بدون داکر)
+        - سایر
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: سیستم‌عامل و نسخه‌ی داکر / OS & Docker version
+      description: خروجی `lsb_release -d` و `docker --version` و `docker compose version`.
+      placeholder: "Ubuntu 24.04 — Docker 29.0 — Compose v5.0"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: bot-mode
+    attributes:
+      label: حالت اجرای ربات / Bot mode
+      description: مقدار BOT_MODE در فایل `.env`.
+      options:
+        - polling
+        - webhook
+        - نمی‌دانم
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: لاگ‌ها / Logs
+      description: |
+        خروجی دستور زیر را بچسبانید (۴۰ خط آخر لاگ ربات):
+        `docker compose logs --tail=40 bot`
+        **قبل از فرستادن، توکن، رمز و آدرس‌های خصوصی را حذف/ستاره‌دار کنید.**
+      render: shell
+      placeholder: "docker compose logs --tail=40 bot"
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: توضیح بیشتر / Anything else?
+      description: هر نکته‌ی دیگری که فکر می‌کنید کمک می‌کند (تصویر، تنظیمات خاص و…).
+    validations:
+      required: false

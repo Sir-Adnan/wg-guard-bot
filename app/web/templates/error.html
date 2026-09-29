@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon with context %}
+
+{% block title %}خطا{% endblock %}
+{% block header %}خطا {{ code|fa }}{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card__body">
+    <div class="empty">
+      {% if code == 403 %}
+        {{ icon('ban') }}
+        <div class="empty__title">دسترسی شما به این بخش مجاز نیست</div>
+        <div class="small">اگر فکر می‌کنید اشتباهی رخ داده، با مالک فروشگاه هماهنگ کنید.</div>
+      {% elif code == 404 %}
+        {{ icon('search') }}
+        <div class="empty__title">صفحه مورد نظر پیدا نشد</div>
+        <div class="small">ممکن است آدرس تغییر کرده یا مورد حذف شده باشد.</div>
+      {% else %}
+        {{ icon('alert') }}
+        <div class="empty__title">خطای داخلی سرور</div>
+        <div class="small">{{ detail }}</div>
+      {% endif %}
+      <a class="btn btn--primary mt-2" href="{{ panel_prefix }}/">بازگشت به داشبورد</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,185 @@
+# ---------------------------------------------------------------------------
+#  WG-Guard Bot — docker compose stack
+#
+#  Quick start:
+#    1) bash install.sh                      (generates .env and configures everything)
+#       ...or manually: cp .env.example .env and fill in SECRET_KEY + BOT_TOKEN
+#    2) docker compose up -d --build
+#    3) open http://<server-ip>:8080/panel/login
+#
+#  Domain + automatic HTTPS (Caddy):
+#    put DOMAIN=bot.example.com in .env, then start with the `tls` profile:
+#      docker compose --profile tls up -d --build
+#    (install.sh does this for you; `bash scripts/set-domain.sh` changes it later)
+#
+#  Every value below can be overridden from .env or from the shell, e.g.
+#    PANEL_PORT=9000 docker compose up -d
+#
+#  NOTE: no top-level `version:` key — it is obsolete in Compose v2+.
+# ---------------------------------------------------------------------------
+
+name: wgguard
+
+services:
+  # -------------------------------------------------------------------------
+  #  PostgreSQL — application database
+  # -------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: wgguard-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-wgguard}
+      POSTGRES_USER: ${POSTGRES_USER:-wgguard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — run install.sh or set it in .env}
+      # Deterministic collation for a fresh cluster (harmless if the volume exists).
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      TZ: ${TIMEZONE:-Asia/Tehran}
+      PGTZ: ${TIMEZONE:-Asia/Tehran}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # No published port by default: the bot reaches the database over the
+    # compose network.  To inspect the database from the host, uncomment:
+    # ports:
+    #   - "127.0.0.1:${POSTGRES_PUBLISH_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -h 127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # -------------------------------------------------------------------------
+  #  Redis — FSM state, locks and cache (the bot falls back to memory if absent)
+  # -------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: wgguard-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # -------------------------------------------------------------------------
+  #  bot — FastAPI panel + aiogram bot (single process, started by the lifespan)
+  # -------------------------------------------------------------------------
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${IMAGE_NAME:-wgguard-bot}:${IMAGE_TAG:-latest}
+    container_name: wgguard-bot
+    init: true
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Container-internal defaults; .env wins for everything it defines.
+      POSTGRES_HOST: ${POSTGRES_HOST:-db}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-wgguard}
+      POSTGRES_USER: ${POSTGRES_USER:-wgguard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — run install.sh or set it in .env}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      PANEL_HOST: ${PANEL_HOST:-0.0.0.0}
+      PANEL_PORT: ${PANEL_PORT:-8080}
+      TZ: ${TIMEZONE:-Asia/Tehran}
+    ports:
+      # PANEL_BIND controls the host side: 0.0.0.0 for direct access, 127.0.0.1
+      # when Caddy (the `tls` profile) is the only public entry point.
+      - "${PANEL_BIND:-0.0.0.0}:${PANEL_PORT:-8080}:${PANEL_PORT:-8080}"
+    volumes:
+      # pg_dump output (wgguard-*.sql).  Bind-mount alternative for easy host
+      # access:  ./backups:/app/backups
+      - backups:/app/backups
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${PANEL_PORT:-8080}/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # -------------------------------------------------------------------------
+  #  caddy — reverse proxy with automatic HTTPS (Let's Encrypt)
+  #
+  #  Only started with the `tls` profile, so a deployment without a domain never
+  #  runs it:
+  #      docker compose --profile tls up -d --build
+  #
+  #  Certificates are stored in the `caddy_data` volume and renewed by Caddy
+  #  itself ~30 days before expiry — no cron job, no certbot.
+  # -------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    container_name: wgguard-caddy
+    profiles: ["tls"]
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:-}
+      # Caddy's `email` directive must always receive a value, so an empty
+      # ACME_EMAIL falls back to a placeholder for the configured domain (no
+      # expiry notices are sent in that case, but certificates still work).
+      ACME_EMAIL: ${ACME_EMAIL:-admin@${DOMAIN:-localhost}}
+      TZ: ${TIMEZONE:-Asia/Tehran}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      bot:
+        condition: service_healthy
+    stop_grace_period: 15s
+    healthcheck:
+      # `caddy validate` needs the env vars; a config reload check is cheap.
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pgdata:
+  redisdata:
+  backups:
+  # Let's Encrypt certificates + ACME account.  Losing this volume means Caddy
+  # has to re-issue certificates (subject to Let's Encrypt rate limits).
+  caddy_data:
+  caddy_config:

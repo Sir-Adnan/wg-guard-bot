@@ -1,0 +1,129 @@
+{#
+  متن‌های ربات — ویرایشگر همه‌ی متن‌های ارسالی ربات.
+  فرم ذخیره یکی است ولی فقط فیلدهای تغییرکرده در سرور نوشته می‌شوند.
+#}
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, csrf, empty_state with context %}
+
+{% block title %}متن‌های ربات{% endblock %}
+{% block header %}متن‌های ربات{% endblock %}
+
+{% block page_actions %}
+  {% if sections %}
+  <button class="btn btn--primary" type="submit" form="texts-form">{{ icon('check') }} ذخیره تغییرات</button>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+{# --------------------------------------------------------------- راهنما #}
+<div class="alert alert--info">
+  {{ icon('info') }}
+  <div>
+    <div class="strong">راهنمای نوشتن متن</div>
+    <ul class="small mt-1">
+      <li>جاگیرهای آکولادی مانند <code class="code">{name}</code> را ربات پر می‌کند؛ آن‌ها را دست‌نخورده بگذارید.</li>
+      <li><code class="code">{e:cart}</code> ایموجی پرمیوم همان کلید را درج می‌کند؛ تنظیم آن در صفحه‌ی «دکمه‌ها و ایموجی» است.</li>
+      <li>تگ‌های HTML مجاز: <code class="code">&lt;b&gt;</code>، <code class="code">&lt;i&gt;</code>، <code class="code">&lt;code&gt;</code> و <code class="code">&lt;blockquote&gt;</code>.</li>
+      <li>برای پاراگراف تازه یک خط خالی بگذارید و از ایموجی‌های عادی هم می‌توانید استفاده کنید.</li>
+    </ul>
+    <div class="hint">
+      متن‌های سفارشی تا وقتی «بازنشانی به پیش‌فرض» را نزنید باقی می‌مانند؛ تغییرات بلافاصله و بدون ری‌استارت ربات اعمال می‌شود.
+    </div>
+  </div>
+</div>
+
+{# ------------------------------------------------------- نوار ابزار و گروه #}
+<div class="card">
+  <div class="card__body">
+    <form class="searchbar" method="get" action="{{ panel_prefix }}/texts">
+      {% if active_group %}<input type="hidden" name="group" value="{{ active_group }}">{% endif %}
+      <input class="input" type="search" name="q" value="{{ q }}" placeholder="جست‌وجو در کلید یا متن…">
+      <button class="btn" type="submit">{{ icon('search') }} جست‌وجو</button>
+      {% if q %}
+      <a class="btn btn--ghost"
+         href="{{ panel_prefix }}/texts{% if active_group %}?group={{ active_group }}{% endif %}">پاک کردن</a>
+      {% endif %}
+    </form>
+
+    <div class="tabs mt-2">
+      <a class="tab {% if not active_group %}is-active{% endif %}"
+         href="{{ panel_prefix }}/texts{% if q %}?q={{ q|urlencode }}{% endif %}">همه‌ی گروه‌ها</a>
+      {% for tab in tabs %}
+      <a class="tab {% if active_group == tab.key %}is-active{% endif %}"
+         href="{{ panel_prefix }}/texts?group={{ tab.key }}{% if q %}&q={{ q|urlencode }}{% endif %}">
+        {{ tab.label }} <span class="dim small">({{ tab.count|fa }})</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{# ------------------------------------------------------------ فرم ذخیره #}
+<form id="texts-form" method="post" action="{{ panel_prefix }}/texts">
+  {{ csrf(csrf_token) }}
+  {% if active_group %}<input type="hidden" name="group" value="{{ active_group }}">{% endif %}
+  {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+
+  {% if sections %}
+    {% for section in sections %}
+    <div class="card mt-2">
+      <div class="card__head">
+        <div class="card__title">{{ icon('type') }} {{ section.label }}</div>
+        <div class="card__spacer"></div>
+        <span class="card__sub">
+          {{ section.count|fa }} متن{% if section.custom_count %} · {{ section.custom_count|fa }} سفارشی{% endif %}
+        </span>
+      </div>
+      <div class="card__body">
+        <div class="col">
+          {% for row in section.rows %}
+          <div class="field">
+            <div class="row row--between">
+              <label class="label" for="t-{{ row.key }}">
+                <code class="code">{{ row.key }}</code>
+                {% if row.is_custom %}{{ badge('سفارشی', 'brand') }}{% endif %}
+              </label>
+              <div class="row">
+                <button class="btn btn--ghost btn--sm" type="button" data-copy="{{ row.key }}"
+                        title="کپی کلید متن">{{ icon('copy') }} کپی</button>
+                <button class="btn btn--ghost btn--sm" type="submit" form="reset-{{ row.key }}">
+                  {{ icon('refresh') }} بازنشانی به پیش‌فرض
+                </button>
+              </div>
+            </div>
+            <textarea class="textarea" id="t-{{ row.key }}" name="value__{{ row.key }}"
+                      spellcheck="false">{{ row.value }}</textarea>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+
+    <div class="row row--between mt-3">
+      <span class="hint">فقط متن‌هایی که تغییر داده‌اید ذخیره می‌شوند.</span>
+      <button class="btn btn--primary" type="submit">{{ icon('check') }} ذخیره تغییرات</button>
+    </div>
+  {% else %}
+    <div class="card mt-2">
+      {{ empty_state('متنی پیدا نشد', 'عبارت جست‌وجو را کوتاه‌تر کنید یا گروه دیگری را انتخاب کنید.', 'type') }}
+    </div>
+  {% endif %}
+</form>
+
+{#
+  فرم‌های بازنشانی جدا از فرم اصلی‌اند تا فرم تودرتو نداشته باشیم؛
+  دکمه‌های داخل فرم بزرگ با ویژگی form="…" به این‌ها وصل می‌شوند و
+  پیام تأیید روی خودِ فرم می‌نشیند (panel.js روی رویداد submit فرم گوش می‌دهد).
+#}
+{% for section in sections %}
+  {% for row in section.rows %}
+  <form id="reset-{{ row.key }}" method="post" action="{{ panel_prefix }}/texts/{{ row.key }}/reset"
+        data-confirm="متن «{{ row.key }}» به نسخه‌ی پیش‌فرض بازگردد؟" hidden>
+    {{ csrf(csrf_token) }}
+    <input type="hidden" name="group" value="{{ active_group }}">
+    <input type="hidden" name="q" value="{{ q }}">
+  </form>
+  {% endfor %}
+{% endfor %}
+{% endblock %}

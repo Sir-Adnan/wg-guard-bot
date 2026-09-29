@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, pagination, empty_state, csrf, switch_field with context %}
+
+{% block title %}پلن‌ها{% endblock %}
+{% block header %}پلن‌ها{% endblock %}
+{% block page_actions %}
+  <button class="btn btn--primary" data-modal-open="plan-create" data-title="پلن جدید">
+    {{ icon('plus') }} پلن جدید
+  </button>
+{% endblock %}
+
+{% block content %}
+
+{% macro plan_fields(p) -%}
+<div class="form-grid">
+  <div class="field">
+    <label class="label" for="name-{{ p.id if p else 'new' }}">نام پلن <span class="req">*</span></label>
+    <input class="input" id="name-{{ p.id if p else 'new' }}" name="name" required
+           value="{{ p.name if p else '' }}" placeholder="مثلاً: یک ماهه ۵۰ گیگ">
+  </div>
+
+  <div class="field">
+    <label class="label" for="cat-{{ p.id if p else 'new' }}">دسته‌بندی</label>
+    <select class="select" id="cat-{{ p.id if p else 'new' }}" name="category_id">
+      <option value="">— بدون دسته —</option>
+      {% for depth, category in category_options %}
+        <option value="{{ category.id }}" {% if p and p.category_id == category.id %}selected{% endif %}>
+          {{ '—' * depth }} {{ category.name }}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label class="label" for="panel-{{ p.id if p else 'new' }}">پنل (نود)</label>
+    <select class="select" id="panel-{{ p.id if p else 'new' }}" name="panel_id">
+      <option value="">انتخاب خودکار (کم‌بارترین پنل)</option>
+      {% for panel in panels %}
+        <option value="{{ panel.id }}" {% if p and p.panel_id == panel.id %}selected{% endif %}>{{ panel.name }}</option>
+      {% endfor %}
+    </select>
+    <div class="hint">در حالت خودکار، سرویس روی پنلی ساخته می‌شود که کمترین تعداد سرویس را دارد.</div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="traffic-{{ p.id if p else 'new' }}">حجم (گیگابایت)</label>
+    <input class="input input--num" id="traffic-{{ p.id if p else 'new' }}" name="traffic_gb" type="number" min="0"
+           value="{{ p.traffic_gb if p and p.traffic_gb else '' }}" placeholder="خالی = نامحدود">
+  </div>
+
+  <div class="field">
+    <label class="label" for="days-{{ p.id if p else 'new' }}">مدت (روز)</label>
+    <input class="input input--num" id="days-{{ p.id if p else 'new' }}" name="duration_days" type="number" min="0"
+           value="{{ p.duration_days if p and p.duration_days else '' }}" placeholder="خالی = نامحدود">
+    <div class="hint">۳۰ = یک ماه، ۹۰ = سه ماه، ۱۸۰ = شش ماه، ۳۶۵ = یک سال.</div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="devices-{{ p.id if p else 'new' }}">تعداد دستگاه</label>
+    <input class="input input--num" id="devices-{{ p.id if p else 'new' }}" name="device_limit" type="number" min="1"
+           value="{{ p.device_limit if p else 1 }}">
+  </div>
+
+  <div class="field">
+    <label class="label" for="down-{{ p.id if p else 'new' }}">محدودیت سرعت دانلود (کیلوبیت)</label>
+    <input class="input input--num" id="down-{{ p.id if p else 'new' }}" name="speed_limit_down_kbps" type="number" min="0"
+           value="{{ p.speed_limit_down_kbps if p and p.speed_limit_down_kbps else '' }}" placeholder="خالی = بدون محدودیت">
+  </div>
+
+  <div class="field">
+    <label class="label" for="up-{{ p.id if p else 'new' }}">محدودیت سرعت آپلود (کیلوبیت)</label>
+    <input class="input input--num" id="up-{{ p.id if p else 'new' }}" name="speed_limit_up_kbps" type="number" min="0"
+           value="{{ p.speed_limit_up_kbps if p and p.speed_limit_up_kbps else '' }}" placeholder="خالی = بدون محدودیت">
+  </div>
+
+  <div class="field">
+    <label class="label" for="price-{{ p.id if p else 'new' }}">قیمت ({{ currency_label }}) <span class="req">*</span></label>
+    <input class="input input--num" id="price-{{ p.id if p else 'new' }}" name="price" required
+           value="{{ p.price_rial|toman if p else '' }}" placeholder="250000">
+    <div class="hint">مبلغ نهایی که مشتری می‌پردازد.</div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="old-{{ p.id if p else 'new' }}">قیمت قبل از تخفیف ({{ currency_label }})</label>
+    <input class="input input--num" id="old-{{ p.id if p else 'new' }}" name="old_price"
+           value="{{ p.old_price_rial|toman if p and p.old_price_rial else '' }}" placeholder="اختیاری">
+  </div>
+
+  <div class="field">
+    <label class="label" for="cost-{{ p.id if p else 'new' }}">قیمت تمام‌شده ({{ currency_label }})</label>
+    <input class="input input--num" id="cost-{{ p.id if p else 'new' }}" name="cost"
+           value="{{ p.cost_rial|toman if p and p.cost_rial else '' }}" placeholder="اختیاری — برای محاسبه سود">
+  </div>
+
+  <div class="field">
+    <label class="label" for="badge-{{ p.id if p else 'new' }}">برچسب روی کارت پلن</label>
+    <input class="input" id="badge-{{ p.id if p else 'new' }}" name="badge" maxlength="32"
+           value="{{ p.badge if p and p.badge else '' }}" placeholder="مثلاً: پرفروش">
+  </div>
+
+  <div class="field">
+    <label class="label" for="sort-{{ p.id if p else 'new' }}">ترتیب نمایش</label>
+    <input class="input input--num" id="sort-{{ p.id if p else 'new' }}" name="sort_order" type="number"
+           value="{{ p.sort_order if p else 0 }}">
+    <div class="hint">عدد کوچک‌تر بالاتر نمایش داده می‌شود.</div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="policy-{{ p.id if p else 'new' }}">شروع مدت‌زمان</label>
+    <select class="select" id="policy-{{ p.id if p else 'new' }}" name="start_policy">
+      {% for key, label in start_policies %}
+        <option value="{{ key }}" {% if p and p.start_policy == key %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label class="label" for="tpl-{{ p.id if p else 'new' }}">الگوی نام کاربری روی پنل</label>
+    <input class="input input--mono" id="tpl-{{ p.id if p else 'new' }}" name="username_template"
+           value="{{ p.username_template if p else 'wg{tg}' }}" dir="ltr">
+    <div class="hint" dir="ltr">{tg} = Telegram ID, {id} = order id, {rand} = random</div>
+  </div>
+
+  <div class="field field--full">
+    <label class="label" for="desc-{{ p.id if p else 'new' }}">توضیحات</label>
+    <textarea class="textarea" id="desc-{{ p.id if p else 'new' }}" name="description" rows="2">{{ p.description if p and p.description else '' }}</textarea>
+  </div>
+
+  <div class="field field--full">
+    <label class="label" for="features-{{ p.id if p else 'new' }}">ویژگی‌ها (هر خط یک مورد)</label>
+    <textarea class="textarea" id="features-{{ p.id if p else 'new' }}" name="features" rows="3"
+      placeholder="اتصال نامحدود&#10;پشتیبانی ۲۴ ساعته&#10;مناسب گیمینگ">{{ (p.features or [])|join('\n') if p else '' }}</textarea>
+  </div>
+
+  <div class="field field--full">
+    <label class="label" for="stock-{{ p.id if p else 'new' }}">موجودی (برای فروش محدود)</label>
+    <input class="input input--num" id="stock-{{ p.id if p else 'new' }}" name="stock" type="number" min="0"
+           value="{{ p.stock if p and p.stock is not none else '' }}" placeholder="خالی = نامحدود"
+           {% if p and p.is_unlimited_stock %}disabled{% endif %}>
+  </div>
+
+  <div class="field field--full">
+    <div class="row" style="gap:22px">
+      <label class="switch">
+        <input type="checkbox" name="is_active" value="1" {% if not p or p.is_active %}checked{% endif %}>
+        <span class="switch__track"></span><span class="switch__label">فعال (قابل خرید)</span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" name="is_featured" value="1" {% if p and p.is_featured %}checked{% endif %}>
+        <span class="switch__track"></span><span class="switch__label">پیشنهاد ویژه</span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" name="is_test" value="1" {% if p and p.is_test %}checked{% endif %}>
+        <span class="switch__track"></span><span class="switch__label">پلن تست (رایگان)</span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" name="is_unlimited_stock" value="1" {% if not p or p.is_unlimited_stock %}checked{% endif %}>
+        <span class="switch__track"></span><span class="switch__label">موجودی نامحدود</span>
+      </label>
+    </div>
+  </div>
+</div>
+{%- endmacro %}
+
+<div class="card">
+  <div class="card__head">
+    <div class="card__title">{{ icon('box') }} کاتالوگ سرویس‌ها</div>
+    <div class="card__spacer"></div>
+    <span class="chip">{{ page.total|fa }} پلن</span>
+  </div>
+  <div class="card__body card__body--flush">
+    {% if rows %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>نام</th><th>دسته‌بندی</th><th>حجم</th><th>مدت</th><th>دستگاه</th>
+              <th>قیمت</th><th>وضعیت</th><th>فروش</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for plan in rows %}
+            <tr>
+              <td>
+                <div class="strong">{{ plan.name }}</div>
+                {% if plan.badge %}<span class="badge badge--brand">{{ plan.badge }}</span>{% endif %}
+                {% if plan.wg_plan_id %}<div class="small dim mono">{{ plan.wg_plan_id[:12] }}…</div>{% endif %}
+              </td>
+              <td class="small muted">
+                {% if plan.category_node %}{{ plan.category_node.name }}{% else %}<span class="dim">بدون دسته</span>{% endif %}
+              </td>
+              <td class="num">{{ plan.traffic_gb|gb }}</td>
+              <td class="num">
+                {% if plan.duration_days %}
+                  {% if plan.duration_days % 30 == 0 %}{{ (plan.duration_days // 30)|fa }} ماه{% else %}{{ plan.duration_days|fa }} روز{% endif %}
+                {% else %}نامحدود{% endif %}
+              </td>
+              <td class="num">{{ plan.device_limit|fa }}</td>
+              <td class="num">
+                <div class="strong">{{ plan.price_rial|money }}</div>
+                {% if plan.discount_percent %}<span class="badge badge--success">{{ plan.discount_percent|fa }}٪ تخفیف</span>{% endif %}
+              </td>
+              <td>
+                {% if plan.is_test %}{{ badge('تست', 'info') }}
+                {% elif not plan.is_active %}{{ badge('غیرفعال', 'danger') }}
+                {% elif not plan.is_unlimited_stock and not plan.stock %}{{ badge('ناموجود', 'warning') }}
+                {% else %}{{ badge('فعال', 'success') }}{% endif %}
+                {% if plan.is_featured %}<span class="badge badge--warning">ویژه</span>{% endif %}
+              </td>
+              <td class="num">{{ plan.sales_count|fa }}</td>
+              <td>
+                <div class="actions">
+                  <button class="btn btn--sm" type="button"
+                          data-modal-open="plan-{{ plan.id }}" data-title="ویرایش پلن">{{ icon('edit') }}</button>
+
+                  <form method="post" action="{{ base_url }}/{{ plan.id }}/toggle">
+                    {{ csrf(csrf_token) }}
+                    <button class="btn btn--sm {% if plan.is_active %}btn--warning{% else %}btn--success{% endif %}"
+                            type="submit" title="{% if plan.is_active %}غیرفعال کردن{% else %}فعال کردن{% endif %}">
+                      {{ icon('zap') }}
+                    </button>
+                  </form>
+
+                  <form method="post" action="{{ base_url }}/{{ plan.id }}/duplicate">
+                    {{ csrf(csrf_token) }}
+                    <button class="btn btn--sm" type="submit" title="کپی پلن">{{ icon('copy') }}</button>
+                  </form>
+
+                  <form method="post" action="{{ base_url }}/{{ plan.id }}/delete"
+                        data-confirm="پلن «{{ plan.name }}» حذف شود؟ این کار قابل بازگشت نیست.">
+                    {{ csrf(csrf_token) }}
+                    <button class="btn btn--sm btn--danger" type="submit" title="حذف">{{ icon('trash') }}</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {{ empty_state('هنوز پلنی نساخته‌اید', 'با دکمه «پلن جدید» اولین سرویس فروشگاه را بسازید.', 'box') }}
+    {% endif %}
+  </div>
+  {{ pagination(page, base_url) }}
+</div>
+
+{# ------------------------------------------------------------- modals #}
+<div class="modal" id="plan-create" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ base_url }}">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>پلن جدید</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">{{ plan_fields(None) }}</div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ساخت پلن</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% for plan in rows %}
+<div class="modal" id="plan-{{ plan.id }}" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ base_url }}/{{ plan.id }}">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>ویرایش «{{ plan.name }}»</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">{{ plan_fields(plan) }}</div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ذخیره تغییرات</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, csrf with context %}
+
+{% block title %}تنظیمات فروشگاه{% endblock %}
+{% block header %}تنظیمات فروشگاه{% endblock %}
+{% block page_subtitle %}{{ page_subtitle }}{% endblock %}
+
+{% block content %}
+
+{# ------------------------------------------------------------ deployment #}
+<div class="card">
+  <div class="card__head">
+    <div class="card__title">{{ icon('server') }} وضعیت استقرار</div>
+    <div class="card__spacer"></div>
+    <span class="chip">نسخه {{ version }}</span>
+  </div>
+  <div class="card__body">
+    <div class="grid grid--3">
+      <dl class="kv">
+        <dt>محیط اجرا</dt><dd>{{ deployment.env_label }}</dd>
+        <dt>حالت ربات</dt><dd>{{ deployment.bot_mode_label }}</dd>
+        <dt>منطقه زمانی</dt><dd class="mono">{{ deployment.timezone }}</dd>
+      </dl>
+      <dl class="kv">
+        <dt>آدرس پنل</dt><dd class="mono truncate">{{ deployment.panel_base_url }}</dd>
+        <dt>مسیر پنل</dt><dd class="mono">{{ deployment.panel_prefix }}</dd>
+        <dt>واحد نمایش پول</dt>
+        <dd>{% if deployment.currency_display == 'toman' %}تومان{% else %}ریال{% endif %}</dd>
+      </dl>
+      <dl class="kv">
+        <dt>توکن ربات</dt>
+        <dd>
+          {% if deployment.bot_token_set %}{{ badge('تنظیم شده', 'success') }}
+          {% else %}{{ badge('تنظیم نشده', 'danger') }}{% endif %}
+        </dd>
+        <dt>پنل مدیریت در ربات</dt>
+        <dd>دستور <span class="code">{{ deployment.bot_admin_command }}</span></dd>
+      </dl>
+    </div>
+    <div class="hint mt-3">
+      این مقادیر از فایل <span class="code">.env</span> خوانده می‌شوند و برای تغییرشان باید سرور را دوباره راه‌اندازی کنید.
+      توکن ربات به‌عمد هرگز نمایش داده نمی‌شود.
+    </div>
+  </div>
+</div>
+
+{# -------------------------------------------------------------- sections #}
+{% for section in sections %}
+<div class="card" id="group-{{ section.key }}">
+  <div class="card__head">
+    <div class="card__title">{{ icon(section.icon) }} {{ section.label }}</div>
+    <div class="card__spacer"></div>
+    {% if section.owner_only %}{{ badge('فقط مالک', 'warning') }}{% endif %}
+    <span class="chip">{{ section.count|fa }} گزینه</span>
+  </div>
+
+  <form method="post" action="{{ panel_prefix }}/settings">
+    {{ csrf(csrf_token) }}
+    <input type="hidden" name="group" value="{{ section.key }}">
+
+    <div class="card__body">
+      <div class="form-grid">
+        {% for spec in section.specs %}
+          {% set value = values.get(spec.key, spec.default) %}
+
+          {% if spec.type == 'bool' %}
+            <div class="field">
+              <label class="switch">
+                <input type="checkbox" name="{{ spec.key }}" value="1" {% if value %}checked{% endif %}>
+                <span class="switch__track"></span>
+                <span class="switch__label">{{ spec.label }}</span>
+              </label>
+              {% if spec.help %}<div class="hint">{{ spec.help }}</div>{% endif %}
+            </div>
+
+          {% elif spec.type == 'choice' %}
+            <div class="field">
+              <label class="label" for="f-{{ spec.key }}">{{ spec.label }}</label>
+              <select class="select" id="f-{{ spec.key }}" name="{{ spec.key }}">
+                {% for choice_key, choice_label in spec.choices %}
+                  <option value="{{ choice_key }}" {% if value == choice_key %}selected{% endif %}>{{ choice_label }}</option>
+                {% endfor %}
+              </select>
+              {% if spec.help %}<div class="hint">{{ spec.help }}</div>{% endif %}
+            </div>
+
+          {% elif spec.type == 'text' %}
+            <div class="field field--full">
+              <label class="label" for="f-{{ spec.key }}">{{ spec.label }}</label>
+              <textarea class="textarea" id="f-{{ spec.key }}" name="{{ spec.key }}" rows="3">{{ value or '' }}</textarea>
+              {% if spec.help %}<div class="hint">{{ spec.help }}</div>{% endif %}
+            </div>
+
+          {% elif spec.type == 'money' %}
+            <div class="field">
+              <label class="label" for="f-{{ spec.key }}">{{ spec.label }} ({{ currency_label }})</label>
+              <input class="input input--num" id="f-{{ spec.key }}" name="{{ spec.key }}"
+                     value="{{ (value or 0)|toman }}">
+              {% if spec.help %}<div class="hint">{{ spec.help }}</div>{% endif %}
+            </div>
+
+          {% elif spec.type == 'int' or spec.type == 'float' %}
+            <div class="field">
+              <label class="label" for="f-{{ spec.key }}">{{ spec.label }}</label>
+              <input class="input input--num" id="f-{{ spec.key }}" name="{{ spec.key }}"
+                     type="number" {% if spec.type == 'float' %}step="0.1"{% endif %}
+                     {% if spec.minimum is not none %}min="{{ spec.minimum }}"{% endif %}
+                     {% if spec.maximum is not none %}max="{{ spec.maximum }}"{% endif %}
+                     value="{{ value if value is not none else '' }}">
+              {% if spec.help %}<div class="hint">{{ spec.help }}</div>{% endif %}
+            </div>
+
+          {% else %}
+            <div class="field">
+              <label class="label" for="f-{{ spec.key }}">{{ spec.label }}</label>
+              <input class="input" id="f-{{ spec.key }}" name="{{ spec.key }}" value="{{ value or '' }}">
+              {% if spec.help %}<div class="hint">{{ spec.help }}</div>{% endif %}
+            </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="card__foot">
+      <button class="btn btn--primary" type="submit">{{ icon('check') }} ذخیره «{{ section.label }}»</button>
+    </div>
+  </form>
+
+  <div class="card__foot">
+    <form method="post" action="{{ panel_prefix }}/settings/reset"
+          data-confirm="همه تنظیمات گروه «{{ section.label }}» به مقدار پیش‌فرض برگردند؟">
+      {{ csrf(csrf_token) }}
+      <input type="hidden" name="group" value="{{ section.key }}">
+      <button class="btn btn--ghost btn--sm" type="submit">{{ icon('refresh') }} بازنشانی این گروه</button>
+    </form>
+  </div>
+</div>
+{% endfor %}
+
+{% endblock %}

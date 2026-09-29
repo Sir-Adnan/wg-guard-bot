@@ -1,0 +1,274 @@
+{#
+  ارسال همگانی — ساخت کارزار پیام گروهی، زمان‌بندی و پیگیری پیشرفت.
+  ارسال واقعی در پس‌زمینه و با فاصله‌ی زمانی انجام می‌شود، پس این صفحه
+  فقط «نیت» را ثبت می‌کند و بقیه را به سرویس می‌سپارد.
+#}
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, csrf, empty_state with context %}
+
+{% block title %}ارسال همگانی{% endblock %}
+{% block header %}ارسال همگانی{% endblock %}
+
+{% block content %}
+{# --------------------------------------------------------------- هشدار نرخ #}
+<div class="alert alert--warning">
+  {{ icon('alert') }}
+  <div>
+    <div class="strong">تلگرام برای ارسال انبوه محدودیت سرعت دارد</div>
+    <div class="small mt-1">
+      ربات بین پیام‌ها به‌صورت خودکار فاصله می‌گذارد تا حساب ربات محدود یا مسدود نشود؛
+      بنابراین ارسال به چند هزار کاربر چند دقیقه طول می‌کشد و کاملاً طبیعی است.
+      می‌توانید این صفحه را ببندید: ارسال در پس‌زمینه ادامه پیدا می‌کند و ستون «ارسال‌شده/کل» به‌روز می‌شود.
+      هر کارزاری که لغو شود، بعداً با دکمه‌ی «ادامه» از همان‌جا که مانده پیگیری می‌شود.
+    </div>
+  </div>
+</div>
+
+{# ------------------------------------------------------- فرم و پیش‌نمایش #}
+<div class="grid grid--sidebar">
+  <div class="card">
+    <div class="card__head">
+      <div class="card__title">{{ icon('send') }} پیام تازه</div>
+      <div class="card__spacer"></div>
+      <span class="card__sub">مخاطبان به‌صورت زنده شمرده می‌شوند</span>
+    </div>
+    <div class="card__body">
+      <form id="broadcast-form" method="post" action="{{ base_url }}">
+        {{ csrf(csrf_token) }}
+
+        <div class="field">
+          <label class="label" for="b-text">متن پیام <span class="req">*</span></label>
+          <textarea class="textarea" id="b-text" name="text" required
+                    placeholder="سلام {name} عزیز…"></textarea>
+          <div class="hint">
+            تگ‌های <code class="code">&lt;b&gt;</code>، <code class="code">&lt;i&gt;</code> و
+            <code class="code">&lt;code&gt;</code> پشتیبانی می‌شوند و جایگیرهای ایموجی پرمیوم
+            مانند <code class="code">{e:cart}</code> با تصویر اختصاصی همان کلید فرستاده می‌شوند.
+            برای پاراگراف تازه یک خط خالی بگذارید.
+          </div>
+        </div>
+
+        <div class="form-grid mt-3">
+          <div class="field">
+            <label class="label" for="b-audience">گروه مخاطبان</label>
+            <select class="select" id="b-audience" name="audience">
+              {% for item in audiences %}
+              <option value="{{ item.key }}" data-count="{{ item.count }}">
+                {{ item.label }} — {{ item.count|fa }} نفر
+              </option>
+              {% endfor %}
+            </select>
+            <div class="hint" id="audience-hint">گیرندگان بر پایه‌ی وضعیت سرویس و موجودی انتخاب می‌شوند.</div>
+          </div>
+
+          <div class="field">
+            <label class="label" for="b-media-type">نوع پیوست</label>
+            <select class="select" id="b-media-type" name="media_type">
+              {% for key, label in media_types %}
+              <option value="{{ key }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+            <div class="hint">پیوست اختیاری است؛ متن پیام در هر حالت الزامی است.</div>
+          </div>
+
+          <div class="field">
+            <label class="label" for="b-media">شناسه فایل (file_id)</label>
+            <input class="input input--mono" id="b-media" name="media_file_id" dir="ltr"
+                   placeholder="AgACAgQAAxkBAAI…">
+            <div class="hint">
+              فایل را یک‌بار برای ربات بفرستید و شناسه‌ی آن را از پیام لاگ یا خروجی ربات بردارید.
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="label" for="b-scheduled">زمان‌بندی ارسال</label>
+            <input class="input" id="b-scheduled" name="scheduled_at" type="datetime-local">
+            <div class="hint">
+              خالی بگذارید تا همین حالا ارسال شود؛ زمان وارد‌شده به وقت UTC ذخیره می‌شود.
+            </div>
+          </div>
+        </div>
+
+        <div class="row row--between mt-3">
+          <span class="hint">ارسال به‌صورت خودکار با فاصله انجام می‌شود؛ دکمه را چند بار نزنید.</span>
+          <button class="btn btn--primary" type="submit">{{ icon('send') }} ثبت و ارسال</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__head">
+      <div class="card__title">{{ icon('phone') }} پیش‌نمایش</div>
+      <div class="card__spacer"></div>
+      <span class="card__sub" id="preview-total"></span>
+    </div>
+    <div class="card__body">
+      <div class="preview-phone">
+        <div class="small dim">ربات WG-Guard</div>
+        <div class="preview-bubble" id="preview-bubble">متن پیام شما همین‌جا نمایش داده می‌شود…</div>
+        <div class="small dim" id="preview-media" hidden></div>
+      </div>
+      <div class="hint mt-2">
+        پیش‌نمایش تقریبی است و فقط متن و نوع پیوست را نشان می‌دهد؛
+        ایموجی‌های پرمیوم در تلگرام با تصویر اختصاصی نمایش داده می‌شوند.
+      </div>
+    </div>
+  </div>
+</div>
+
+{# -------------------------------------------------------- جدول کارزارها #}
+<div class="card mt-2">
+  <div class="card__head">
+    <div class="card__title">{{ icon('activity') }} کارزارهای اخیر</div>
+    <div class="card__spacer"></div>
+    <span class="card__sub">{{ rows|length|fa }} ارسال</span>
+  </div>
+  <div class="card__body card__body--flush">
+    {% if rows %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>تاریخ</th>
+            <th>مخاطبان</th>
+            <th>ارسال‌شده/کل</th>
+            <th>وضعیت</th>
+            <th>عملیات</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          {% set percent = ((row.sent * 100 / row.total) if row.total else 0)|round(1) %}
+          <tr>
+            <td class="small dim nowrap">
+              {{ row.created_at|jdatetime }}
+              {% if row.scheduled_at %}
+              <div class="small text-info">زمان‌بندی: {{ row.scheduled_at|jdatetime }}</div>
+              {% endif %}
+            </td>
+            <td>{{ audience_labels.get(row.audience, row.audience) }}</td>
+            <td style="min-width: 190px">
+              <div class="bar-row">
+                <span class="bar-row__label">{{ row.sent|fa }} از {{ row.total|fa }}</span>
+                <span class="bar-row__value">{{ percent|pct }}</span>
+                <span class="bar-row__track">
+                  <span class="bar-row__fill" data-w="{{ percent }}%" style="width:{{ percent }}%"></span>
+                </span>
+              </div>
+              {% if row.failed %}
+              <div class="small text-danger">{{ row.failed|fa }} ناموفق</div>
+              {% endif %}
+            </td>
+            <td>
+              {% if broadcasts.is_running(row.id) %}{{ badge('در حال ارسال', 'warning') }}
+              {% elif row.status.value == 'running' %}{{ badge('متوقف‌شده', 'warning') }}
+              {% elif row.status.value == 'done' %}{{ badge('پایان‌یافته', 'success') }}
+              {% elif row.status.value == 'canceled' %}{{ badge('لغو‌شده', 'danger') }}
+              {% elif row.status.value == 'failed' %}{{ badge('ناموفق', 'danger') }}
+              {% elif row.scheduled_at %}{{ badge('زمان‌بندی‌شده', 'info') }}
+              {% else %}{{ badge('پیش‌نویس', 'info') }}{% endif %}
+            </td>
+            <td class="actions">
+              {% if broadcasts.is_running(row.id) %}
+              <form method="post" action="{{ base_url }}/{{ row.id }}/cancel"
+                    data-confirm="ارسال همگانی «{{ audience_labels.get(row.audience, row.audience) }}» لغو شود؟ پیام‌های ارسال‌شده باقی می‌مانند و بعداً می‌توانید ادامه دهید.">
+                {{ csrf(csrf_token) }}
+                <button class="btn btn--sm btn--danger" type="submit">{{ icon('ban') }} لغو</button>
+              </form>
+              {% elif row.status.value in ('draft', 'canceled', 'failed', 'running') %}
+              <form method="post" action="{{ base_url }}/{{ row.id }}/start">
+                {{ csrf(csrf_token) }}
+                <button class="btn btn--sm btn--success" type="submit">
+                  {{ icon('play') }}
+                  {% if row.status.value in ('canceled', 'failed', 'running') %}ادامه
+                  {% elif row.scheduled_at %}شروع فوری
+                  {% else %}شروع{% endif %}
+                </button>
+              </form>
+              {% if row.status.value == 'draft' and row.scheduled_at %}
+              <form method="post" action="{{ base_url }}/{{ row.id }}/cancel"
+                    data-confirm="زمان‌بندی این ارسال همگانی لغو شود؟">
+                {{ csrf(csrf_token) }}
+                <button class="btn btn--sm btn--ghost" type="submit">{{ icon('x') }} لغو زمان‌بندی</button>
+              </form>
+              {% endif %}
+              {% else %}
+              <span class="small dim">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      {{ empty_state('هنوز پیام همگانی فرستاده نشده', 'اولین پیام را از فرم بالا بسازید؛ نتیجه و پیشرفتش همین‌جا ثبت می‌شود.', 'send') }}
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  /* پیش‌نمایش زنده‌ی پیام — فقط textContent، هیچ HTML تزریق نمی‌شود. */
+  (function () {
+    var form = document.getElementById("broadcast-form");
+    if (!form) return;
+
+    var text = form.querySelector("[name=text]");
+    var audience = form.querySelector("[name=audience]");
+    var mediaType = form.querySelector("[name=media_type]");
+    var mediaFile = form.querySelector("[name=media_file_id]");
+    var bubble = document.getElementById("preview-bubble");
+    var mediaLine = document.getElementById("preview-media");
+    var totalLine = document.getElementById("preview-total");
+    var audienceHint = document.getElementById("audience-hint");
+
+    var PLACEHOLDER = "متن پیام شما همین‌جا نمایش داده می‌شود…";
+
+    function fa(value) {
+      return String(value).replace(/[0-9]/g, function (digit) {
+        return "۰۱۲۳۴۵۶۷۸۹"[Number(digit)];
+      });
+    }
+
+    function optionLabel(select) {
+      var option = select.options[select.selectedIndex];
+      return option ? option.textContent.trim() : "";
+    }
+
+    function renderText() {
+      bubble.textContent = text.value.trim() ? text.value : PLACEHOLDER;
+    }
+
+    function renderAudience() {
+      var option = audience.options[audience.selectedIndex];
+      var count = option ? option.getAttribute("data-count") || "0" : "0";
+      totalLine.textContent = fa(count) + " گیرنده";
+      if (audienceHint) {
+        audienceHint.textContent = "این پیام برای " + fa(count) + " کاربر ارسال می‌شود.";
+      }
+    }
+
+    function renderMedia() {
+      var hasFile = mediaType.value && mediaFile.value.trim();
+      if (hasFile) {
+        mediaLine.textContent = "پیوست: " + optionLabel(mediaType);
+        mediaLine.hidden = false;
+      } else {
+        mediaLine.hidden = true;
+      }
+    }
+
+    text.addEventListener("input", renderText);
+    audience.addEventListener("change", renderAudience);
+    mediaType.addEventListener("change", renderMedia);
+    mediaFile.addEventListener("input", renderMedia);
+
+    renderText();
+    renderAudience();
+    renderMedia();
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,346 @@
+{#
+  سفارش‌ها — فهرست، فیلتر و گذارهای وضعیت.
+  هر ردیف یک مودال جزئیات مخصوص خودش دارد (order-modal-<id>) چون شناسه‌ها
+  یکتا هستند و فرم‌های عملیات از data-set-id مقدار می‌گیرند.
+#}
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, stat, pagination, empty_state, csrf with context %}
+
+{% block title %}سفارش‌ها{% endblock %}
+{% block header %}سفارش‌ها{% endblock %}
+
+{% block page_actions %}
+  <a class="btn btn--ghost" href="{{ base_url }}/export.csv?status={{ selected_status }}&panel_id={{ selected_panel or '' }}&plan_id={{ selected_plan or '' }}&q={{ page.search|urlencode }}">
+    {{ icon('download') }} خروجی CSV
+  </a>
+{% endblock %}
+
+{% block content %}
+{# ------------------------------------------------------------- نوار آمار #}
+<section class="grid grid--stats">
+  {{ stat('سفارش‌های فهرست', page.total|fa, 'receipt', 'با فیلترهای فعلی', None) }}
+  {{ stat('تکمیل‌شده', stats.completed|fa, 'check-circle', 'سرویس تحویل داده شده است', 'success') }}
+  {{ stat('در انتظار بررسی', stats.awaiting_review|fa, 'clock', 'رسید یا تأیید پرداخت', 'warning') }}
+  {{ stat('ساخت ناموفق', stats.failed|fa, 'alert', 'نیازمند تلاش دوباره', 'danger') }}
+</section>
+
+{# ---------------------------------------------------------------- فیلترها #}
+<div class="card">
+  <div class="card__body">
+    <form class="searchbar" method="get" action="{{ base_url }}">
+      <input class="input" type="search" name="q" value="{{ page.search }}"
+             placeholder="کد سفارش، نام پلن یا شناسه کاربر پنل…">
+      <select class="select" name="status" aria-label="وضعیت">
+        <option value="">همه‌ی وضعیت‌ها</option>
+        {% for key, label in status_labels.items() %}
+          <option value="{{ key }}" {% if selected_status == key %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <select class="select" name="panel_id" aria-label="پنل">
+        <option value="">همه‌ی پنل‌ها</option>
+        {% for panel in panels %}
+          <option value="{{ panel.id }}" {% if selected_panel == panel.id %}selected{% endif %}>{{ panel.name }}</option>
+        {% endfor %}
+      </select>
+      <select class="select" name="plan_id" aria-label="پلن">
+        <option value="">همه‌ی پلن‌ها</option>
+        {% for plan in plans %}
+          <option value="{{ plan.id }}" {% if selected_plan == plan.id %}selected{% endif %}>
+            {{ plan.name }}{% if not plan.is_active %} (غیرفعال){% endif %}
+          </option>
+        {% endfor %}
+      </select>
+      <button class="btn" type="submit">{{ icon('search') }} فیلتر</button>
+      {% if page.search or selected_status or selected_panel or selected_plan %}
+        <a class="btn btn--ghost" href="{{ base_url }}">پاک کردن</a>
+      {% endif %}
+    </form>
+  </div>
+</div>
+
+{# ------------------------------------------------------------------ جدول #}
+<div class="card">
+  <div class="card__head">
+    <div class="card__title">{{ icon('receipt') }} فهرست سفارش‌ها</div>
+    <div class="card__spacer"></div>
+    <span class="chip">
+      {{ page.first_index|fa }} تا {{ page.last_index|fa }} از {{ page.total|fa }}
+    </span>
+  </div>
+  <div class="card__body card__body--flush">
+    {% if rows %}
+      <div class="table-wrap">
+        <table class="table" id="orders-table">
+          <thead>
+            <tr>
+              <th>کد سفارش</th>
+              <th>کاربر</th>
+              <th>پلن</th>
+              <th>نوع</th>
+              <th>مبلغ</th>
+              <th>وضعیت</th>
+              <th>تاریخ</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for order in rows %}
+            <tr>
+              <td class="nowrap">
+                <span class="code copyable" data-copy="{{ order.order_code }}"
+                      title="برای کپی کلیک کنید">{{ order.order_code }}</span>
+                {% if order.is_test %}<span class="dim small">تست</span>{% endif %}
+              </td>
+              <td>
+                {% if order.user %}
+                  <div class="truncate">{{ order.user.display_name }}</div>
+                  <div class="small dim mono">{{ order.user.telegram_id }}</div>
+                {% else %}
+                  <span class="dim">—</span>
+                {% endif %}
+              </td>
+              <td class="truncate">{{ order.plan_name or '—' }}</td>
+              <td class="nowrap small">{{ kind_labels.get(order.kind.value, order.kind.value) }}</td>
+              <td class="num">{{ order.payable_rial|money }}</td>
+              <td>
+                {% if order.status.value == 'completed' %}{{ badge(status_labels.get(order.status.value, order.status.value), 'success') }}
+                {% elif order.status.value in ('paid', 'provisioning') %}{{ badge(status_labels.get(order.status.value, order.status.value), 'info') }}
+                {% elif order.status.value in ('pending_payment', 'awaiting_review') %}{{ badge(status_labels.get(order.status.value, order.status.value), 'warning') }}
+                {% elif order.status.value in ('failed', 'canceled', 'expired') %}{{ badge(status_labels.get(order.status.value, order.status.value), 'danger') }}
+                {% elif order.status.value == 'refunded' %}{{ badge(status_labels.get(order.status.value, order.status.value), 'brand') }}
+                {% else %}{{ badge(status_labels.get(order.status.value, order.status.value), None) }}{% endif %}
+              </td>
+              <td class="small dim nowrap">{{ order.created_at|jdatetime }}</td>
+              <td class="actions">
+                <button class="btn btn--sm" type="button"
+                        data-modal-open="order-modal-{{ order.id }}" data-title="جزئیات سفارش {{ order.order_code }}">
+                  {{ icon('eye') }} جزئیات
+                </button>
+                {% if order.status.value in ('pending_payment', 'awaiting_review', 'draft') %}
+                  <button class="btn btn--sm btn--success" type="button"
+                          data-modal-open="order-confirm-modal" data-set-id="{{ order.id }}"
+                          data-title="تأیید پرداخت {{ order.order_code }}">{{ icon('check') }} تأیید</button>
+                {% endif %}
+                {% if order.status.value in ('failed', 'paid') %}
+                  <button class="btn btn--sm btn--warning" type="button"
+                          data-modal-open="order-retry-modal" data-set-id="{{ order.id }}"
+                          data-title="تلاش دوباره برای {{ order.order_code }}">{{ icon('refresh') }} تلاش دوباره</button>
+                {% endif %}
+                {# بازگشت وجه فقط برای سفارش پرداخت‌شده‌ی ساخته‌نشده معنا دارد؛ سفارش
+                   تکمیل‌شده را نمی‌توان لغو کرد و سرویس ساخته‌شده باید جداگانه مدیریت شود. #}
+                {% if order.status.value in ('paid', 'provisioning') and order.payable_rial > 0 %}
+                  <button class="btn btn--sm" type="button"
+                          data-modal-open="order-refund-modal" data-set-id="{{ order.id }}"
+                          data-set-reason="بازگشت وجه توسط مدیر" data-title="بازگشت وجه {{ order.order_code }}">{{ icon('money') }} بازگشت وجه</button>
+                {% endif %}
+                {% if order.status.value not in ('completed', 'canceled', 'refunded', 'expired') %}
+                  <button class="btn btn--sm btn--danger" type="button"
+                          data-modal-open="order-cancel-modal" data-set-id="{{ order.id }}"
+                          data-set-reason="لغو توسط مدیر" data-title="لغو سفارش {{ order.order_code }}">{{ icon('x') }} لغو</button>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {{ empty_state('سفارشی پیدا نشد', 'عبارت جست‌وجو را کوتاه‌تر کنید یا فیلترها را بردارید.', 'receipt') }}
+    {% endif %}
+  </div>
+  {{ pagination(page, base_url, extra) }}
+</div>
+
+{#
+  مودال جزئیات برای هر ردیف؛ جزئیات کامل پول، اسنپ‌شات پلن و اطلاعات ساخت
+  در آن نمایش داده می‌شود.
+#}
+{% for order in rows %}
+<div class="modal" id="order-modal-{{ order.id }}" hidden>
+  <div class="modal__panel">
+    <div class="modal__head">
+      <div class="modal__title" data-modal-title>جزئیات سفارش</div>
+      <div class="card__spacer"></div>
+      <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+    </div>
+    <div class="modal__body">
+      {% if order.failure_reason %}
+        <div class="alert alert--danger mb-2">
+          {{ icon('alert') }}
+          <div>
+            <div class="strong">خطای ساخت سرویس</div>
+            <div class="small">{{ order.failure_reason }}</div>
+          </div>
+        </div>
+      {% endif %}
+
+      <div class="row row--between mb-2">
+        <span class="code copyable" data-copy="{{ order.order_code }}">{{ order.order_code }}</span>
+        {% if order.status.value == 'completed' %}{{ badge(status_labels.get(order.status.value, order.status.value), 'success') }}
+        {% elif order.status.value in ('paid', 'provisioning') %}{{ badge(status_labels.get(order.status.value, order.status.value), 'info') }}
+        {% elif order.status.value in ('pending_payment', 'awaiting_review') %}{{ badge(status_labels.get(order.status.value, order.status.value), 'warning') }}
+        {% elif order.status.value in ('failed', 'canceled', 'expired') %}{{ badge(status_labels.get(order.status.value, order.status.value), 'danger') }}
+        {% elif order.status.value == 'refunded' %}{{ badge(status_labels.get(order.status.value, order.status.value), 'brand') }}
+        {% else %}{{ badge(status_labels.get(order.status.value, order.status.value), None) }}{% endif %}
+      </div>
+
+      <div class="strong mt-2">مبلغ</div>
+      <dl class="kv mt-1">
+        <dt>مبلغ پلن</dt><dd class="num">{{ order.amount_rial|money }}</dd>
+        <dt>تخفیف</dt><dd class="num">{{ order.discount_rial|money }}</dd>
+        <dt>از کیف پول</dt><dd class="num">{{ order.wallet_used_rial|money }}</dd>
+        <dt>پرداختی</dt><dd class="num strong">{{ order.payable_rial|money }}</dd>
+        <dt>روش پرداخت</dt><dd>{{ method_labels.get(order.payment_method.value, order.payment_method.value) if order.payment_method else '—' }}</dd>
+        <dt>مرجع پرداخت</dt><dd class="mono">{{ order.payment_reference|none_dash }}</dd>
+        <dt>کد تخفیف</dt><dd>{{ 'ثبت شده' if order.discount_code_id else '—' }}</dd>
+      </dl>
+
+      <div class="strong mt-3">اسنپ‌شات پلن</div>
+      <dl class="kv mt-1">
+        <dt>نام پلن</dt><dd>{{ order.plan_name or '—' }}</dd>
+        <dt>حجم</dt><dd>{{ order.traffic_gb|gb if order.traffic_gb else 'نامحدود' }}</dd>
+        <dt>مدت</dt><dd>{{ (order.duration_days|fa ~ ' روز') if order.duration_days else 'نامحدود' }}</dd>
+        <dt>دستگاه</dt><dd>{{ order.device_limit|fa }}</dd>
+        <dt>پنل</dt><dd>{{ panel_names.get(order.panel_id, '—') }}</dd>
+        <dt>شناسه کاربر پنل</dt>
+        <dd>{% if order.wg_user_id %}<span class="code copyable" data-copy="{{ order.wg_user_id }}">{{ order.wg_user_id }}</span>{% else %}<span class="dim">—</span>{% endif %}</dd>
+        <dt>کلید یکتایی</dt><dd class="mono small">{{ order.idempotency_key }}</dd>
+        <dt>تلاش‌ها</dt><dd class="num">{{ order.attempts|fa }}</dd>
+      </dl>
+
+      <div class="strong mt-3">زمان‌ها</div>
+      <dl class="kv mt-1">
+        <dt>ثبت سفارش</dt><dd>{{ order.created_at|jdatetime }}</dd>
+        <dt>مهلت پرداخت</dt><dd>{{ order.payment_deadline|jdatetime if order.payment_deadline else '—' }}</dd>
+        <dt>پرداخت</dt><dd>{{ order.paid_at|jdatetime if order.paid_at else '—' }}</dd>
+        <dt>تکمیل</dt><dd>{{ order.completed_at|jdatetime if order.completed_at else '—' }}</dd>
+        <dt>انقضای سرویس</dt><dd>{{ order.expires_at|jdatetime if order.expires_at else '—' }}</dd>
+        <dt>دلیل لغو</dt><dd>{{ order.cancel_reason|none_dash }}</dd>
+      </dl>
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost" type="button" data-modal-close>بستن</button>
+    </div>
+  </div>
+</div>
+{% endfor %}
+
+{# ------------------------------------------------- فرم‌های عملیات (POST) #}
+<div class="modal" id="order-confirm-modal" hidden>
+  <div class="modal__panel modal__panel--sm">
+    <form method="post" action="{{ base_url }}/0/confirm" id="order-confirm-form"
+          data-confirm="پرداخت این سفارش دستی تأیید شود و سرویس ساخته شود؟">
+      {{ csrf(csrf_token) }}
+      <input type="hidden" name="order_id" value="">
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>تأیید پرداخت</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        <p class="small muted">
+          با تأیید، سفارش «پرداخت‌شده» می‌شود، مبلغ از کیف پول کاربر کسر می‌گردد و
+          ساخت سرویس روی پنل آغاز می‌شود.
+        </p>
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} تأیید و ساخت</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="order-retry-modal" hidden>
+  <div class="modal__panel modal__panel--sm">
+    <form method="post" action="{{ base_url }}/0/retry" id="order-retry-form"
+          data-confirm="ساخت سرویس این سفارش دوباره تلاش شود؟">
+      {{ csrf(csrf_token) }}
+      <input type="hidden" name="order_id" value="">
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>تلاش دوباره برای ساخت</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        <p class="small muted">
+          همین سفارش دوباره به پنل فرستاده می‌شود؛ کلید یکتایی تغییر نمی‌کند تا سرویس
+          تکراری ساخته نشود.
+        </p>
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--warning" type="submit">{{ icon('refresh') }} تلاش دوباره</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="order-cancel-modal" hidden>
+  <div class="modal__panel modal__panel--sm">
+    <form method="post" action="{{ base_url }}/0/cancel" id="order-cancel-form"
+          data-confirm="این سفارش لغو شود؟ مبلغ رزروشده به کیف پول کاربر برمی‌گردد.">
+      {{ csrf(csrf_token) }}
+      <input type="hidden" name="order_id" value="">
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>لغو سفارش</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        <div class="field">
+          <label class="label" for="cancel-reason">دلیل لغو</label>
+          <input class="input" id="cancel-reason" name="reason" value="لغو توسط مدیر">
+          <div class="hint">این متن در سابقه‌ی سفارش ثبت می‌شود.</div>
+        </div>
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--danger" type="submit">{{ icon('x') }} لغو سفارش</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="order-refund-modal" hidden>
+  <div class="modal__panel modal__panel--sm">
+    <form method="post" action="{{ base_url }}/0/refund" id="order-refund-form"
+          data-confirm="مبلغ این سفارش به کیف پول کاربر بازگردد؟">
+      {{ csrf(csrf_token) }}
+      <input type="hidden" name="order_id" value="">
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>بازگشت وجه</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        <div class="field">
+          <label class="label" for="refund-reason">دلیل بازگشت وجه</label>
+          <input class="input" id="refund-reason" name="reason" value="بازگشت وجه توسط مدیر">
+        </div>
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('money') }} بازگشت به کیف پول</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  /* فرم‌های عملیات یک نسخه‌ی مشترک دارند؛ پیش از ارسال، شناسه‌ی سفارش در
+     مسیر action جای می‌گیرد.  مودال‌های جزئیات فرم ندارند و نادیده می‌مانند. */
+  document.addEventListener("click", function (event) {
+    var opener = event.target.closest("[data-modal-open][data-set-id]");
+    if (!opener) return;
+    var found = /^order-(confirm|retry|cancel|refund)-modal$/.exec(opener.getAttribute("data-modal-open"));
+    if (!found) return;
+    var form = document.getElementById("order-" + found[1] + "-form");
+    if (!form) return;
+    var orderId = opener.getAttribute("data-set-id");
+    if (orderId) form.setAttribute("action", "{{ base_url }}/" + orderId + "/" + found[1]);
+  });
+</script>
+{% endblock %}

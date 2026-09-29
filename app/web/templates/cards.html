@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, badge, empty_state, csrf with context %}
+
+{% block title %}کارت‌های بانکی{% endblock %}
+{% block header %}کارت‌های بانکی{% endblock %}
+{% block page_actions %}
+  <button class="btn btn--primary" data-modal-open="card-create" data-title="کارت جدید">
+    {{ icon('plus') }} افزودن کارت
+  </button>
+{% endblock %}
+
+{% block content %}
+
+<div class="alert alert--info">
+  {{ icon('info') }}
+  <div>
+    این کارت‌ها به مشتری نشان داده می‌شوند تا مبلغ سفارش را کارت به کارت واریز کند.
+    اگر چند کارت فعال داشته باشید، به ترتیب «ترتیب نمایش» استفاده می‌شوند.
+  </div>
+</div>
+
+{% macro card_fields(card) -%}
+<div class="form-grid">
+  <div class="field">
+    <label class="label" for="num-{{ card.id if card else 'new' }}">شماره کارت <span class="req">*</span></label>
+    <input class="input input--mono" id="num-{{ card.id if card else 'new' }}" name="card_number" required
+           value="{{ card.card_number if card else '' }}" placeholder="6037-XXXX-XXXX-XXXX" dir="ltr">
+    <div class="hint">۱۶ رقم؛ خط تیره و اعداد فارسی هم پذیرفته می‌شود.</div>
+  </div>
+
+  <div class="field">
+    <label class="label" for="holder-{{ card.id if card else 'new' }}">نام صاحب کارت <span class="req">*</span></label>
+    <input class="input" id="holder-{{ card.id if card else 'new' }}" name="holder_name" required
+           value="{{ card.holder_name if card else '' }}" placeholder="مثلاً: علی رضایی">
+  </div>
+
+  <div class="field">
+    <label class="label" for="bank-{{ card.id if card else 'new' }}">نام بانک</label>
+    <input class="input" id="bank-{{ card.id if card else 'new' }}" name="bank_name"
+           value="{{ card.bank_name if card and card.bank_name else '' }}" placeholder="مثلاً: بانک ملی">
+  </div>
+
+  <div class="field">
+    <label class="label" for="iban-{{ card.id if card else 'new' }}">شبا (اختیاری)</label>
+    <input class="input input--mono" id="iban-{{ card.id if card else 'new' }}" name="iban"
+           value="{{ card.iban if card and card.iban else '' }}" placeholder="IR..." dir="ltr">
+  </div>
+
+  <div class="field">
+    <label class="label" for="sort-{{ card.id if card else 'new' }}">ترتیب نمایش</label>
+    <input class="input input--num" id="sort-{{ card.id if card else 'new' }}" name="sort_order" type="number"
+           value="{{ card.sort_order if card else 0 }}">
+  </div>
+
+  <div class="field field--full">
+    <label class="label" for="note-{{ card.id if card else 'new' }}">توضیح برای مشتری</label>
+    <textarea class="textarea" id="note-{{ card.id if card else 'new' }}" name="instructions" rows="2"
+      placeholder="مثلاً: لطفاً دقیقاً مبلغ سفارش را واریز کنید و رسید را ارسال کنید.">{{ card.instructions if card and card.instructions else '' }}</textarea>
+  </div>
+
+  <div class="field field--full">
+    <label class="switch">
+      <input type="checkbox" name="is_active" value="1" {% if not card or card.is_active %}checked{% endif %}>
+      <span class="switch__track"></span><span class="switch__label">فعال (نمایش به مشتری)</span>
+    </label>
+  </div>
+</div>
+{%- endmacro %}
+
+<div class="card">
+  <div class="card__head">
+    <div class="card__title">{{ icon('credit') }} کارت‌های فروشگاه</div>
+    <div class="card__spacer"></div>
+    <span class="chip">{{ active_count|fa }} کارت فعال</span>
+  </div>
+  <div class="card__body card__body--flush">
+    {% if rows %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>شماره کارت</th><th>صاحب کارت</th><th>بانک</th><th>شبا</th><th>ترتیب</th><th>وضعیت</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for card in rows %}
+            <tr>
+              <td>
+                <span class="code copyable" data-copy="{{ card.card_number }}">{{ card.masked }}</span>
+              </td>
+              <td class="strong">{{ card.holder_name }}</td>
+              <td class="muted">{{ card.bank_name|none_dash }}</td>
+              <td class="mono small">{{ card.iban|none_dash }}</td>
+              <td class="num">{{ card.sort_order|fa }}</td>
+              <td>
+                {% if card.is_active %}{{ badge('فعال', 'success') }}{% else %}{{ badge('غیرفعال', 'danger') }}{% endif %}
+              </td>
+              <td>
+                <div class="actions">
+                  <button class="btn btn--sm" type="button"
+                          data-modal-open="card-{{ card.id }}" data-title="ویرایش کارت">{{ icon('edit') }}</button>
+                  <form method="post" action="{{ base_url }}/{{ card.id }}/toggle">
+                    {{ csrf(csrf_token) }}
+                    <button class="btn btn--sm {% if card.is_active %}btn--warning{% else %}btn--success{% endif %}"
+                            type="submit" title="تغییر وضعیت">{{ icon('zap') }}</button>
+                  </form>
+                  <form method="post" action="{{ base_url }}/{{ card.id }}/delete"
+                        data-confirm="کارت {{ card.masked }} حذف شود؟">
+                    {{ csrf(csrf_token) }}
+                    <button class="btn btn--sm btn--danger" type="submit">{{ icon('trash') }}</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {{ empty_state('هیچ کارتی ثبت نشده', 'بدون کارت، مشتری نمی‌تواند کارت به کارت پرداخت کند.', 'credit') }}
+    {% endif %}
+  </div>
+</div>
+
+<div class="modal" id="card-create" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ base_url }}">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>کارت جدید</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">{{ card_fields(None) }}</div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} افزودن</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% for card in rows %}
+<div class="modal" id="card-{{ card.id }}" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ base_url }}/{{ card.id }}">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>ویرایش کارت</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">{{ card_fields(card) }}</div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ذخیره</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}
