@@ -16,6 +16,14 @@ stay Persian — that is what customers read.
 
 Also on `main` since 1.0.0:
 
+- The interactive installer works.  `ask()` printed its question to stdout while
+  every caller captured it (`answer="$(ask ...)"`), so the question never reached
+  the terminal **and** its text was prepended to the answer: no typed bot token
+  could ever match its validation pattern, and the operator saw nothing but
+  repeated "invalid token" errors.  Questions now go to stderr and the answer is
+  the only thing on stdout; end of input aborts with a clear message instead of
+  asking forever.
+
 - The gift-code switch in the panel now actually gates the gift screen (the bot
   read a key the panel could never write), and `/rules` answers instead of
   falling through to the catch-all.

@@ -341,20 +341,36 @@ detect_public_ip() {
 #  Interactive prompts
 # ===========================================================================
 # ask <label> <default> [hint]
+#
+# The question goes to stderr and only the answer to stdout, because every
+# caller captures the output: `answer="$(ask ...)"`.  Printing the question on
+# stdout hid it from the operator AND put the question text in front of the
+# value, so the answer never matched its validation pattern.
 ask() {
     local label="$1" default="$2" hint="${3:-}" answer=""
-    printf '%s? %s%s' "$C_BOLD" "$label" "$C_RESET"
-    if [ -n "$default" ]; then
-        printf ' %s[%s]%s' "$C_DIM" "$default" "$C_RESET"
-    fi
-    if [ -n "$hint" ]; then
-        printf '\n  %s%s%s\n' "$C_DIM" "$hint" "$C_RESET"
-    else
-        printf '\n'
-    fi
-    printf '  %s❯%s ' "$C_GREEN" "$C_RESET"
+    {
+        printf '\n%s? %s%s' "$C_BOLD" "$label" "$C_RESET"
+        if [ -n "$default" ]; then
+            printf ' %s[%s]%s' "$C_DIM" "$default" "$C_RESET"
+        fi
+        if [ -n "$hint" ]; then
+            printf '\n  %s%s%s' "$C_DIM" "$hint" "$C_RESET"
+        fi
+        printf '\n  %s❯%s ' "$C_GREEN" "$C_RESET"
+    } >&2
     if ! IFS= read -r answer; then
-        answer=""
+        # No input left: the input was a pipe that ended, or the operator sent
+        # Ctrl-D.  Taking a default is safe; a required answer is not, so fail
+        # instead of asking forever.  Returning non-zero (rather than exiting)
+        # matters: every caller runs inside `$( )`, where `exit` would only end
+        # the subshell - the caller's `set -e` ends the script.
+        printf '\n' >&2
+        if [ -z "$default" ]; then
+            err "No input available, and this question needs an answer."
+            err "Run the installer in a terminal, or use --yes with --bot-token and --admin-ids."
+            return 1
+        fi
+        answer="$default"
     fi
     if [ -z "$answer" ]; then
         answer="$default"
@@ -366,7 +382,9 @@ ask() {
 ask_required() {
     local label="$1" default="$2" hint="$3" pattern="$4" errmsg="$5" answer="" value=""
     while :; do
-        answer="$(ask "$label" "$default" "$hint")"
+        if ! answer="$(ask "$label" "$default" "$hint")"; then
+            return 1   # no input left: the caller's `set -e` stops the script
+        fi
         value="$(printf '%s' "$answer" | tr -d '[:space:]')"
         if [ -z "$value" ]; then
             err "$errmsg"
@@ -797,14 +815,15 @@ write_env() {
         # ---- interactive mode ---------------------------------------------------
         say ""
         info "Answer a few short questions. Wherever you see a default in [ ], just press Enter."
+        dim "  Nothing is written to .env until the last answer, so Ctrl-C here is safe."
         say ""
 
         if [ -z "$bot_token" ]; then
             bot_token="$(ask_required \
                 "Bot token (from @BotFather)" "" \
-                "Message @BotFather on Telegram → /newbot → copy the token" \
+                "In Telegram, message @BotFather, send /newbot and copy the token it replies with." \
                 '^[0-9]{6,}:[A-Za-z0-9_-]{30,}$' \
-                "Invalid token. It must look like 123456789:AAH... (at least 30 characters after the colon).")"
+                "That is not a bot token. It looks like 123456789:AAH... — digits, a colon, then 30+ characters.")"
         else
             ok "Bot token taken from the flag."
         fi
@@ -812,16 +831,16 @@ write_env() {
         if [ -z "$admin_ids" ]; then
             admin_ids="$(ask_required \
                 "Numeric admin IDs (comma-separated)" "" \
-                "Get your own ID from @userinfobot. Example: 111111111,222222222" \
+                "Message @userinfobot on Telegram to get your numeric ID. Example: 111111111,222222222" \
                 '^[0-9]+([[:space:]]*,[[:space:]]*[0-9]+)*$' \
-                "At least one numeric ID is required (digits and commas only).")"
+                "At least one numeric ID is required — digits and commas only, e.g. 111111111.")"
         else
             ok "Admin IDs taken from the flag."
         fi
 
         support_ids="$(ask \
             "Numeric support IDs (optional, comma-separated)" "$support_ids" \
-            "Support users have limited access; leave this empty if you do not want any")"
+            "Support users get limited access; press Enter to skip this")"
         support_ids="$(printf '%s' "$support_ids" | tr -d '[:space:]')"
         if [ -n "$support_ids" ] && ! validate_ids "$support_ids"; then
             warn "The support IDs were invalid and have been ignored."
