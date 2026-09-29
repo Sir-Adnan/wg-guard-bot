@@ -102,6 +102,27 @@ err()  { printf '%s✖%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; }
 step() { printf '\n%s%s▸ %s%s\n' "$C_BOLD" "$C_BLUE" "$*" "$C_RESET"; }
 dim()  { printf '%s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
 
+# ---------------------------------------------------------------------------
+#  نسخه / version — از pyproject.toml خوانده می‌شود تا هرگز با
+#  نسخه‌ی واقعی اختلاف پیدا نکند. اگر فایل در دسترس نباشد
+#  (اجرای مستقیم با curl)، نسخه چاپ نمی‌شود.
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd -P || true)"
+APP_VERSION=""
+
+read_app_version() {
+    local file version
+    for file in "${SCRIPT_DIR:+$SCRIPT_DIR/pyproject.toml}" "./pyproject.toml"; do
+        [ -f "$file" ] || continue
+        version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$file" | head -n 1)"
+        if [ -n "$version" ]; then
+            APP_VERSION="$version"
+            return 0
+        fi
+    done
+    return 0
+}
+
 banner() {
     printf '%s' "$C_MAGENTA"
     cat <<'ASCII'
@@ -110,7 +131,9 @@ banner() {
    ╚╩╝╚═╝  ╚═╝╚═╝╩ ╩╩╚══╩╝     ╚═╝╚═╝ ╩
 ASCII
     printf '%s' "$C_RESET"
-    printf '%s\n' "   نصب‌کننده‌ی خودکار — نسخه‌ی ${C_BOLD}1.0.0${C_RESET}"
+    if [ -n "$APP_VERSION" ]; then
+        printf '%s\n' "   نصب‌کننده‌ی خودکار — نسخه‌ی ${C_BOLD}${APP_VERSION}${C_RESET}"
+    fi
     printf '%s\n\n' "   ${C_DIM}ربات فروش VPN روی پنل WG-Guard / AmneziaWG${C_RESET}"
 }
 
@@ -238,13 +261,17 @@ require_root() {
 detect_compose() {
     if docker compose version >/dev/null 2>&1; then
         COMPOSE="docker compose"
-    elif command -v docker-compose >/dev/null 2>&1; then
-        COMPOSE="docker-compose"
-    else
-        COMPOSE=""
-        return 1
+        return 0
     fi
-    return 0
+    # Compose v1 (docker-compose) is end-of-life and lacks the flags this
+    # script relies on (--profile, ps --status), so refuse it explicitly
+    # instead of degrading to a silent timeout.
+    if command -v docker-compose >/dev/null 2>&1; then
+        warn "نسخه‌ی قدیمی docker-compose (v1) نصب است؛ این اسکریپت به Docker Compose v2 نیاز دارد."
+        say "  نصب: apt-get update && apt-get install -y docker-compose-plugin"
+    fi
+    COMPOSE=""
+    return 1
 }
 
 install_docker() {
@@ -258,6 +285,18 @@ install_docker() {
     fi
     step "داکر نصب نیست؛ در حال نصب Docker از اسکریپت رسمی…"
     dim "  (چند دقیقه طول می‌کشد و به اینترنت نیاز دارد)"
+    if ! command -v curl >/dev/null 2>&1; then
+        warn "curl نصب نیست؛ همین حالا نصب می‌شود…"
+        if command -v apt-get >/dev/null 2>&1; then
+            apt-get update -qq >/dev/null 2>&1 || true
+            apt-get install -y -qq curl >/dev/null 2>&1 || true
+        fi
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+        err "curl نصب نیست و نصب خودکار آن هم ناموفق بود."
+        say "  نصب دستی: apt-get install -y curl"
+        exit 1
+    fi
     if ! curl -fsSL https://get.docker.com -o /tmp/get-docker.sh; then
         err "دانلود اسکریپت نصب داکر ناموفق بود."
         say "  اتصال اینترنت سرور را بررسی کنید و دوباره تلاش کنید."
@@ -1089,9 +1128,14 @@ success_box() {
     say ""
     printf '  %s👤 نام کاربری مالک:%s %s%s%s\n' "$C_BOLD" "$C_RESET" "$C_CYAN" "$username" "$C_RESET"
     printf '  %s🔑 رمز عبور مالک:%s   %s%s%s\n' "$C_BOLD" "$C_RESET" "$C_CYAN" "$password" "$C_RESET"
+    if [ "$REUSE_ENV" = "true" ]; then
+        printf '     %sمقدار بالا از فایل .env خوانده شده است و فقط در اولین نصب اعمال می‌شود.%s\n' "$C_DIM" "$C_RESET"
+        printf '     %sاگر رمز را از پنل عوض کرده‌اید، این رمز دیگر معتبر نیست.%s\n' "$C_DIM" "$C_RESET"
+        printf '     %sبازنشانی رمز: بخش «بازنشانی رمز مالک» در docs/DEPLOYMENT.md%s\n' "$C_DIM" "$C_RESET"
+    fi
     say ""
     printf '  %s%s⚠  همین حالا این رمز را یک جای امن ذخیره کنید و بعد از اولین ورود،%s\n' "$C_BOLD" "$C_YELLOW" "$C_RESET"
-    printf '  %s%s   از داخل پنل (تنظیمات → امنیت) رمز را عوض کنید.%s\n' "$C_BOLD" "$C_YELLOW" "$C_RESET"
+    printf '  %s%s   از داخل پنل (حساب کاربری → تغییر رمز) رمز را عوض کنید.%s\n' "$C_BOLD" "$C_YELLOW" "$C_RESET"
     say ""
     printf '%s%s%s\n' "$C_GREEN" "$line" "$C_RESET"
     say ""
@@ -1150,6 +1194,7 @@ main() {
         exit 0
     fi
 
+    read_app_version
     banner
 
     require_root "$@"

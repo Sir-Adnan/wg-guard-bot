@@ -70,12 +70,15 @@ require_root() {
 detect_compose() {
     if docker compose version >/dev/null 2>&1; then
         COMPOSE="docker compose"
-    elif command -v docker-compose >/dev/null 2>&1; then
-        COMPOSE="docker-compose"
-    else
-        err "Docker Compose پیدا نشد. نصب: apt-get install -y docker-compose-plugin"
-        exit 1
+        return 0
     fi
+    # Compose v1 is end-of-life and lacks --profile / ps --status.
+    if command -v docker-compose >/dev/null 2>&1; then
+        warn "نسخه‌ی قدیمی docker-compose (v1) نصب است؛ این اسکریپت به Docker Compose v2 نیاز دارد."
+        say "  نصب: apt-get update && apt-get install -y docker-compose-plugin"
+    fi
+    err "Docker Compose پیدا نشد. نصب: apt-get install -y docker-compose-plugin"
+    exit 1
 }
 
 parse_args() {
