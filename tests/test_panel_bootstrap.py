@@ -113,6 +113,23 @@ async def test_a_password_changed_in_the_panel_survives_a_restart(session, owner
 # Startup, the update path, and recovery
 # ---------------------------------------------------------------------------
 @pytest.mark.db
+async def test_startup_seeds_the_owner_before_any_update(app_session_factory, session, owner_env):
+    """The deployment path: the lifespan every container start runs.
+
+    Nothing else executes it — the page tests build the app with background tasks
+    off — which is how the old "seeded inside an update" bug stayed hidden.
+    """
+    from app.web.app import create_app
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        row = (await session.execute(select(Staff).where(Staff.login == "admin"))).scalar_one()
+
+    assert row.role is StaffRole.OWNER
+    assert verify_password(OWNER_PASSWORD, row.password_hash)
+
+
+@pytest.mark.db
 async def test_a_failing_update_cannot_lose_the_owner(app_session_factory, session, owner_env):
     """The bug, end to end: the row is committed before any update arrives."""
     from aiogram.types import Chat, Message

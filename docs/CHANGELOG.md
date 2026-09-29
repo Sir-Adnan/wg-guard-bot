@@ -31,6 +31,7 @@ Also on `main` since 1.0.0:
   installer had just printed.  A password changed inside the panel is never
   overwritten by `OWNER_PASSWORD`, and a lost password can be reset with
   `python -m app.cli set-password` ([deployment](DEPLOYMENT.md#reset-owner-password)).
+  The test suite now runs the real startup lifespan, which it never did before.
 
 - The interactive installer works.  `ask()` printed its question to stdout while
   every caller captured it (`answer="$(ask ...)"`), so the question never reached
