@@ -8,19 +8,41 @@ one-screen summary.
 
 ---
 
-## 1. Why this document exists
+## 1. What this policy is calibrated against
 
-The project's own history shows where verification time actually goes. Each
-item below is observable in the repository, not a guess:
+Measured on this repository, not guessed. `pytest -q` means the whole suite,
+including the mock WG-Guard panel, which `testpaths` now collects.
 
-| Observation | Cost |
-|---|---|
-| The full suite needs a live PostgreSQL, and the autouse `database_schema` fixture drops and recreates ~28 tables on **every** `pytest` invocation — including runs that select no database test. | A one-line helper change pays full DB setup. |
-| `tests/conftest.py` defines `requires_db`, but **no test uses it**. The `db` marker is only a label, so database tests fail rather than skip when PostgreSQL is absent. | A machine without a database produces failures that look like regressions. |
-| `make test`, `make lint` and `make format` run `pytest`/`ruff` **inside the runtime container**, but the image installs only `requirements.txt` — `pytest` and `ruff` live in `requirements-dev.txt`. | Three documented commands fail; the agent then improvises and re-derives environment variables by hand. |
-| `tools/mock_wg_panel` sits outside `testpaths`, is excluded from ruff, and needs `PYTHONPATH=tools`. | A second suite with its own incantation that is easy to forget. |
-| Two `pytest` runs against one `TEST_DATABASE_URL` recreate the schema concurrently and destroy each other's state. | Very confusing intermittent failures (now serialised by an advisory lock in `conftest.py`). |
-| An earlier revision of `docs/DEVELOPMENT.md` claimed database tests skip without a database, and documented `pytest --cov`, which is not an installed dependency. | Followers lose a cycle on a command that cannot work. |
+| Check | Cost | Notes |
+|---|---|---|
+| `pytest -q` | ~39 s, 172 tests | needs PostgreSQL; the only check that exercises everything |
+| `pytest -q -m "not db"` | ~4 s, 73 tests | no database; deselects the 99 `db` tests |
+| `pytest -q` with no database reachable | ~4 s | 73 pass, 99 skip, **0 fail**; the header names the database it probed |
+| `ruff check .` | <0.1 s | cheap enough to run over the whole tree |
+| `alembic check` | seconds | needs a database; only for models and migrations |
+
+The gap between the first row and the second is the whole argument for tiers:
+the expensive check is expensive because of the database, not because of the
+code, so it belongs at a boundary instead of in the edit loop.
+
+**Why the rules look the way they do.** Earlier revisions of this repository made
+the inner loop pay for the outer loop. Each item below is fixed now; the policy
+exists to stop them coming back:
+
+- `database_schema` was `autouse`, so a one-helper test run recreated the whole
+  schema. It is now requested only by the fixtures that touch the database.
+- `requires_db` existed and was never applied, so nobody could say what a
+  database-free run does. It is applied at collection time for every `db`-marked
+  test, and `REQUIRE_DB=1` (CI sets `CI`) turns the skip into a hard error, so a
+  green CI run cannot mean "nothing ran".
+- `make test` / `lint` / `format` exec'd into the runtime image, which ships
+  neither pytest nor ruff. They now use the project venv (`make dev-venv`).
+- The mock panel sat outside `testpaths`, outside ruff, and needed
+  `PYTHONPATH=tools`.
+- Two concurrent runs against one `TEST_DATABASE_URL` destroyed each other's
+  schema; an advisory lock in `conftest.py` serialises them.
+- The docs claimed database tests *fail* without a database. They skip — that is
+  what the third row above measures.
 
 None of this is fixed by reading more carefully. It is fixed by **choosing the
 narrowest check that can actually falsify your change**, and by not repeating
@@ -36,7 +58,9 @@ work whose validity has not expired.
 3. **Evidence belongs to a tree state.** A green run is valid for the exact
    working tree it ran against. If nothing executable changed since, cite it —
    do not re-run it. "I ran the full suite at `abc1234` and have only touched
-   `docs/` since" is complete evidence.
+   `docs/` since" is complete evidence. Comment, docstring and document edits are
+   not executable changes; code, configuration, dependencies, tooling and the
+   environment the suite reads are.
 4. **Never skip a check because the change looks small — skip it because the
    change cannot affect what it tests.** That distinction is the whole policy.
 5. **A named gap beats a silent one.** If you skipped a tier, say so in the
@@ -84,30 +108,38 @@ use it to confirm a label edit.
 **Evidence:** lint plus the focused module.
 
 ```bash
-ruff check .
+ruff check app/services/orders.py     # the paths you touched
 pytest tests/test_core.py -q          # or whichever single module covers the change
 ```
 
-If the module you need is database-backed, this is T3 — see §4 for the database
-you need.
+`ruff check .` costs under a tenth of a second, so run the whole gate whenever
+you prefer it to a path list — it is simply not *required* for a one-module
+change. If the module you need is database-backed, add the database from §4 and
+still run only that module.
 
-### T3 — Cross-cutting or sensitive
+### T3 — Sensitive or wide-reaching
 
-Anything touching money, authentication and sessions, provisioning and
-idempotency, the database models or a migration, the `PanelProvider` port and
-its contracts, or bot router order.
+Money, authentication and sessions, provisioning and idempotency, the database
+models or a migration, the `PanelProvider` port and its contracts, bot router
+order.
 
-**Evidence:** focused tests first (they localise a failure), then the full suite.
+**Evidence:** the focused tests that cover the blast radius, plus `alembic check`
+when a model or migration moved.
 
 ```bash
 ruff check .
-ruff format --check .
 pytest tests/test_purchase_flow.py -q     # focused: fail here first
-pytest -q                                 # full, needs PostgreSQL
+alembic check                             # models/migrations only
 ```
 
-Add `alembic check` when you touched a model or a migration — it must print
-"No new upgrade operations detected."
+The full suite is **not** part of T3 by default. A change inside a sensitive area
+is not by itself a reason to run everything — run it when `AGENTS.md` §4.2
+applies (shared foundations, a changed contract, a blast radius you cannot name),
+or at the handoff, where one run covers the whole unit of work:
+
+```bash
+pytest -q                                 # needs PostgreSQL
+```
 
 ### T4 — Release, deployment, or a migration against real data
 
@@ -115,8 +147,7 @@ Add `alembic check` when you touched a model or a migration — it must print
 production.
 
 ```bash
-pytest -q                                              # application suite
-PYTHONPATH=tools pytest -q tools/mock_wg_panel/test_mock_smoke.py
+pytest -q                                              # application + mock suites
 alembic upgrade head && alembic downgrade -1 && alembic upgrade head
 docker compose config --quiet                          # base stack
 docker compose --profile tls config --quiet            # with Caddy
@@ -161,11 +192,16 @@ docker exec wgguard-pg psql -U wgguard -d postgres -c "CREATE DATABASE wgguard_t
 Clean up after yourself (`docker rm -f wgguard-pg`); leaving containers and test
 images behind is reported in the handoff, not silently ignored.
 
-**Selecting tiers without a database.** `pytest -m "not db"` deselects the
-database tests, so it is usable on a machine with no PostgreSQL. As of this
-writing that selects **49 of 148** tests — a third of the suite for none of the
-setup cost. Be aware of the gap noted in §1: without a database the `db` tests
-*fail* rather than skip, so the marker is a selection tool, not a safety net.
+**Selecting tiers without a database.** A database-free run is a supported state,
+not a degraded one: 73 tests pass, the 99 `db` tests skip, nothing fails, and
+`pytest -q -m "not db"` selects the same 73 without even collecting the rest. The
+session header prints which database was probed, so a skip is never silent, and
+`REQUIRE_DB=1` turns a missing database into a hard error — that is what CI uses,
+where a silent skip would look like a green build.
+
+With Docker available, `make test-db` starts the throwaway PostgreSQL from the
+recipe above and `make test` runs the suite against it; `make dev-venv` creates
+the virtualenv those targets need. See `DEVELOPMENT.md` §5.
 
 ## 5. The three loops
 
@@ -174,8 +210,17 @@ Keep these separate. Blurring them is what makes a small change expensive.
 | Loop | Scope | Expected cost |
 |---|---|---|
 | **Inner** | Edit → narrowest check → edit | Seconds. T0–T2. No full suite. |
-| **Handoff** | The tier your change earned, plus a written report | Once per unit of work. |
+| **Handoff** | One full-suite run covering the whole unit, plus the written report | Once per unit of work. |
 | **Release** | T4, on the exact commit being released | Once per release. |
+
+Two habits stop the loops from bleeding into each other:
+
+- **Batch the edits, run once.** Several small changes to the same area are one
+  unit of work: finish them, then run the tier that unit earned. A suite run
+  after every edit buys nothing that the next run does not already cover.
+- **Cite, do not repeat.** A run whose tree state still holds *is* the evidence —
+  quote it with that state (`f30fa23 + docs only`) rather than paying for it
+  again.
 
 A reviewer asking for more evidence than the tier requires should be told which
 tier applies and why. A reviewer asking for **less** than the tier requires is a
@@ -197,21 +242,18 @@ tier that touches them, with no exceptions:
 
 ## 7. Known gaps (recorded, not yet fixed)
 
-Out of scope for the documentation pass that wrote this file. Each one costs an
-agent real time today; each is a small code change.
+1. **`ruff check .` is red on `tools/`.** The mock panel joined `testpaths`, so it
+   also left ruff's exclude list — and its six findings (four auto-fixable) are
+   not fixed yet. The CI lint gate fails until they are.
+2. **`make test-db` assumes port 55432 is free.** It starts or reuses a container
+   named `wgguard-pg`; a machine already running PostgreSQL on that port under
+   another name gets a port conflict instead of a database.
+3. **258 Persian strings still live inside `app/bot/handlers/**`** rather than in
+   `app/locales/fa.json`, so most screens cannot be reworded from the panel.
+   Measured, and written up in [`UX-WRITING.md`](UX-WRITING.md) §9.
+4. **The `/panels` admin page has only a render test** — no browser-level check of
+   the provider dropdown, the connection test or the delete guard.
+5. **`docs/CHANGELOG.md` stops at 1.0.0** and does not mention anything shipped
+   after it.
 
-1. **`make test` / `make lint` / `make format` fail** — they exec into a runtime
-   image without `pytest` or `ruff`. Either add a dev stage to the image or point
-   the targets at the host venv.
-2. **`requires_db` is unused** — database tests fail instead of skipping when no
-   PostgreSQL is reachable. Wiring it up as a module-level `pytestmark` on the
-   four database modules would make the boundary honest.
-3. **The `database_schema` fixture is `autouse` and session-scoped** — it creates
-   and drops the entire schema even for `pytest tests/test_core.py`. Making it
-   depend on the `db` marker would remove most of the cost of the inner loop.
-4. **`pytest-cov` is not a dependency** but coverage commands appear in the
-   older docs (removed from `DEVELOPMENT.md`).
-5. **The mock suite lives outside `testpaths`** and needs `PYTHONPATH=tools`; a
-   second `testpaths` entry would fold it into one command.
-
-Fixing these is a T3–T4 change to test infrastructure and earns its own commit.
+Fixing 1 and 2 is a small test-infrastructure change and earns its own commit.

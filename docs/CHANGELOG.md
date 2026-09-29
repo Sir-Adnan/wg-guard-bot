@@ -124,7 +124,7 @@ panel — self-hosted, Docker-only, Persian-first.
   by different backends in the same shop.
 - An admin page for managing panels (add, test connection, edit, toggle,
   delete) with the provider list and its capabilities.
-- 141 tests: unit, integration against a real PostgreSQL, a panel smoke suite
+- unit, integration against a real PostgreSQL, a panel smoke suite
   that renders every page, and a suite pinning the provider contract.
 - In-repo mock WG-Guard node (61 of 63 documented endpoints) with fault
   injection and a request journal, so the whole flow is testable offline.

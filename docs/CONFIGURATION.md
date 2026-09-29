@@ -60,7 +60,7 @@ Project settings live in two places:
 | `PANEL_ENABLED` | `true` | Enable the web panel |
 | `PANEL_HOST` | `0.0.0.0` | Bind address |
 | `PANEL_PORT` | `8080` | Port |
-| `PANEL_BASE_URL` | — | Public URL used to build links |
+| `PANEL_BASE_URL` | `http://localhost:8080` | Public URL used to build links |
 | `PANEL_BEHIND_PROXY` | `false` | Set to `true` if you are behind Nginx, Caddy or any TLS terminator |
 | `DOMAIN` | — | Domain or subdomain to serve (no scheme, no path). Empty = no TLS, long polling, no Caddy container |
 | `ACME_EMAIL` | — | Contact address for Let's Encrypt. Optional: the certificate is still issued, you just get no expiry notice |

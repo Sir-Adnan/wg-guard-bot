@@ -12,6 +12,7 @@ document.
 |---|---|
 | Changing code, and wondering what is allowed | [`../AGENTS.md`](../AGENTS.md) — invariants, authority boundaries, rejection list |
 | Deciding what to run before handing work over | [`VERIFICATION.md`](VERIFICATION.md) — risk tiers and the smallest sufficient evidence |
+| Writing or rewording bot copy, buttons, errors | [`UX-WRITING.md`](UX-WRITING.md) |
 | Setting up, running, or debugging locally | [`DEVELOPMENT.md`](DEVELOPMENT.md) |
 | Adding or changing an admin panel page | [`PANEL-CONTRACT.md`](PANEL-CONTRACT.md) |
 | Touching `app/panels/**`, or adding a VPN backend | [`PROVIDERS.md`](PROVIDERS.md) |
@@ -42,15 +43,16 @@ tests/          test-suite
 
 ## Commands
 
-Run these from the host virtualenv. The `make test`, `make lint` and
-`make format` targets exec into the runtime image, which has neither pytest nor
-ruff, so they fail — see [`VERIFICATION.md`](VERIFICATION.md) §7.
+The runtime image deliberately ships no development tooling, so `make test`,
+`make lint` and `make format` run against a local virtualenv: create it once with
+`make dev-venv`, and start the throwaway test database with `make test-db` (see
+[`VERIFICATION.md`](VERIFICATION.md) §1).
 
 ```bash
 ruff check .                 # lint (the CI gate)
 ruff format .                # format
-pytest -m "not db" -q        # no database needed
-pytest -q                    # everything (needs PostgreSQL)
+pytest -q -m "not db"        # 73 tests, no database needed
+pytest -q                    # 172 tests, needs PostgreSQL (app + mock suites)
 alembic upgrade head         # migrations
 ```
 

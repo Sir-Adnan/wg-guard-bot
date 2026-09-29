@@ -45,7 +45,7 @@ REDIS_URL=                      # empty = in-memory FSM
 
 `docker-compose.yml` deliberately does **not** publish the `db` port — a
 production host should not expose PostgreSQL. For host-side work, run a
-throwaway instance on a non-standard port:
+throwaway instance on a non-standard port (`make test-db` does exactly this):
 
 ```bash
 docker run -d --name wgguard-pg -p 55432:5432 \
@@ -77,15 +77,16 @@ message it to exercise the Telegram side.
 
 ## 5. Commands
 
-**Run these from the host venv.** The `make test`, `make lint` and `make format`
-targets exec into the runtime container, which has no pytest and no ruff, so they
-currently fail — that is gap #1 in [`VERIFICATION.md`](VERIFICATION.md) §7.
+**Run these from the host venv.** `make dev-venv` creates it, `make test-db`
+starts the database from §3, and `make test` / `make lint` / `make format` use the
+same venv — the runtime image deliberately ships no development tooling, so those
+targets never touch Docker.
 
 ```bash
-ruff check .                     # lint (the CI gate)
+ruff check .                     # lint (the CI gate); path arguments work too
 ruff format .                    # format
-pytest -m "not db" -q            # everything that needs no database
-pytest -q                        # everything (needs PostgreSQL)
+pytest -q -m "not db"            # 73 tests, no database
+pytest -q                        # 172 tests: app suite + mock panel suite
 pytest tests/test_core.py -q     # one module
 alembic upgrade head             # apply migrations
 ```
@@ -109,10 +110,13 @@ Pick the file that already covers your area before writing a new one.
 | `tests/test_catalog_features.py` | yes | category tree (depth, cycles, cascade), gift codes, guides, catalog filters |
 | `tests/test_panel_providers.py` | yes | the provider port: registry, capability flags, canonical mapping, exactly-once purchase |
 | `tests/test_panel.py` | yes | login, CSRF, every page renders, card round trip, receipt approval through the UI |
+| `tools/mock_wg_panel/` | no | the mock node's own smoke suite; `testpaths` collects it with everything else |
 
-The database marker is `@pytest.mark.db` (module-level `pytestmark`). Note that
-it currently only *selects* — without a reachable PostgreSQL those tests fail
-rather than skip; see [`VERIFICATION.md`](VERIFICATION.md) §7 gap #2.
+The database marker is `@pytest.mark.db` (module-level `pytestmark`). Without a
+reachable PostgreSQL those tests are **skipped**, not failed — `pytest -q` reports
+73 passed / 99 skipped in about four seconds, and the session header names the
+database it probed. Set `REQUIRE_DB=1` (CI does it for you) when a skip must be an
+error instead.
 
 ### Writing a test
 
@@ -168,7 +172,7 @@ rather than duplicating the contract here:
 | A VPN backend or node call | [`PROVIDERS.md`](PROVIDERS.md) |
 | A bot screen | `app/bot/handlers/`, then append to `ROUTE_ORDER` in `handlers/__init__.py` |
 | A shop setting | one `SettingSpec` in `app/services/settings_store.py`; the panel renders it |
-| A bot string | one key in `app/locales/fa.json` — see `AGENTS.md` §6 for the copy rules |
+| A bot string | one key in `app/locales/fa.json` — copy rules in `AGENTS.md` §6, the full guide in [`UX-WRITING.md`](UX-WRITING.md) |
 | A button colour or emoji | one entry in `_BUTTON_RAW` in `app/services/appearance.py` |
 | A table | a model in `app/db/models.py`, then a migration (§7) |
 | A scheduled job | a method on `Jobs` plus one `scheduler.add_job(...)` line |

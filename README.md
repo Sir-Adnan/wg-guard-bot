@@ -217,7 +217,7 @@ Everything is configured through the `.env` file (infrastructure) and the admin 
 | `ADMIN_IDS` | — | Numeric owner IDs, comma-separated |
 | `SUPPORT_IDS` | — | Numeric support-agent IDs (limited access) |
 | `PANEL_PORT` | `8080` | Web panel port |
-| `PANEL_BASE_URL` | — | Public panel URL |
+| `PANEL_BASE_URL` | `http://localhost:8080` | Public panel URL |
 | `CURRENCY_DISPLAY` | `toman` | Display unit: `toman` or `rial` |
 | `TEST_SERVICE_ENABLED` | `true` | Enable the trial service |
 | `RECEIPT_EXPIRE_MINUTES` | `90` | How long a receipt stays valid |
@@ -254,10 +254,12 @@ URL: `http://SERVER_IP:8080/panel`
 | **Guides** | Educational content for customers |
 | **Channels** | Manage mandatory membership |
 | **Bank cards** | Destination cards for card-to-card payments |
-| **WG-Guard panels** | Add and manage several nodes |
+| **WG-Guard / VPN panels** | Add and manage several nodes, of any provider |
 | **Broadcast** | Bulk messages with audience filtering and scheduling |
 | **System events** | Error log and a record of admin actions |
+| **Sales reports** | Revenue over a chosen period, breakdowns and CSV export |
 | **Staff** | Manage admins, support agents and access levels |
+| **Profile** | Your own account: change the panel password |
 
 ---
 
@@ -403,7 +405,7 @@ change — no business logic, no admin-panel UI work:
 `app/panels/providers/example.py` is a fully documented skeleton to copy, and
 `tests/test_panel_providers.py` pins the contract every adapter must meet.
 
-Further documentation: [`docs/README.md`](docs/README.md) (index) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/PANEL-CONTRACT.md`](docs/PANEL-CONTRACT.md) · [`docs/PROVIDERS.md`](docs/PROVIDERS.md) · [`docs/VERIFICATION.md`](docs/VERIFICATION.md) · [`AGENTS.md`](AGENTS.md)
+Further documentation: [`docs/README.md`](docs/README.md) (index) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/PANEL-CONTRACT.md`](docs/PANEL-CONTRACT.md) · [`docs/PROVIDERS.md`](docs/PROVIDERS.md) · [`docs/UX-WRITING.md`](docs/UX-WRITING.md) · [`docs/VERIFICATION.md`](docs/VERIFICATION.md) · [`AGENTS.md`](AGENTS.md)
 
 ---
 
@@ -428,9 +430,10 @@ export TEST_DATABASE_URL="postgresql+asyncpg://user:pass@127.0.0.1:5432/wgguard_
 pytest -q
 ```
 
-The database-backed tests are marked `db`; without a reachable database they
-**fail rather than skip**, so use `-m "not db"` on a machine that has none.
-Ports, containers and the exact environment block are in
+The database-backed tests are marked `db`; without a reachable database they are
+skipped rather than failed (73 pass, 99 skip), and every run prints which database
+it probed. `make test-db` starts a throwaway PostgreSQL and `make test` runs the
+whole suite against it. Ports, containers and the exact environment block are in
 [`docs/VERIFICATION.md`](docs/VERIFICATION.md#4-the-environment-the-commands-need).
 
 To test without a real node, use the **mock panel** shipped in the repository:
@@ -452,9 +455,12 @@ uvicorn app.main:app --reload
 |---|---|
 | `tests/test_core.py` | money, security, Jalali dates |
 | `tests/test_wg_client.py` | the REST client against the mock panel (idempotency, pagination, errors) |
+| `tests/test_bot_wiring.py` | dispatcher and router composition, handler order |
 | `tests/test_purchase_flow.py` | the full purchase cycle, provisioning, receipt approval, renewal |
 | `tests/test_catalog_features.py` | category tree, gift codes, guides |
+| `tests/test_panel_providers.py` | the provider port: registry, capability flags, canonical mapping |
 | `tests/test_panel.py` | rendering of every panel page + login + CSRF |
+| `tools/mock_wg_panel/` | the mock node's own smoke suite, collected by the same `pytest` |
 
 ---
 
