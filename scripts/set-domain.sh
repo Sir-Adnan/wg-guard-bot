@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-#  WG-Guard Bot — تغییر یا حذف دامنه و مدیریت گواهی SSL
-#  WG-Guard Bot — change/disable the domain and inspect the TLS certificate.
+#  WG-Guard Bot — change/disable the domain and inspect the TLS certificate
 #
-#  استفاده / usage:
-#      bash scripts/set-domain.sh example.com        # تعیین یا تغییر دامنه
-#      bash scripts/set-domain.sh --disable          # بازگشت به حالت بدون دامنه
-#      bash scripts/set-domain.sh --status           # وضعیت دامنه و گواهی
-#      bash scripts/set-domain.sh --renew            # بارگذاری دوباره‌ی تنظیمات Caddy
+#  usage:
+#      bash scripts/set-domain.sh example.com        # set or change the domain
+#      bash scripts/set-domain.sh --disable          # return to no-domain mode
+#      bash scripts/set-domain.sh --status           # domain and certificate status
+#      bash scripts/set-domain.sh --renew            # reload the Caddy configuration
 #
-#  گواهی SSL را Caddy خودش می‌گیرد و خودش تمدید می‌کند (حدود ۳۰ روز قبل از
-#  انقضا)؛ نیازی به certbot، cron یا کار دستی نیست.
+#  Caddy obtains the TLS certificate itself and renews it automatically (about 30 days
+#  before expiry); no certbot, cron or manual work is needed.
 #
-#  این اسکریپت فقط فایل .env را ویرایش می‌کند و سرویس‌ها را دوباره بالا می‌آورد.
-#  حجم‌های داده (pgdata، redisdata، backups، caddy_data) دست‌نخورده می‌مانند.
+#  This script only edits the .env file and brings the services back up.
+#  Data volumes (pgdata, redisdata, backups, caddy_data) are left untouched.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-# ریشه‌ی پروژه: یک پوشه بالاتر از scripts/
+# Project root: one directory above scripts/
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -27,7 +26,7 @@ ASSUME_YES="false"
 HTTPS_TIMEOUT="180"
 
 # ===========================================================================
-#  رنگ‌ها / colours — فقط وقتی خروجی یک ترمینال باشد و NO_COLOR تنظیم نشده باشد
+#  colours — only when the output is a terminal and NO_COLOR is not set
 # ===========================================================================
 if [ -n "${NO_COLOR:-}" ] || [ ! -t 1 ]; then
     C_RESET=""; C_BOLD=""; C_DIM=""
@@ -48,45 +47,45 @@ dim()  { printf '%s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
 
 usage() {
     cat <<EOF
-${C_BOLD}WG-Guard Bot — دامنه و گواهی SSL${C_RESET}
+${C_BOLD}WG-Guard Bot — domain and TLS certificate${C_RESET}
 
-${C_BOLD}استفاده:${C_RESET}
-  bash scripts/set-domain.sh <دامنه>     تعیین یا تغییر دامنه (SSL خودکار)
-  bash scripts/set-domain.sh --disable   حذف دامنه و بازگشت به حالت polling
-  bash scripts/set-domain.sh --status    نمایش وضعیت دامنه و گواهی
-  bash scripts/set-domain.sh --renew     بارگذاری دوباره‌ی تنظیمات Caddy
+${C_BOLD}Usage:${C_RESET}
+  bash scripts/set-domain.sh <domain>    set or change the domain (automatic SSL)
+  bash scripts/set-domain.sh --disable   remove the domain and return to polling mode
+  bash scripts/set-domain.sh --status    show the domain and certificate status
+  bash scripts/set-domain.sh --renew     reload the Caddy configuration
 
-${C_BOLD}گزینه‌ها:${C_RESET}
-  ${C_CYAN}--yes${C_RESET}      بدون پرسش تأیید (برای اسکریپت‌های خودکار)
-  ${C_CYAN}-h, --help${C_RESET} نمایش همین راهنما
+${C_BOLD}Options:${C_RESET}
+  ${C_CYAN}--yes${C_RESET}      skip the confirmation prompt (for automated scripts)
+  ${C_CYAN}-h, --help${C_RESET} show this help
 
-${C_BOLD}نمونه‌ها:${C_RESET}
+${C_BOLD}Examples:${C_RESET}
   bash scripts/set-domain.sh bot.example.com
-  bash scripts/set-domain.sh https://bot.example.com/     # طرح و اسلش خودکار حذف می‌شود
+  bash scripts/set-domain.sh https://bot.example.com/     # the scheme and trailing slash are stripped automatically
 
-${C_BOLD}نکته‌ها:${C_RESET}
-  • قبل از اجرا، یک رکورد A از دامنه به IP سرور بسازید.
-  • پورت‌های ۸۰ و ۴۴۳ باید از اینترنت باز باشند.
-  • گواهی SSL خودکار تمدید می‌شود؛ نیازی به certbot یا cron نیست.
+${C_BOLD}Notes:${C_RESET}
+  • Before running, create an A record pointing the domain to the server IP.
+  • Ports 80 and 443 must be open to the internet.
+  • The TLS certificate is renewed automatically; no certbot or cron is needed.
 
-${C_DIM}English: set/change/disable the domain for WG-Guard Bot and inspect the
+${C_DIM}Sets, changes or disables the domain for WG-Guard Bot and inspects the
 Caddy-managed certificate.  Editing .env is atomic and keeps a timestamped
 backup.${C_RESET}
 EOF
 }
 
 # ===========================================================================
-#  کمکی‌ها / helpers
+#  helpers
 # ===========================================================================
 require_root() {
     if [ "$(id -u)" -eq 0 ]; then
         return 0
     fi
     if command -v sudo >/dev/null 2>&1; then
-        warn "این اسکریپت به دسترسی root نیاز دارد؛ با sudo دوباره اجرا می‌شود…"
+        warn "This script needs root access; re-running it with sudo…"
         exec sudo -E bash "$0" "$@"
     fi
-    err "برای تغییر سرویس‌ها به دسترسی root نیاز است (و sudo نصب نیست)."
+    err "Root access is required to change the services (and sudo is not installed)."
     exit 1
 }
 
@@ -96,13 +95,13 @@ detect_compose() {
     elif command -v docker-compose >/dev/null 2>&1; then
         COMPOSE="docker-compose"
     else
-        err "Docker Compose پیدا نشد. نصب: apt-get install -y docker-compose-plugin"
+        err "Docker Compose not found. Install: apt-get install -y docker-compose-plugin"
         exit 1
     fi
 }
 
 running_services() {
-    # نام سرویس‌های در حال اجرا (بدون پروفایل tls تا Caddy هم دیده شود)
+    # Names of the running services (without the tls profile, so Caddy is visible too)
     $COMPOSE --profile tls ps --services --status running 2>/dev/null || true
 }
 
@@ -124,8 +123,8 @@ is_ip_address() {
 }
 
 is_private_ip() {
-    # آدرس‌های خصوصی/رزرو‌شده — نشانه‌ی DNS hijack یا رزولور محلی هستند، نه یک
-    # رکورد A واقعی، و مقایسه با IP عمومی سرور را بی‌معنا می‌کنند.
+    # Private/reserved addresses — a sign of DNS hijacking or a local resolver, not a
+    # real A record, and they make the comparison with the public IP of the server meaningless.
     local ip="$1" a b
     case "$ip" in
         10.*|127.*|169.254.*|192.168.*|0.*) return 0 ;;
@@ -157,7 +156,7 @@ detect_public_ip() {
 }
 
 resolve_domain_ips() {
-    # IP های عمومیِ حل‌شده‌ی دامنه (آدرس‌های خصوصی/رزرو‌شده فیلتر می‌شوند)
+    # Public IPs the domain resolves to (private/reserved addresses are filtered out)
     local name="$1" ips="" ip=""
     if command -v getent >/dev/null 2>&1; then
         ips="$(getent ahostsv4 "$name" 2>/dev/null | awk '{print $1}' | sort -u || true)"
@@ -182,7 +181,7 @@ except Exception:
     done
 }
 
-# -- خواندن و نوشتن .env ------------------------------------------------------
+# -- reading and writing .env ------------------------------------------------------
 env_get() {
     local file="$1" key="$2" line=""
     [ -f "$file" ] || return 0
@@ -198,7 +197,7 @@ env_get() {
 }
 
 env_set() {
-    # env_set <فایل> <کلید> <مقدار> — جایگزینی کل خط یا افزودن آن
+    # env_set <file> <key> <value> — replace the whole line or append it
     local file="$1" key="$2" value="$3" escaped=""
     if grep -Eq "^[[:space:]]*${key}=" "$file"; then
         escaped="$(printf '%s' "$value" | sed -e 's/[&\\]/\\&/g')"
@@ -226,15 +225,15 @@ confirm() {
 
 apply_env_updates() {
     # apply_env_updates <domain> <email>
-    # ویرایش اتمیک: نوشتن در فایل موقت، سپس mv؛ با پشتیبان زمان‌دار.
+    # Atomic edit: write to a temporary file, then mv; with a timestamped backup.
     local new_domain="$1" email="$2" stamp backup tmp
     stamp="$(date +%Y%m%d-%H%M%S)"
     backup=".env.bak.${stamp}"
 
-    cp -p .env "$backup" || { err "گرفتن پشتیبان از .env ناموفق بود."; return 1; }
-    ok "پشتیبان .env ذخیره شد: ${backup}"
+    cp -p .env "$backup" || { err "Failed to back up .env."; return 1; }
+    ok ".env backup saved: ${backup}"
 
-    tmp="$(mktemp .env.tmp.XXXXXX)" || { err "ساخت فایل موقت ناموفق بود."; return 1; }
+    tmp="$(mktemp .env.tmp.XXXXXX)" || { err "Failed to create a temporary file."; return 1; }
     cat .env > "$tmp"
 
     env_set "$tmp" DOMAIN "$new_domain"
@@ -260,15 +259,15 @@ apply_env_updates() {
     chmod 600 "$tmp" 2>/dev/null || true
     mv -f "$tmp" .env
     chmod 600 .env 2>/dev/null || true
-    ok "فایل .env به‌روزرسانی شد (بقیه‌ی خطوط و کامنت‌ها دست‌نخورده)."
+    ok ".env updated (all other lines and comments left untouched)."
     return 0
 }
 
 wait_for_url() {
     local url="$1" timeout="${2:-$HTTPS_TIMEOUT}" waited=0
-    step "انتظار برای پاسخ ${url} (تا ${timeout} ثانیه)"
+    step "Waiting for ${url} to respond (up to ${timeout} seconds)"
     if [ "${url#https://}" != "$url" ]; then
-        dim "  اولین درخواست ممکن است چند ثانیه طول بکشد تا گواهی SSL صادر شود."
+        dim "  The first request may take a few seconds while the TLS certificate is issued."
     fi
     while [ "$waited" -lt "$timeout" ]; do
         if command -v curl >/dev/null 2>&1; then
@@ -281,20 +280,20 @@ wait_for_url() {
         sleep 3
         waited=$(( waited + 3 ))
         if [ $(( waited % 30 )) -eq 0 ]; then
-            dim "  … ${waited} ثانیه"
+            dim "  … ${waited} seconds"
         fi
     done
     return 1
 }
 
 cert_file_path() {
-    # مسیر فایل گواهی داخل حجم caddy_data
+    # Path of the certificate file inside the caddy_data volume
     $COMPOSE --profile tls exec -T caddy sh -c \
         "find /data/caddy/certificates -name '${1}.crt' 2>/dev/null | head -n1" 2>/dev/null | tr -d '\r' || true
 }
 
 cert_details() {
-    # خلاصه‌ی گواهی: subject/issuer/expiry + روزهای باقی‌مانده
+    # Certificate summary: subject/issuer/expiry + days remaining
     local domain="$1" out=""
     out="$($COMPOSE --profile tls exec -T caddy sh -c "
         f=\$(find /data/caddy/certificates -name '${domain}.crt' 2>/dev/null | head -n1)
@@ -329,69 +328,69 @@ show_status() {
     [ -n "$bind" ] || bind="0.0.0.0"
     [ -n "$mode" ] || mode="polling"
 
-    printf '%s\n' "${C_BOLD}WG-Guard Bot — وضعیت دامنه و گواهی${C_RESET}"
+    printf '%s\n' "${C_BOLD}WG-Guard Bot — domain and certificate status${C_RESET}"
     say ""
 
     if [ -z "$domain" ]; then
-        info "دامنه: تنظیم نشده (حالت بدون SSL)"
-        say "   حالت ربات      : ${mode}"
-        say "   آدرس پنل       : $(env_get .env PANEL_BASE_URL)"
-        say "   Caddy          : اجرا نمی‌شود (پروفایل tls غیرفعال است)"
+        info "Domain: not set (no-SSL mode)"
+        say "   Bot mode       : ${mode}"
+        say "   Panel URL      : $(env_get .env PANEL_BASE_URL)"
+        say "   Caddy          : not running (the tls profile is disabled)"
         say ""
-        dim "برای فعال‌کردن دامنه و SSL خودکار:  bash scripts/set-domain.sh example.com"
+        dim "To enable a domain and automatic SSL:  bash scripts/set-domain.sh example.com"
         return 0
     fi
 
-    info "دامنه: ${domain}"
-    say "   ایمیل ACME     : ${email:-(ثبت نشده — هشدار انقضا نمی‌آید)}"
-    say "   حالت ربات      : ${mode}"
-    say "   آدرس پنل       : $(env_get .env PANEL_BASE_URL)"
-    say "   اتصال پنل روی هاست: ${bind}:$(env_get .env PANEL_PORT)"
+    info "Domain: ${domain}"
+    say "   ACME email     : ${email:-(not registered — no expiry warnings)}"
+    say "   Bot mode       : ${mode}"
+    say "   Panel URL      : $(env_get .env PANEL_BASE_URL)"
+    say "   Panel bind on host: ${bind}:$(env_get .env PANEL_PORT)"
     say ""
 
-    # -- وضعیت کانتینر Caddy --------------------------------------------------
+    # -- Caddy container status --------------------------------------------------
     if running_services | grep -q '^caddy$'; then
         caddy_state="$($COMPOSE --profile tls ps caddy --format '{{.Status}}' 2>/dev/null | head -n1 || true)"
-        ok "Caddy در حال اجراست ${caddy_state:+(${caddy_state})}"
+        ok "Caddy is running ${caddy_state:+(${caddy_state})}"
     else
-        warn "Caddy در حال اجرا نیست."
-        dim "  اجرا:  $COMPOSE --profile tls up -d"
+        warn "Caddy is not running."
+        dim "  Start:  $COMPOSE --profile tls up -d"
     fi
 
-    # -- گواهی -----------------------------------------------------------------
+    # -- certificate -----------------------------------------------------------------
     if cert_details "$domain"; then
         say ""
-        say "   صادرکننده (issuer) : ${CERT_ISSUER:-نامشخص}"
-        say "   موضوع (subject)    : ${CERT_SUBJECT:-نامشخص}"
-        say "   تاریخ انقضا        : ${CERT_END:-نامشخص}"
+        say "   Issuer         : ${CERT_ISSUER:-unknown}"
+        say "   Subject        : ${CERT_SUBJECT:-unknown}"
+        say "   Expires        : ${CERT_END:-unknown}"
         if [ -n "$CERT_DAYS" ]; then
-            say "   روزهای باقی‌مانده   : ${CERT_DAYS}"
+            say "   Days remaining : ${CERT_DAYS}"
         fi
-        ok "گواهی SSL موجود است و ${C_GREEN}خودکار تمدید می‌شود${C_RESET} (حدود ۳۰ روز قبل از انقضا)."
-        info "نیازی به certbot، cron یا تمدید دستی نیست."
+        ok "A TLS certificate exists and is ${C_GREEN}renewed automatically${C_RESET} (about 30 days before expiry)."
+        info "No certbot, cron or manual renewal is needed."
     else
-        warn "گواهی SSL هنوز در حجم caddy_data پیدا نشد."
-        dim "  اگر تازه دامنه را تنظیم کرده‌اید، اولین درخواست HTTPS آن را می‌سازد:"
+        warn "No TLS certificate found in the caddy_data volume yet."
+        dim "  If you just set the domain, the first HTTPS request creates it:"
         dim "      curl -I https://${domain}/healthz"
-        dim "  و اگر خطا داد:  $COMPOSE --profile tls logs --tail=40 caddy"
+        dim "  and if that fails:  $COMPOSE --profile tls logs --tail=40 caddy"
     fi
 
-    # -- بررسی سلامت عمومی -----------------------------------------------------
+    # -- public health check -----------------------------------------------------
     if command -v curl >/dev/null 2>&1; then
         say ""
         if curl -fsS --max-time 10 "https://${domain}/healthz" >/dev/null 2>&1; then
             https_ok="true"
         fi
         if [ "$https_ok" = "true" ]; then
-            ok "بررسی سلامت روی https://${domain}/healthz موفق بود."
+            ok "Health check on https://${domain}/healthz succeeded."
         else
-            warn "پاسخ سالمی از https://${domain}/healthz نیامد (DNS، پورت ۸۰/۴۴۳ یا صدور گواهی را بررسی کنید)."
+            warn "No healthy response from https://${domain}/healthz (check DNS, ports 80/443 or certificate issuance)."
         fi
     fi
 
     say ""
-    info "برای تغییر دامنه:      bash scripts/set-domain.sh new.example.com"
-    info "برای حذف دامنه:        bash scripts/set-domain.sh --disable"
+    info "To change the domain:  bash scripts/set-domain.sh new.example.com"
+    info "To remove the domain:  bash scripts/set-domain.sh --disable"
     return 0
 }
 
@@ -402,36 +401,36 @@ disable_domain() {
     local current
     current="$(normalize_domain "$(env_get .env DOMAIN)")"
 
-    printf '%s\n' "${C_BOLD}WG-Guard Bot — حذف دامنه${C_RESET}"
+    printf '%s\n' "${C_BOLD}WG-Guard Bot — remove the domain${C_RESET}"
     say ""
     if [ -z "$current" ]; then
-        info "دامنه‌ای تنظیم نشده بود؛ چیزی برای حذف نیست."
+        info "No domain was set; there is nothing to remove."
         return 0
     fi
-    say "  دامنه‌ی فعلی: ${C_CYAN}${current}${C_RESET}"
-    say "  با حذف دامنه، ربات به حالت polling و پنل به http://IP:PORT برمی‌گردد."
-    say "  ${C_BOLD}حجم‌های داده و گواهی دست‌نخورده می‌مانند.${C_RESET}"
+    say "  Current domain: ${C_CYAN}${current}${C_RESET}"
+    say "  Removing the domain returns the bot to polling mode and the panel to http://IP:PORT."
+    say "  ${C_BOLD}Data and certificate volumes are left untouched.${C_RESET}"
     say ""
-    if ! confirm "دامنه حذف شود و ربات به حالت بدون دامنه برگردد؟" "y"; then
-        info "لغو شد؛ هیچ تغییری اعمال نشد."
+    if ! confirm "Remove the domain and return the bot to no-domain mode?" "y"; then
+        info "Cancelled; no changes were made."
         return 0
     fi
 
     apply_env_updates "" ""
-    step "راه‌اندازی دوباره‌ی سرویس‌ها (بدون Caddy)"
+    step "Restarting the services (without Caddy)"
     $COMPOSE up -d --remove-orphans
-    # کانتینر Caddy دیگر در پروفایل tls نیست؛ صریحاً هم پاکش می‌کنیم.
+    # The Caddy container is no longer in the tls profile; we remove it explicitly too.
     $COMPOSE --profile tls rm -sf caddy >/dev/null 2>&1 || true
-    ok "سرویس‌ها در حالت بدون دامنه اجرا شدند."
+    ok "Services are running in no-domain mode."
 
     local port
     port="$(env_get .env PANEL_PORT)"
     [ -n "$port" ] || port="8080"
     say ""
-    info "پنل روی این آدرس در دسترس است: http://${PUBLIC_IP}:${port}/panel/login"
-    dim "  ربات چند ثانیه فرصت می‌خواهد تا بالا بیاید؛ اگر باز نشد:"
+    info "The panel is available at: http://${PUBLIC_IP}:${port}/panel/login"
+    dim "  The bot needs a few seconds to come up; if it does not open:"
     dim "      $COMPOSE logs --tail=40 bot"
-    dim "گواهی قبلی در حجم caddy_data باقی است اما دیگر استفاده نمی‌شود."
+    dim "The previous certificate stays in the caddy_data volume but is no longer used."
     return 0
 }
 
@@ -442,45 +441,45 @@ renew_now() {
     local domain
     domain="$(normalize_domain "$(env_get .env DOMAIN)")"
 
-    printf '%s\n' "${C_BOLD}WG-Guard Bot — تمدید گواهی${C_RESET}"
+    printf '%s\n' "${C_BOLD}WG-Guard Bot — renew the certificate${C_RESET}"
     say ""
     if [ -z "$domain" ]; then
-        err "دامنه‌ای تنظیم نشده است؛ اول دامنه را تنظیم کنید:"
+        err "No domain is set; set the domain first:"
         dim "    bash scripts/set-domain.sh example.com"
         return 1
     fi
 
-    info "Caddy گواهی SSL را ${C_GREEN}خودکار${C_RESET} تمدید می‌کند — حدود ۳۰ روز قبل از انقضا."
-    dim "  این دستور فقط تنظیمات Caddy را دوباره بارگذاری می‌کند و تاریخ انقضا را نشان می‌دهد؛"
-    dim "  گواهی‌ها پاک نمی‌شوند (این کار به Let's Encrypt فشار می‌آورد و ممکن است محدود شوید)."
+    info "Caddy renews the TLS certificate ${C_GREEN}automatically${C_RESET} — about 30 days before expiry."
+    dim "  This command only reloads the Caddy configuration and shows the expiry date;"
+    dim "  certificates are not deleted (that puts pressure on Let's Encrypt and you may get rate-limited)."
     say ""
 
-    step "بارگذاری دوباره‌ی تنظیمات Caddy"
+    step "Reloading the Caddy configuration"
     if $COMPOSE --profile tls exec -T caddy caddy reload --config /etc/caddy/Caddyfile; then
-        ok "تنظیمات Caddy دوباره بارگذاری شد (بدون قطع سرویس)."
+        ok "Caddy configuration reloaded (no downtime)."
     else
-        warn "بارگذاری دوباره ناموفق بود؛ Caddy در حال اجراست؟"
-        dim "  وضعیت:  $COMPOSE --profile tls ps caddy"
-        dim "  لاگ:    $COMPOSE --profile tls logs --tail=40 caddy"
+        warn "Reload failed; is Caddy running?"
+        dim "  Status:  $COMPOSE --profile tls ps caddy"
+        dim "  Logs:    $COMPOSE --profile tls logs --tail=40 caddy"
         return 1
     fi
 
     say ""
     if cert_details "$domain"; then
-        info "وضعیت گواهی «${domain}»:"
-        say "   صادرکننده : ${CERT_ISSUER:-نامشخص}"
-        say "   انقضا     : ${CERT_END:-نامشخص}"
-        [ -n "$CERT_DAYS" ] && say "   روزهای باقی‌مانده: ${CERT_DAYS}"
-        ok "تمدید خودکار فعال است؛ کار دیگری لازم نیست."
+        info "Certificate status for '${domain}':"
+        say "   Issuer : ${CERT_ISSUER:-unknown}"
+        say "   Expires: ${CERT_END:-unknown}"
+        [ -n "$CERT_DAYS" ] && say "   Days remaining: ${CERT_DAYS}"
+        ok "Automatic renewal is active; nothing else is needed."
     else
-        warn "گواهی پیدا نشد. برای صدور اولین گواهی، یک درخواست HTTPS بفرستید:"
+        warn "Certificate not found. To issue the first one, send an HTTPS request:"
         dim "    curl -I https://${domain}/healthz"
     fi
     return 0
 }
 
 # ===========================================================================
-#  تعیین/تغییر دامنه
+#  set/change the domain
 # ===========================================================================
 set_domain() {
     local new_domain="$1" email="" current="" dns_ok="false" resolved=""
@@ -488,45 +487,45 @@ set_domain() {
     new_domain="$(normalize_domain "$new_domain")"
 
     if [ -z "$new_domain" ]; then
-        err "دامنه خالی است. برای حذف دامنه از --disable استفاده کنید."
+        err "The domain is empty. Use --disable to remove the domain."
         return 2
     fi
     if is_ip_address "$new_domain"; then
-        err "«${new_domain}» یک IP است؛ Let's Encrypt برای IP گواهی صادر نمی‌کند."
-        say "  برای اجرای بدون دامنه:  bash scripts/set-domain.sh --disable"
+        err "'${new_domain}' is an IP; Let's Encrypt does not issue certificates for IPs."
+        say "  To run without a domain:  bash scripts/set-domain.sh --disable"
         return 2
     fi
     if [ "$new_domain" = "localhost" ] || [ "${new_domain#*.}" = "local" ]; then
-        err "«${new_domain}» دامنه‌ی عمومی نیست؛ Let's Encrypt برای آن گواهی صادر نمی‌کند."
+        err "'${new_domain}' is not a public domain; Let's Encrypt will not issue a certificate for it."
         return 2
     fi
     if ! validate_domain "$new_domain"; then
-        err "دامنه‌ی «${new_domain}» معتبر نیست. قالب درست: bot.example.com"
+        err "The domain '${new_domain}' is not valid. Correct format: bot.example.com"
         return 2
     fi
 
-    printf '%s\n' "${C_BOLD}WG-Guard Bot — تعیین دامنه${C_RESET}"
+    printf '%s\n' "${C_BOLD}WG-Guard Bot — set the domain${C_RESET}"
     say ""
 
     detect_public_ip
     current="$(normalize_domain "$(env_get .env DOMAIN)")"
     if [ -n "$current" ] && [ "$current" != "$new_domain" ]; then
-        warn "دامنه از «${current}» به «${new_domain}» تغییر می‌کند."
-        say "   • وبهوک تلگرام در شروع بعدی ربات خودکار روی دامنه‌ی جدید ثبت می‌شود."
-        say "   • گواهی دامنه‌ی قبلی در حجم caddy_data می‌ماند اما دیگر استفاده نمی‌شود."
+        warn "The domain changes from '${current}' to '${new_domain}'."
+        say "   • The Telegram webhook is registered on the new domain automatically the next time the bot starts."
+        say "   • The certificate for the previous domain stays in the caddy_data volume but is no longer used."
         say ""
-        if ! confirm "ادامه می‌دهیم؟" "y"; then
-            info "لغو شد؛ هیچ تغییری اعمال نشد."
+        if ! confirm "Continue?" "y"; then
+            info "Cancelled; no changes were made."
             return 0
         fi
     fi
 
-    # -- ایمیل ACME ------------------------------------------------------------
+    # -- ACME email ------------------------------------------------------------
     email="$(env_get .env ACME_EMAIL)"
     if [ "$ASSUME_YES" != "true" ]; then
         printf '%s? %s%s %s[%s]%s\n  %s❯%s ' \
-            "$C_BOLD" "ایمیل برای Let's Encrypt (اختیاری)" "$C_RESET" \
-            "$C_DIM" "${email:-(خالی)}" "$C_RESET" "$C_GREEN" "$C_RESET" >&2
+            "$C_BOLD" "Email for Let's Encrypt (optional)" "$C_RESET" \
+            "$C_DIM" "${email:-(empty)}" "$C_RESET" "$C_GREEN" "$C_RESET" >&2
         local answer=""
         IFS= read -r answer || answer=""
         if [ -n "$answer" ]; then
@@ -535,14 +534,14 @@ set_domain() {
     fi
     email="$(printf '%s' "$email" | tr -d '[:space:]')"
     if [ -z "$email" ]; then
-        warn "ایمیلی ثبت نشد؛ گواهی صادر می‌شود اما هشدار انقضا نمی‌آید."
+        warn "No email was registered; the certificate is still issued but no expiry warnings arrive."
     fi
 
-    # -- بررسی DNS -------------------------------------------------------------
-    step "بررسی DNS دامنه‌ی ${new_domain}"
-    say "   IP این سرور: ${PUBLIC_IP}"
+    # -- DNS check -------------------------------------------------------------
+    step "Checking DNS for ${new_domain}"
+    say "   IP this server: ${PUBLIC_IP}"
     resolved="$(resolve_domain_ips "$new_domain" | tr '\n' ' ' | sed -e 's/[[:space:]]*$//')"
-    say "   IP دامنه   : ${resolved:-پیدا نشد}"
+    say "   IP domain     : ${resolved:-not found}"
     if [ -n "$resolved" ] && [ "$PUBLIC_IP" != "SERVER_IP" ]; then
         local one
         for one in $resolved; do
@@ -554,52 +553,52 @@ set_domain() {
     fi
 
     if [ "$dns_ok" = "true" ]; then
-        ok "دامنه درست به این سرور اشاره می‌کند."
+        ok "The domain points to this server correctly."
     else
-        warn "دامنه هنوز به این سرور اشاره نمی‌کند."
-        dim "  یک رکورد A بسازید:  ${new_domain}  A  ${PUBLIC_IP}"
+        warn "The domain does not point to this server yet."
+        dim "  Create an A record:  ${new_domain}  A  ${PUBLIC_IP}"
         if [ "$ASSUME_YES" != "true" ]; then
-            if ! confirm "با این وضعیت ادامه می‌دهیم؟ (گواهی تا درست‌شدن DNS صادر نمی‌شود)" "n"; then
-                info "لغو شد. بعد از درست‌کردن DNS دوباره اجرا کنید:"
+            if ! confirm "Continue with this state? (no certificate is issued until DNS is fixed)" "n"; then
+                info "Cancelled. Run it again after fixing DNS:"
                 dim "    bash scripts/set-domain.sh ${new_domain}"
                 return 0
             fi
         else
-            warn "حالت --yes: بدون تأیید ادامه می‌دهیم."
+            warn "--yes mode: continuing without confirmation."
         fi
     fi
 
-    # -- نوشتن .env و بالا آوردن سرویس‌ها --------------------------------------
-    step "به‌روزرسانی فایل .env"
+    # -- writing .env and starting the services --------------------------------------
+    step "Updating the .env file"
     apply_env_updates "$new_domain" "$email"
 
-    step "راه‌اندازی سرویس‌ها با Caddy (SSL خودکار)"
+    step "Starting the services with Caddy (automatic SSL)"
     $COMPOSE --profile tls up -d --remove-orphans
-    ok "سرویس‌ها اجرا شدند."
+    ok "Services started."
 
     say ""
     if wait_for_url "https://${new_domain}/healthz"; then
-        ok "پنل روی HTTPS در دسترس است: https://${new_domain}/panel/login"
+        ok "The panel is available over HTTPS: https://${new_domain}/panel/login"
         if cert_details "$new_domain"; then
             say ""
-            say "   صادرکننده : ${CERT_ISSUER:-نامشخص}"
-            say "   انقضا     : ${CERT_END:-نامشخص}"
-            [ -n "$CERT_DAYS" ] && say "   روزهای باقی‌مانده: ${CERT_DAYS}"
+            say "   Issuer : ${CERT_ISSUER:-unknown}"
+            say "   Expires: ${CERT_END:-unknown}"
+            [ -n "$CERT_DAYS" ] && say "   Days remaining: ${CERT_DAYS}"
         fi
         say ""
-        ok "گواهی SSL ${C_GREEN}خودکار تمدید می‌شود${C_RESET}؛ نیازی به certbot یا cron نیست."
+        ok "The TLS certificate is ${C_GREEN}renewed automatically${C_RESET}; no certbot or cron is needed."
     else
         say ""
-        err "پنل روی HTTPS پاسخ نداد؛ صدور گواهی کامل نشده است."
+        err "The panel did not respond over HTTPS; certificate issuance did not complete."
         say ""
-        printf '%s── ۴۰ خط آخر لاگ Caddy ───────────────────────────%s\n' "$C_BOLD" "$C_RESET"
+        printf '%s── last 40 lines of the Caddy log ───────────────────────────%s\n' "$C_BOLD" "$C_RESET"
         $COMPOSE --profile tls logs --tail=40 caddy 2>&1 || true
         say ""
-        info "چک‌لیست:"
-        say "  ۱) رکورد A دامنه به ${PUBLIC_IP} اشاره می‌کند؟  dig +short ${new_domain}"
-        say "  ۲) پورت ۸۰ و ۴۴۳ باز هستند؟  ufw allow 80/tcp && ufw allow 443/tcp"
-        say "  ۳) محدودیت نرخ Let's Encrypt؟ (چند تلاش پشت‌سرهم = حدود یک ساعت صبر)"
-        say "  ۴) CDN/پروکسی مثل Cloudflare روی حالت DNS only باشد."
+        info "Checklist:"
+        say "  1) Does the domain's A record point to ${PUBLIC_IP}?  dig +short ${new_domain}"
+        say "  2) Are ports 80 and 443 open?  ufw allow 80/tcp && ufw allow 443/tcp"
+        say "  3) Let's Encrypt rate limit? (several attempts in a row = wait about an hour)"
+        say "  4) A CDN/proxy such as Cloudflare must be in DNS only mode."
         return 1
     fi
     return 0
@@ -616,7 +615,7 @@ main() {
             --status)   MODE="status" ;;
             --renew)    MODE="renew" ;;
             --help|-h)  usage; exit 0 ;;
-            --*)        err "گزینه‌ی ناشناخته: $1"; say ""; usage; exit 2 ;;
+            --*)        err "Unknown option: $1"; say ""; usage; exit 2 ;;
             *)          DOMAIN_ARG="$1"; MODE="set" ;;
         esac
         shift
@@ -627,13 +626,13 @@ main() {
         exit 2
     fi
 
-    cd "$PROJECT_DIR" || { err "پوشه‌ی پروژه پیدا نشد: $PROJECT_DIR"; exit 1; }
+    cd "$PROJECT_DIR" || { err "Project directory not found: $PROJECT_DIR"; exit 1; }
     if [ ! -f .env ]; then
-        err "فایل .env در «${PROJECT_DIR}» پیدا نشد؛ اول نصب کنید: bash install.sh"
+        err ".env file not found in '${PROJECT_DIR}'; install first: bash install.sh"
         exit 1
     fi
     if [ ! -f docker-compose.yml ]; then
-        err "فایل docker-compose.yml پیدا نشد؛ این اسکریپت را از داخل پوشه‌ی پروژه اجرا کنید."
+        err "docker-compose.yml not found; run this script from inside the project directory."
         exit 1
     fi
 

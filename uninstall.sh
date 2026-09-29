@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-#  WG-Guard Bot — حذف / uninstaller
+#  WG-Guard Bot — removal / uninstaller
 #
-#  پیش‌فرض: فقط کانتینرها و شبکه‌ی سرویس حذف می‌شوند.
-#           «داده‌های دیتابیس، Redis و پشتیبان‌ها دست‌نخورده می‌مانند.»
+#  Default: only the containers and the service network are removed.
+#           "The database, Redis and the backups are left untouched."
 #
-#  با --purge: حجم‌های داده (pgdata، redisdata، backups) و پوشه‌ی backups/
-#              هم حذف می‌شوند — فقط بعد از تأیید تایپی «yes».
+#  With --purge: the data volumes (pgdata, redisdata, backups) and the backups/
+#                directory are removed as well — only after a typed "yes".
 #
-#  اجرا:  bash uninstall.sh [--purge] [--dir PATH] [--yes] [--keep-images]
+#  Run:  bash uninstall.sh [--purge] [--dir PATH] [--yes] [--keep-images]
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -34,24 +34,24 @@ dim()  { printf '%s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
 
 usage() {
     cat <<EOF
-${C_BOLD}WG-Guard Bot — حذف${C_RESET}
+${C_BOLD}WG-Guard Bot — uninstall${C_RESET}
 
-${C_BOLD}استفاده:${C_RESET}
-  bash uninstall.sh [گزینه‌ها]
+${C_BOLD}Usage:${C_RESET}
+  bash uninstall.sh [options]
 
-${C_BOLD}گزینه‌ها:${C_RESET}
-  ${C_CYAN}--purge${C_RESET}         حذف کامل داده‌ها (دیتابیس، Redis و پشتیبان‌ها) — با تأیید تایپی
-  ${C_CYAN}--keep-images${C_RESET}   ایمیج ساخته‌شده را نگه دار
-  ${C_CYAN}--dir PATH${C_RESET}      مسیر پوشه‌ی پروژه (پیش‌فرض: پوشه‌ی فعلی)
-  ${C_CYAN}--yes${C_RESET}           بدون پرسش‌های تأیید (تأیید تایپی --purge حذف نمی‌شود)
-  ${C_CYAN}-h, --help${C_RESET}      نمایش همین راهنما
+${C_BOLD}Options:${C_RESET}
+  ${C_CYAN}--purge${C_RESET}         delete all data (database, Redis and backups) — with a typed confirmation
+  ${C_CYAN}--keep-images${C_RESET}   keep the built image
+  ${C_CYAN}--dir PATH${C_RESET}      path to the project directory (default: current directory)
+  ${C_CYAN}--yes${C_RESET}           skip the confirmation questions (the typed --purge confirmation is not skipped)
+  ${C_CYAN}-h, --help${C_RESET}      show this help
 
-${C_BOLD}تفاوت دو حالت:${C_RESET}
-  بدون --purge : کانتینرها می‌روند، ${C_BOLD}داده‌ها می‌مانند${C_RESET} (نصب بعدی همان داده‌ها را برمی‌گرداند)
-  با --purge   : همه‌چیز می‌رود؛ ${C_BOLD}دیگر راه بازگشتی نیست${C_RESET}
+${C_BOLD}How the two modes differ:${C_RESET}
+  without --purge : the containers go away, ${C_BOLD}the data stays${C_RESET} (the next install brings the same data back)
+  with --purge    : everything goes away; ${C_BOLD}there is no way back${C_RESET}
 
-${C_DIM}English: stops and removes the containers.  Volumes and data are KEPT by
-default; --purge deletes them after an explicit typed confirmation.${C_RESET}
+${C_DIM}Stops and removes the containers.  Volumes and data are KEPT by default;
+--purge deletes them after an explicit typed confirmation.${C_RESET}
 EOF
 }
 
@@ -60,10 +60,10 @@ require_root() {
         return 0
     fi
     if command -v sudo >/dev/null 2>&1; then
-        warn "این اسکریپت به دسترسی root نیاز دارد؛ با sudo دوباره اجرا می‌شود…"
+        warn "This script needs root access; re-running it with sudo…"
         exec sudo -E bash "$0" "$@"
     fi
-    err "برای حذف سرویس‌ها به دسترسی root نیاز است (و sudo نصب نیست)."
+    err "Removing the services requires root access (and sudo is not installed)."
     exit 1
 }
 
@@ -86,7 +86,7 @@ parse_args() {
             --dir)          INSTALL_DIR="${2:-}"; shift ;;
             --dir=*)        INSTALL_DIR="${1#*=}" ;;
             --help|-h)      usage; exit 0 ;;
-            *) err "گزینه‌ی ناشناخته: $1"; say ""; usage; exit 2 ;;
+            *) err "Unknown option: $1"; say ""; usage; exit 2 ;;
         esac
         shift
     done
@@ -114,141 +114,141 @@ confirm() {
 main() {
     parse_args "$@"
 
-    # اول بررسی root؛ تا در حالت نیاز به sudo خروجی تکراری چاپ نشود
+    # Check for root first, so that no duplicate output is printed when sudo is needed
     require_root "$@"
 
-    printf '%s\n' "${C_BOLD}WG-Guard Bot — حذف${C_RESET}"
+    printf '%s\n' "${C_BOLD}WG-Guard Bot — uninstall${C_RESET}"
 
     if [ ! -f "$INSTALL_DIR/docker-compose.yml" ]; then
-        err "فایل docker-compose.yml در «$INSTALL_DIR» پیدا نشد."
-        say "  با --dir مسیر درست را بدهید، مثلاً: bash uninstall.sh --dir /root/wg-guard-bot"
+        err "docker-compose.yml was not found in \"$INSTALL_DIR\"."
+        say "  Use --dir to give the correct path, for example: bash uninstall.sh --dir /root/wg-guard-bot"
         exit 1
     fi
     cd "$INSTALL_DIR"
 
     detect_compose
     if [ -z "$COMPOSE" ]; then
-        err "Docker Compose پیدا نشد؛ نمی‌توان سرویس‌ها را مدیریت کرد."
-        say "  اگر داکر را دستی حذف کرده‌اید، کانتینرها هم از قبل نیستند."
+        err "Docker Compose not found; the services cannot be managed."
+        say "  If you removed Docker by hand, the containers are already gone too."
         exit 1
     fi
 
     # -----------------------------------------------------------------------
-    #  حالت پیش‌فرض: فقط کانتینرها، داده‌ها حفظ می‌شوند
+    #  Default mode: containers only, the data is preserved
     # -----------------------------------------------------------------------
     if [ "$PURGE" != "true" ]; then
         say ""
-        info "حالت پیش‌فرض: کانتینرها حذف می‌شوند اما داده‌ها باقی می‌مانند. 💾"
-        dim "  یعنی دیتابیس، Redis و پشتیبان‌ها دست‌نخورده‌اند و با اجرای دوباره‌ی"
-        dim "  install.sh همان اطلاعات برمی‌گردد."
+        info "Default mode: the containers are removed but the data stays. 💾"
+        dim "  That means the database, Redis and the backups are untouched, and running"
+        dim "  install.sh again brings the same information back."
         say ""
 
-        if ! confirm "سرویس‌ها متوقف و کانتینرها حذف شوند؟" "y"; then
-            info "لغو شد؛ هیچ تغییری اعمال نشد."
+        if ! confirm "Stop the services and remove the containers?" "y"; then
+            info "Cancelled; nothing was changed."
             exit 0
         fi
 
-        step "توقف سرویس‌ها"
+        step "Stopping the services"
         $COMPOSE down --remove-orphans || true
-        ok "کانتینرها و شبکه حذف شدند."
+        ok "The containers and the network were removed."
 
         if [ "$KEEP_IMAGES" != "true" ]; then
-            step "حذف ایمیج ساخته‌شده‌ی ربات (کش build دست‌نخورده می‌ماند)"
+            step "Removing the built bot image (the build cache is left untouched)"
             docker image rm -f "${IMAGE_NAME:-wgguard-bot}:${IMAGE_TAG:-latest}" >/dev/null 2>&1 || true
-            ok "ایمیج حذف شد."
+            ok "The image was removed."
         fi
 
         say ""
         printf '%s%s%s\n' "$C_YELLOW" "════════════════════════════════════════════════════" "$C_RESET"
-        printf '%s  💾  داده‌های شما حفظ شد — هیچ اطلاعاتی پاک نشد.%s\n' "$C_YELLOW" "$C_RESET"
+        printf '%s  💾  Your data was preserved — nothing was deleted.%s\n' "$C_YELLOW" "$C_RESET"
         printf '%s%s%s\n' "$C_YELLOW" "════════════════════════════════════════════════════" "$C_RESET"
         say ""
-        info "این‌ها هنوز روی سرور هستند:"
-        printf '   • دیتابیس پستگرس  : volume «%spgdata%s»\n' "$C_CYAN" "$C_RESET"
-        printf '   • داده‌های Redis   : volume «%sredisdata%s»\n' "$C_CYAN" "$C_RESET"
-        printf '   • پشتیبان‌ها        : volume «%sbackups%s»\n' "$C_CYAN" "$C_RESET"
-        printf '   • فایل تنظیمات     : %s (شامل رمزها)\n' "${INSTALL_DIR}/.env"
+        info "These are still on the server:"
+        printf '   • Postgres database  : volume "%spgdata%s"\n' "$C_CYAN" "$C_RESET"
+        printf '   • Redis data         : volume "%sredisdata%s"\n' "$C_CYAN" "$C_RESET"
+        printf '   • Backups            : volume "%sbackups%s"\n' "$C_CYAN" "$C_RESET"
+        printf '   • Configuration file : %s (contains the secrets)\n' "${INSTALL_DIR}/.env"
         say ""
-        info "برای برگرداندن سرویس‌ها:"
+        info "To bring the services back:"
         dim "    cd $INSTALL_DIR && $COMPOSE up -d"
         say ""
-        warn "اگر واقعاً می‌خواهید همه‌چیز پاک شود: bash uninstall.sh --purge"
+        warn "If you really want everything deleted: bash uninstall.sh --purge"
         say ""
         return 0
     fi
 
     # -----------------------------------------------------------------------
-    #  حالت --purge: حذف کامل با تأیید تایپی
+    #  --purge mode: complete removal with a typed confirmation
     # -----------------------------------------------------------------------
     say ""
     printf '%s%s%s\n' "$C_RED" "════════════════════════════════════════════════════" "$C_RESET"
-    printf '%s%s  🚨  هشدار: حالت حذف کامل (--purge) فعال است!%s\n' "$C_BOLD" "$C_RED" "$C_RESET"
+    printf '%s%s  🚨  Warning: complete removal mode (--purge) is active!%s\n' "$C_BOLD" "$C_RED" "$C_RESET"
     printf '%s%s%s\n' "$C_RED" "════════════════════════════════════════════════════" "$C_RESET"
     say ""
-    say "  با ادامه، این‌ها ${C_BOLD}برای همیشه${C_RESET} پاک می‌شوند:"
-    printf '   %s✖%s همه‌ی کاربران، سفارش‌ها، رسیدها و تنظیمات دیتابیس\n' "$C_RED" "$C_RESET"
-    printf '   %s✖%s وضعیت گفتگوها و کش Redis\n' "$C_RED" "$C_RESET"
-    printf '   %s✖%s همه‌ی فایل‌های پشتیبان (wgguard-*.sql)\n' "$C_RED" "$C_RESET"
+    say "  If you continue, these will be deleted ${C_BOLD}forever${C_RESET}:"
+    printf '   %s✖%s all users, orders, receipts and database settings\n' "$C_RED" "$C_RESET"
+    printf '   %s✖%s the conversation state and the Redis cache\n' "$C_RED" "$C_RESET"
+    printf '   %s✖%s all backup files (wgguard-*.sql)\n' "$C_RED" "$C_RESET"
     say ""
-    warn "پیشنهاد: قبل از ادامه یک نسخه‌ی پشتیبان روی کامپیوتر خودتان بگیرید."
+    warn "Suggestion: take a backup copy on your own computer before continuing."
     dim "    $COMPOSE exec -T db pg_dump -U \"\$POSTGRES_USER\" \"\$POSTGRES_DB\" > backup.sql"
     say ""
 
     if [ "$ASSUME_YES" != "true" ]; then
-        printf '%sبرای تأیید، کلمه‌ی yes را تایپ کنید (هر چیز دیگری = لغو):%s\n  %s❯%s ' \
+        printf '%sTo confirm, type the word yes (anything else = cancel):%s\n  %s❯%s ' \
             "$C_BOLD" "$C_RESET" "$C_RED" "$C_RESET" >&2
         typed=""
         IFS= read -r typed || typed=""
         if [ "$typed" != "yes" ]; then
-            info "لغو شد؛ هیچ داده‌ای پاک نشد. ✅"
+            info "Cancelled; no data was deleted. ✅"
             exit 0
         fi
     else
-        warn "حالت --yes: از تأیید تایپی رد می‌شویم (خودتان --purge را خواسته‌اید)."
+        warn "--yes mode: skipping the typed confirmation (you asked for --purge yourself)."
     fi
 
-    step "توقف سرویس‌ها و حذف کانتینرها"
+    step "Stopping the services and removing the containers"
     $COMPOSE down --remove-orphans || true
-    ok "کانتینرها و شبکه حذف شدند."
+    ok "The containers and the network were removed."
 
-    step "حذف حجم‌های داده"
-    # اول حجم‌های نام‌دار پروژه (پیشوند نام پروژه در compose مشخص شده)
+    step "Removing the data volumes"
+    # First the project's named volumes (the project name prefix is set in compose)
     $COMPOSE down --volumes --remove-orphans || true
     for vol in pgdata redisdata backups wgguard_pgdata wgguard_redisdata wgguard_backups; do
         if docker volume inspect "$vol" >/dev/null 2>&1; then
-            docker volume rm -f "$vol" >/dev/null 2>&1 && ok "حجم «$vol» حذف شد." || warn "حذف حجم «$vol» ناموفق بود."
+            docker volume rm -f "$vol" >/dev/null 2>&1 && ok "Volume \"$vol\" was removed." || warn "Removing volume \"$vol\" failed."
         fi
     done
 
-    step "حذف پوشه‌ی پشتیبان‌ها روی دیسک"
+    step "Removing the backups directory on disk"
     if [ -d "./backups" ]; then
-        # فقط مسیر تأییدشده را حذف می‌کنیم
+        # We only delete the path we verified
         resolved="$(cd ./backups 2>/dev/null && pwd || true)"
         if [ -n "$resolved" ] && [ "$resolved" = "$(pwd)/backups" ]; then
             rm -rf -- "$resolved"
-            ok "پوشه‌ی backups حذف شد: $resolved"
+            ok "The backups directory was removed: $resolved"
         else
-            warn "مسیر پوشه‌ی backups مطابق انتظار نبود؛ برای امنیت حذف نشد: ${resolved:-?}"
+            warn "The backups directory path was not what we expected; it was not removed for safety: ${resolved:-?}"
         fi
     else
-        dim "  پوشه‌ی backups وجود نداشت."
+        dim "  The backups directory did not exist."
     fi
 
     if [ "$KEEP_IMAGES" != "true" ]; then
-        step "حذف ایمیج ربات"
+        step "Removing the bot image"
         docker image rm -f "${IMAGE_NAME:-wgguard-bot}:${IMAGE_TAG:-latest}" >/dev/null 2>&1 || true
-        ok "ایمیج حذف شد."
+        ok "The image was removed."
     fi
 
     say ""
     printf '%s%s%s\n' "$C_RED" "════════════════════════════════════════════════════" "$C_RESET"
-    printf '%s  🗑  حذف کامل انجام شد.%s\n' "$C_RED" "$C_RESET"
+    printf '%s  🗑  The complete removal is done.%s\n' "$C_RED" "$C_RESET"
     printf '%s%s%s\n' "$C_RED" "════════════════════════════════════════════════════" "$C_RESET"
     say ""
-    info "فایل .env روی دیسک باقی مانده است (رمزها). اگر لازم نیست، خودتان پاکش کنید:"
+    info "The .env file is still on disk (it contains the secrets). If you do not need it, delete it yourself:"
     dim "    rm -f $INSTALL_DIR/.env"
     say ""
-    info "برای نصب دوباره از صفر:"
+    info "To install again from scratch:"
     dim "    cd $INSTALL_DIR && bash install.sh"
     say ""
     return 0

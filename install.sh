@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-#  WG-Guard Bot — نصب‌کننده‌ی خودکار برای سرورهای تازه‌ی Ubuntu / Debian
+#  WG-Guard Bot — automatic installer for fresh Ubuntu/Debian servers
 #  WG-Guard Bot — one-command installer for a fresh Ubuntu/Debian VPS.
 #
-#  اجرای سریع / quick start:
+#  Quick start:
 #      bash <(curl -fsSL https://raw.githubusercontent.com/Sir-Adnan/wg-guard-bot/main/install.sh)
 #
-#  این اسکریپت: داکر را (در صورت نبود) نصب می‌کند، فایل .env را با کلیدها و
-#  رمزهای تصادفی می‌سازد، اطلاعات ربات را می‌پرسد، سرویس‌ها را بالا می‌آورد و
-#  تا آماده‌شدن پنل صبر می‌کند.
+#  This script installs Docker (if missing), writes .env with generated keys and
+#  random passwords, asks for the bot details, starts the services and
+#  waits until the panel is ready.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
 # ===========================================================================
-#  پیکربندی پیش‌فرض / defaults
+#  Defaults
 # ===========================================================================
 REPO_URL="${WGGB_REPO_URL:-https://github.com/Sir-Adnan/wg-guard-bot.git}"
 BRANCH="main"
@@ -45,7 +45,7 @@ HTTPS_TIMEOUT_DEFAULT="180"
 PANEL_BIND_DEFAULT="0.0.0.0"
 TLS_BIND="127.0.0.1"
 
-# مقادیر مشترک که در جریان اجرا پر می‌شوند (تعریف اولیه برای سازگاری با set -u)
+# Shared values filled in during the run (declared up front so set -u is happy)
 COMPOSE=""
 PUBLIC_IP=""
 INSTALL_DIR=""
@@ -74,7 +74,7 @@ OLD_DOMAIN=""; OLD_ACME_EMAIL=""; OLD_PANEL_BIND=""
 BACKUP_HOURS_SHOWN="24"
 
 # ===========================================================================
-#  رنگ‌ها / colours — فقط وقتی خروجی یک ترمینال باشد و NO_COLOR تنظیم نشده باشد
+#  Colours — only when stdout is a terminal and NO_COLOR is not set
 # ===========================================================================
 if [ -n "${NO_COLOR:-}" ] || [ ! -t 1 ]; then
     USE_COLOR="false"
@@ -92,7 +92,7 @@ else
 fi
 
 # ===========================================================================
-#  توابع کمکی چاپ / output helpers
+#  Output helpers
 # ===========================================================================
 say()  { printf '%s\n' "$*"; }
 info() { printf '%s%s%s\n' "$C_CYAN" "$*" "$C_RESET"; }
@@ -103,9 +103,9 @@ step() { printf '\n%s%s▸ %s%s\n' "$C_BOLD" "$C_BLUE" "$*" "$C_RESET"; }
 dim()  { printf '%s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
 
 # ---------------------------------------------------------------------------
-#  نسخه / version — از pyproject.toml خوانده می‌شود تا هرگز با
-#  نسخه‌ی واقعی اختلاف پیدا نکند. اگر فایل در دسترس نباشد
-#  (اجرای مستقیم با curl)، نسخه چاپ نمی‌شود.
+#  Version — read from pyproject.toml so it can never drift from the
+#  real version. If the file is not available
+#  (running straight from curl), no version is printed.
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd -P || true)"
 APP_VERSION=""
@@ -132,66 +132,66 @@ banner() {
 ASCII
     printf '%s' "$C_RESET"
     if [ -n "$APP_VERSION" ]; then
-        printf '%s\n' "   نصب‌کننده‌ی خودکار — نسخه‌ی ${C_BOLD}${APP_VERSION}${C_RESET}"
+        printf '%s\n' "   Automatic installer — version ${C_BOLD}${APP_VERSION}${C_RESET}"
     fi
-    printf '%s\n\n' "   ${C_DIM}ربات فروش VPN روی پنل WG-Guard / AmneziaWG${C_RESET}"
+    printf '%s\n\n' "   ${C_DIM}VPN shop bot on the WG-Guard / AmneziaWG panel${C_RESET}"
 }
 
 # ===========================================================================
-#  راهنما / help
+#  Help
 # ===========================================================================
 usage() {
     cat <<EOF
-${C_BOLD}WG-Guard Bot — راهنمای نصب${C_RESET}
+${C_BOLD}WG-Guard Bot — installation guide${C_RESET}
 
-${C_BOLD}روش سریع (توصیه‌شده):${C_RESET}
+${C_BOLD}Quick start (recommended):${C_RESET}
   bash <(curl -fsSL https://raw.githubusercontent.com/Sir-Adnan/wg-guard-bot/main/install.sh)
 
-${C_BOLD}روش دستی:${C_RESET}
+${C_BOLD}Manual install:${C_RESET}
   git clone https://github.com/Sir-Adnan/wg-guard-bot.git wg-guard-bot
   cd wg-guard-bot && bash install.sh
 
-${C_BOLD}گزینه‌ها / گزینه‌های خط فرمان:${C_RESET}
-  ${C_CYAN}--yes${C_RESET}                 حالت غیرتعاملی؛ همه‌ی مقادیر پیش‌فرض یا از فلگ‌ها گرفته می‌شوند
-                          (در این حالت ${C_BOLD}--bot-token${C_RESET} و ${C_BOLD}--admin-ids${C_RESET} اجباری‌اند)
-  ${C_CYAN}--bot-token TOKEN${C_RESET}     توکن ربات از @BotFather
-  ${C_CYAN}--admin-ids IDS${C_RESET}       شناسه‌های عددی مدیران، با کاما: 111,222
-  ${C_CYAN}--support-ids IDS${C_RESET}     شناسه‌های عددی پشتیبان‌ها (اختیاری، با کاما)
-  ${C_CYAN}--port PORT${C_RESET}           پورت پنل مدیریت (پیش‌فرض: ${PANEL_PORT_DEFAULT})
-  ${C_CYAN}--panel-url URL${C_RESET}       آدرس عمومی پنل (پیش‌فرض: http://IP:PORT)
-  ${C_CYAN}--owner-username NAME${C_RESET} نام کاربری مالک پنل (پیش‌فرض: ${OWNER_USERNAME_DEFAULT})
-  ${C_CYAN}--owner-password PASS${C_RESET} رمز مالک پنل (پیش‌فرض: خودکار و خوانا)
-  ${C_CYAN}--app-name NAME${C_RESET}       نام نمایشی فروشگاه (پیش‌فرض: ${APP_NAME_DEFAULT})
-  ${C_CYAN}--domain NAME${C_RESET}         دامنه یا زیردامنه برای SSL خودکار، مثال: bot.example.com
-                          (دامنه خودکار https و حالت webhook را فعال می‌کند)
-  ${C_CYAN}--acme-email MAIL${C_RESET}     ایمیل Let's Encrypt برای هشدار انقضای گواهی (اختیاری)
-  ${C_CYAN}--no-domain${C_RESET}           بدون دامنه و بدون SSL (حالت polling روی http://IP:PORT)
-  ${C_CYAN}--ip ADDRESS${C_RESET}          تعیین دستی IP عمومی سرور (پیش‌فرض: تشخیص خودکار)
-  ${C_CYAN}--dir PATH${C_RESET}            مسیر نصب/مخزن (پیش‌فرض: پوشه‌ی فعلی یا ~/wg-guard-bot)
-  ${C_CYAN}--branch NAME${C_RESET}         شاخه‌ی مخزن برای نصب و به‌روزرسانی (پیش‌فرض: main)
-  ${C_CYAN}--force${C_RESET}               بازنویسی .env موجود (با نسخه‌ی پشتیبان) حتی در حالت --yes
-  ${C_CYAN}--no-docker-install${C_RESET}   اگر داکر نصب نیست، نصبش نکن (نیاز به دسترسی root دارد)
-  ${C_CYAN}-h, --help${C_RESET}            نمایش همین راهنما
+${C_BOLD}Command-line options:${C_RESET}
+  ${C_CYAN}--yes${C_RESET}                 non-interactive mode; every value comes from a flag or its default
+                          (in this mode ${C_BOLD}--bot-token${C_RESET} and ${C_BOLD}--admin-ids${C_RESET} are required)
+  ${C_CYAN}--bot-token TOKEN${C_RESET}     bot token from @BotFather
+  ${C_CYAN}--admin-ids IDS${C_RESET}       numeric admin IDs, comma-separated: 111,222
+  ${C_CYAN}--support-ids IDS${C_RESET}     numeric support IDs (optional, comma-separated)
+  ${C_CYAN}--port PORT${C_RESET}           admin panel port (default: ${PANEL_PORT_DEFAULT})
+  ${C_CYAN}--panel-url URL${C_RESET}       public panel URL (default: http://IP:PORT)
+  ${C_CYAN}--owner-username NAME${C_RESET} panel owner username (default: ${OWNER_USERNAME_DEFAULT})
+  ${C_CYAN}--owner-password PASS${C_RESET} panel owner password (default: generated, readable)
+  ${C_CYAN}--app-name NAME${C_RESET}       shop display name as customers see it (default: a Persian name)
+  ${C_CYAN}--domain NAME${C_RESET}         domain or subdomain for automatic SSL, e.g. bot.example.com
+                          (a domain enables https and webhook mode automatically)
+  ${C_CYAN}--acme-email MAIL${C_RESET}     Let's Encrypt email for certificate expiry warnings (optional)
+  ${C_CYAN}--no-domain${C_RESET}           no domain and no SSL (polling mode on http://IP:PORT)
+  ${C_CYAN}--ip ADDRESS${C_RESET}          set the server public IP manually (default: auto-detect)
+  ${C_CYAN}--dir PATH${C_RESET}            install/repository path (default: current directory or ~/wg-guard-bot)
+  ${C_CYAN}--branch NAME${C_RESET}         repository branch to install and update from (default: main)
+  ${C_CYAN}--force${C_RESET}               overwrite an existing .env (a backup is kept) even in --yes mode
+  ${C_CYAN}--no-docker-install${C_RESET}   if Docker is missing, do not install it (needs root access)
+  ${C_CYAN}-h, --help${C_RESET}            show this help
 
-${C_BOLD}نمونه‌ی نصب کاملاً خودکار:${C_RESET}
+${C_BOLD}Fully unattended install example:${C_RESET}
   bash install.sh --yes \\
       --bot-token 123456789:AA... \\
       --admin-ids 111111111 \\
       --port 8080
 
-${C_BOLD}نکته‌ها:${C_RESET}
-  • این اسکریپت به دسترسی root نیاز دارد (در صورت نبود، خودش با sudo اجرا می‌شود).
-  • اجرای دوباره‌ی اسکریپت بی‌خطر است؛ فایل .env قبلی پشتیبان‌گیری می‌شود و
-    رمزهای موجود دست‌نخورده می‌مانند.
+${C_BOLD}Notes:${C_RESET}
+  • This script needs root access (it re-runs itself with sudo if it is not).
+  • Running the script again is safe; the existing .env is backed up and
+    existing passwords are left untouched.
 
-${C_DIM}English: one-command installer for WG-Guard Bot (Docker Compose stack) on a
+${C_DIM}One-command installer for WG-Guard Bot (Docker Compose stack) on a
 fresh Ubuntu/Debian VPS — generates .env, builds the image, starts the stack
 and waits for the panel health endpoint.${C_RESET}
 EOF
 }
 
 # ===========================================================================
-#  تجزیه‌ی آرگومان‌ها / argument parsing
+#  Argument parsing
 # ===========================================================================
 parse_args() {
     while [ "$#" -gt 0 ]; do
@@ -228,13 +228,13 @@ parse_args() {
             --domain=*)           OPT_DOMAIN="${1#*=}" ;;
             --acme-email=*)       OPT_ACME_EMAIL="${1#*=}" ;;
             -*)
-                err "گزینه‌ی ناشناخته: $1"
+                err "unknown option: $1"
                 say ""
-                dim "برای دیدن راهنما اجرا کنید: bash install.sh --help"
+                dim "run this to see the help: bash install.sh --help"
                 exit 2
                 ;;
             *)
-                err "آرگومان اضافی و ناشناخته: $1"
+                err "unexpected extra argument: $1"
                 exit 2
                 ;;
         esac
@@ -243,18 +243,18 @@ parse_args() {
 }
 
 # ===========================================================================
-#  بررسی‌های پایه / preflight
+#  Preflight checks
 # ===========================================================================
 require_root() {
     if [ "$(id -u)" -eq 0 ]; then
         return 0
     fi
     if command -v sudo >/dev/null 2>&1; then
-        warn "این اسکریپت به دسترسی root نیاز دارد؛ همین حالا با sudo دوباره اجرا می‌شود…"
+        warn "This script needs root access; re-running it with sudo now…"
         exec sudo -E bash "$0" "$@"
     fi
-    err "برای نصب به دسترسی root نیاز است و sudo هم نصب نیست."
-    say "  لطفاً با کاربر root وارد شوید یا sudo را نصب کنید: apt-get install -y sudo"
+    err "Installation needs root access and sudo is not installed either."
+    say "  Log in as root, or install sudo: apt-get install -y sudo"
     exit 1
 }
 
@@ -267,8 +267,8 @@ detect_compose() {
     # script relies on (--profile, ps --status), so refuse it explicitly
     # instead of degrading to a silent timeout.
     if command -v docker-compose >/dev/null 2>&1; then
-        warn "نسخه‌ی قدیمی docker-compose (v1) نصب است؛ این اسکریپت به Docker Compose v2 نیاز دارد."
-        say "  نصب: apt-get update && apt-get install -y docker-compose-plugin"
+        warn "The old docker-compose (v1) is installed; this script needs Docker Compose v2."
+        say "  Install it: apt-get update && apt-get install -y docker-compose-plugin"
     fi
     COMPOSE=""
     return 1
@@ -279,39 +279,39 @@ install_docker() {
         return 0
     fi
     if [ "$SKIP_DOCKER" = "true" ]; then
-        err "داکر نصب نیست و گزینه‌ی --no-docker-install هم فعال است."
-        say "  یا داکر را خودتان نصب کنید، یا اسکریپت را بدون آن فلگ اجرا کنید."
+        err "Docker is not installed and --no-docker-install was passed."
+        say "  Either install Docker yourself, or run the script without that flag."
         exit 1
     fi
-    step "داکر نصب نیست؛ در حال نصب Docker از اسکریپت رسمی…"
-    dim "  (چند دقیقه طول می‌کشد و به اینترنت نیاز دارد)"
+    step "Docker is not installed; installing it from the official script…"
+    dim "  (takes a few minutes and needs internet access)"
     if ! command -v curl >/dev/null 2>&1; then
-        warn "curl نصب نیست؛ همین حالا نصب می‌شود…"
+        warn "curl is not installed; installing it now…"
         if command -v apt-get >/dev/null 2>&1; then
             apt-get update -qq >/dev/null 2>&1 || true
             apt-get install -y -qq curl >/dev/null 2>&1 || true
         fi
     fi
     if ! command -v curl >/dev/null 2>&1; then
-        err "curl نصب نیست و نصب خودکار آن هم ناموفق بود."
-        say "  نصب دستی: apt-get install -y curl"
+        err "curl is not installed and installing it automatically failed."
+        say "  Install it manually: apt-get install -y curl"
         exit 1
     fi
     if ! curl -fsSL https://get.docker.com -o /tmp/get-docker.sh; then
-        err "دانلود اسکریپت نصب داکر ناموفق بود."
-        say "  اتصال اینترنت سرور را بررسی کنید و دوباره تلاش کنید."
+        err "Downloading the Docker install script failed."
+        say "  Check the server's internet connection and try again."
         exit 1
     fi
     if ! sh /tmp/get-docker.sh; then
-        err "نصب داکر ناموفق بود (اسکریپت رسمی با خطا خارج شد)."
-        say "  می‌توانید دستی نصب کنید: https://docs.docker.com/engine/install/"
+        err "Installing Docker failed (the official script exited with an error)."
+        say "  You can install it manually: https://docs.docker.com/engine/install/"
         rm -f /tmp/get-docker.sh
         exit 1
     fi
     rm -f /tmp/get-docker.sh
-    ok "داکر با موفقیت نصب شد."
+    ok "Docker installed successfully."
     if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
-        warn "داکر نصب شد اما پلاگین compose پیدا نشد؛ تلاش برای نصب آن…"
+        warn "Docker is installed but the compose plugin is missing; trying to install it…"
         if command -v apt-get >/dev/null 2>&1; then
             apt-get update -qq >/dev/null 2>&1 || true
             apt-get install -y -qq docker-compose-plugin >/dev/null 2>&1 || \
@@ -338,9 +338,9 @@ detect_public_ip() {
 }
 
 # ===========================================================================
-#  پرسیدن مقدار از کاربر / interactive prompt
+#  Interactive prompts
 # ===========================================================================
-# ask <برچسب> <پیش‌فرض> [توضیح]
+# ask <label> <default> [hint]
 ask() {
     local label="$1" default="$2" hint="${3:-}" answer=""
     printf '%s? %s%s' "$C_BOLD" "$label" "$C_RESET"
@@ -362,7 +362,7 @@ ask() {
     printf '%s' "$answer"
 }
 
-# ask_required <برچسب> <پیش‌فرض> <توضیح> <الگوی اعتبارسنجی> <پیام خطا>
+# ask_required <label> <default> <hint> <validation pattern> <error message>
 ask_required() {
     local label="$1" default="$2" hint="$3" pattern="$4" errmsg="$5" answer="" value=""
     while :; do
@@ -382,7 +382,7 @@ ask_required() {
 }
 
 confirm() {
-    # confirm <پرسش> [پیش‌فرض y/n]
+    # confirm <question> [default y/n]
     local question="$1" default="${2:-n}" answer=""
     if [ "${ASSUME_YES:-false}" = "true" ]; then
         [ "$default" = "y" ]
@@ -399,10 +399,10 @@ confirm() {
 }
 
 # ===========================================================================
-#  تولید رمزها / secret generation
+#  Secret generation
 # ===========================================================================
 gen_hex() {
-    # ۶۴ کاراکتر هگز برای SECRET_KEY
+    # 64 hex characters for SECRET_KEY
     if command -v openssl >/dev/null 2>&1; then
         openssl rand -hex 32
         return 0
@@ -411,7 +411,7 @@ gen_hex() {
 }
 
 gen_password() {
-    # رمز ۲۴ کاراکتری برای POSTGRES_PASSWORD (بدون کاراکترهای مشکل‌دار برای .env و psql)
+    # 24-character password for POSTGRES_PASSWORD (no characters that break .env or psql)
     if command -v openssl >/dev/null 2>&1; then
         openssl rand -base64 24 | tr -d '/+=' | cut -c1-24
         return 0
@@ -420,7 +420,7 @@ gen_password() {
 }
 
 gen_readable_password() {
-    # رمز ۱۶ کاراکتری خوانا برای مالک پنل — بدون کاراکترهای گیج‌کننده (0/O، 1/l/I)
+    # 16-character readable password for the panel owner — no confusing characters (0/O, 1/l/I)
     local alphabet="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
     local length="16" out="" index="" hex=""
     if command -v openssl >/dev/null 2>&1; then
@@ -443,7 +443,7 @@ gen_readable_password() {
 }
 
 gen_webhook_secret() {
-    # مسیر مخفی وب‌هوک — فقط حروف و اعداد (در URL استفاده می‌شود)
+    # secret webhook path — letters and digits only (used in a URL)
     local out=""
     if command -v openssl >/dev/null 2>&1; then
         out="$(openssl rand -hex 16)"
@@ -454,17 +454,17 @@ gen_webhook_secret() {
 }
 
 # ===========================================================================
-#  خواندن مقدار فعلی از .env / read an existing value
+#  Read an existing value from .env
 # ===========================================================================
 env_get() {
-    # env_get <فایل> <کلید> — مقدار بدون کوتیشن را چاپ می‌کند
+    # env_get <file> <key> — prints the value without quotes
     local file="$1" key="$2" line=""
     [ -f "$file" ] || return 0
     line="$(grep -E "^[[:space:]]*${key}=" "$file" | tail -n1 || true)"
     [ -n "$line" ] || return 0
     line="${line#*=}"
     line="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-    # حذف کوتیشن‌های ابتدا و انتها
+    # strip leading and trailing quotes
     case "$line" in
         \"*\") line="${line#\"}"; line="${line%\"}" ;;
         \'*\') line="${line#\'}"; line="${line%\'}" ;;
@@ -473,10 +473,10 @@ env_get() {
 }
 
 env_set() {
-    # env_set <فایل> <کلید> <مقدار> — جایگزینی کل خط یا افزودن آن
+    # env_set <file> <key> <value> — replaces the whole line or appends it
     local file="$1" key="$2" value="$3"
     if grep -Eq "^[[:space:]]*${key}=" "$file"; then
-        # از | به‌عنوان جداکننده استفاده می‌کنیم و کاراکترهای خاص sed را امن می‌کنیم
+        # use | as the delimiter and escape the characters sed treats specially
         local escaped
         escaped="$(printf '%s' "$value" | sed -e 's/[&\\]/\\&/g')"
         sed -i "s|^[[:space:]]*${key}=.*|${key}=${escaped}|" "$file"
@@ -493,15 +493,15 @@ validate_port() {
 }
 
 validate_ids() {
-    # فقط اعداد و کاما؛ حداقل یک شناسه
+    # digits and commas only; at least one ID
     printf '%s' "$1" | grep -Eq '^[0-9]+([[:space:]]*,[[:space:]]*[0-9]+)*$'
 }
 
 # ===========================================================================
-#  دامنه و SSL خودکار / domain + automatic TLS (Caddy)
+#  Domain and automatic TLS (Caddy)
 # ===========================================================================
 normalize_domain() {
-    # حذف طرح (http/https)، مسیر و اسلش انتهایی؛ تبدیل به حروف کوچک
+    # strip the scheme (http/https), the path and any trailing slash; lowercase it
     printf '%s' "$1" \
         | tr '[:upper:]' '[:lower:]' \
         | sed -e 's|^[[:space:]]*||' -e 's|[[:space:]]*$||' \
@@ -511,18 +511,18 @@ normalize_domain() {
 }
 
 validate_domain() {
-    # دامنه‌ی معتبر (حداقل دو بخش)، بدون IP و بدون localhost
+    # a valid domain (at least two labels), not an IP and not localhost
     printf '%s' "$1" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
 }
 
 is_ip_address() {
-    # IPv4 ساده یا هر چیزی که فقط رقم و نقطه است
+    # plain IPv4, or anything made only of digits and dots
     printf '%s' "$1" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'
 }
 
 is_private_ip() {
-    # آدرس‌های خصوصی/رزرو‌شده — برای مقایسه‌ی DNS بی‌فایده‌اند و نشانه‌ی
-    # DNS hijack یا رزولور محلی هستند، نه یک رکورد A واقعی.
+    # private/reserved addresses — useless for a DNS comparison, and a sign of
+    # DNS hijacking or a local resolver rather than a real A record.
     local ip="$1" a b
     case "$ip" in
         10.*|127.*|169.254.*|192.168.*|0.*) return 0 ;;
@@ -532,7 +532,7 @@ is_private_ip() {
     if [ "$a" = "172" ] && [ "$b" -ge 16 ] 2>/dev/null && [ "$b" -le 31 ] 2>/dev/null; then
         return 0
     fi
-    # بازه‌های مستندسازی RFC 5737
+    # RFC 5737 documentation ranges
     case "$ip" in
         192.0.2.*|198.51.100.*|203.0.113.*) return 0 ;;
     esac
@@ -544,9 +544,9 @@ is_email() {
 }
 
 resolve_domain_ips() {
-    # چاپ IP های عمومیِ حل‌شده‌ی دامنه (هر کدام در یک خط)
-    # آدرس‌های خصوصی/رزرو‌شده فیلتر می‌شوند تا رزولور محلی یا DNS hijack
-    # باعث هشدار اشتباه «دامنه به این سرور اشاره می‌کند» نشود.
+    # print the public IPs the domain resolves to (one per line)
+    # private/reserved addresses are filtered out so a local resolver or DNS hijack
+    # does not trigger a false "the domain points here" warning.
     local name="$1" ips="" ip=""
     if command -v getent >/dev/null 2>&1; then
         ips="$(getent ahostsv4 "$name" 2>/dev/null | awk '{print $1}' | sort -u || true)"
@@ -575,7 +575,7 @@ except Exception:
 }
 
 check_dns_points_here() {
-    # ۰ = دامنه به همین سرور اشاره می‌کند، ۱ = اشاره نمی‌کند یا حل نشد
+    # 0 = the domain points to this server, 1 = it does not or did not resolve
     local name="$1" ips="" ip=""
     ips="$(resolve_domain_ips "$name")"
     RESOLVED_IPS="$(printf '%s' "$ips" | tr '\n' ' ' | sed -e 's/[[:space:]]*$//')"
@@ -590,18 +590,18 @@ check_dns_points_here() {
 }
 
 show_dns_warning() {
-    warn "دامنه‌ی «${DOMAIN_FINAL}» هنوز به این سرور اشاره نمی‌کند."
-    say "   IP این سرور      : ${PUBLIC_IP}"
-    say "   IP دامنه در DNS  : ${RESOLVED_IPS:-پیدا نشد}"
+    warn "The domain '${DOMAIN_FINAL}' does not point to this server yet."
+    say "   Server IP        : ${PUBLIC_IP}"
+    say "   Domain IP in DNS : ${RESOLVED_IPS:-not found}"
     say ""
-    dim "  برای گرفتن گواهی SSL، یک رکورد A از دامنه به IP سرور بسازید:"
+    dim "  To get an SSL certificate, create an A record from the domain to the server IP:"
     dim "      ${DOMAIN_FINAL}  A  ${PUBLIC_IP}"
-    dim "  (پروپاگیت DNS معمولاً چند دقیقه طول می‌کشد)"
+    dim "  (DNS propagation usually takes a few minutes)"
     say ""
 }
 
 cert_status() {
-    # خواندن گواهی از داخل حجم caddy_data و چاپ خلاصه‌ی آن
+    # read the certificate from the caddy_data volume and print a summary
     local domain="$1" out=""
     out="$($COMPOSE_PROFILE exec -T caddy sh -c "
         f=\$(find /data/caddy/certificates -name '${domain}.crt' 2>/dev/null | head -n1)
@@ -614,7 +614,7 @@ cert_status() {
 }
 
 # ===========================================================================
-#  آماده‌سازی پوشه‌ی پروژه / project directory
+#  Project directory
 # ===========================================================================
 prepare_dir() {
     if [ -z "$INSTALL_DIR" ]; then
@@ -627,42 +627,42 @@ prepare_dir() {
     INSTALL_DIR="${INSTALL_DIR%/}"
 
     if [ -f "$INSTALL_DIR/docker-compose.yml" ]; then
-        ok "پوشه‌ی پروژه پیدا شد: $INSTALL_DIR"
+        ok "Project directory found: $INSTALL_DIR"
     else
-        step "دریافت کد پروژه در $INSTALL_DIR"
+        step "Cloning the project into $INSTALL_DIR"
         if [ -e "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null || true)" ]; then
-            err "پوشه‌ی «$INSTALL_DIR» خالی نیست و فایل docker-compose.yml هم ندارد."
-            say "  یک مسیر خالی انتخاب کنید (--dir) یا پروژه را دستی clone کنید:"
+            err "The directory '$INSTALL_DIR' is not empty and has no docker-compose.yml either."
+            say "  Pick an empty path (--dir), or clone the project manually:"
             dim "    git clone --branch $BRANCH ${REPO_URL%.git}.git \"$INSTALL_DIR\""
             exit 1
         fi
         if ! command -v git >/dev/null 2>&1; then
-            err "برای دریافت کد، git لازم است و نصب نیست."
-            say "  نصب: apt-get update && apt-get install -y git"
+            err "git is required to fetch the code and it is not installed."
+            say "  Install it: apt-get update && apt-get install -y git"
             exit 1
         fi
         if ! git clone --branch "$BRANCH" --depth 1 "$REPO_URL" "$INSTALL_DIR"; then
-            err "دریافت کد از مخزن ناموفق بود: $REPO_URL"
-            say "  اگر مخزن شما جای دیگری است، آدرس درست را بدهید:"
+            err "Cloning the repository failed: $REPO_URL"
+            say "  If your repository lives elsewhere, pass the right URL:"
             dim "    WGGB_REPO_URL=https://github.com/Sir-Adnan/wg-guard-bot.git bash install.sh --branch $BRANCH"
-            say "  یا پروژه را دستی clone کنید و install.sh را از داخل همان پوشه اجرا کنید."
+            say "  Or clone the project manually and run install.sh from inside that directory."
             exit 1
         fi
-        ok "کد پروژه دریافت شد."
+        ok "Project code downloaded."
     fi
 
     cd "$INSTALL_DIR"
     if [ ! -f "./.env.example" ]; then
-        err "فایل .env.example در «$INSTALL_DIR» پیدا نشد؛ به‌نظر نمی‌رسد پوشه‌ی درستی باشد."
+        err ".env.example was not found in '$INSTALL_DIR'; this does not look like the right directory."
         exit 1
     fi
 }
 
 # ===========================================================================
-#  تشخیص مقادیر قبلی .env / reuse existing installation
+#  Detect previous .env values / reuse an existing installation
 # ===========================================================================
 load_existing() {
-    # مقادیر قبلی؛ برای سازگاری با set -u همه از ابتدا تعریف می‌شوند
+    # previous values; all declared up front so set -u is happy
     EXISTING="false"
     OLD_SECRET_KEY=""; OLD_POSTGRES_PASSWORD=""; OLD_WEBHOOK_SECRET=""
     OLD_OWNER_USERNAME=""; OLD_OWNER_PASSWORD=""; OLD_BOT_TOKEN=""
@@ -694,43 +694,43 @@ handle_existing_env() {
     [ "$EXISTING" = "true" ] || return 0
 
     say ""
-    warn "یک فایل .env از نصب قبلی پیدا شد."
-    dim "  رمزها و کلیدهای موجود دست‌نخورده می‌مانند تا دیتابیس و پنل نشکند."
+    warn "An .env file from a previous install was found."
+    dim "  Existing passwords and keys are kept as they are, so the database and panel keep working."
 
     if [ "$ASSUME_YES" != "true" ]; then
-        if ! confirm "می‌خواهید فایل .env را با تنظیمات جدید بازسازی کنید؟ (پشتیبان گرفته می‌شود)" "n"; then
+        if ! confirm "Rebuild .env with the new settings? (a backup is taken)" "n"; then
             REUSE_ENV="true"
-            ok "از همان .env قبلی استفاده می‌شود."
+            ok "Using the existing .env."
             return 0
         fi
     else
         if [ "$FORCE" != "true" ]; then
             REUSE_ENV="true"
-            ok "حالت --yes: فایل .env موجود دست‌نخورده ماند (برای بازنویسی: --force)."
+            ok "--yes mode: the existing .env was kept (pass --force to overwrite)."
             return 0
         fi
-        warn "گزینه‌ی --force فعال است؛ فایل .env بازنویسی می‌شود (رمزهای قدیمی حفظ می‌شوند)."
+        warn "--force is set; .env will be rewritten (the old passwords are kept)."
     fi
 
     ENV_BACKUP=".env.bak.$(date +%Y%m%d-%H%M%S)"
     cp -p .env "$ENV_BACKUP"
-    ok "پشتیبان گرفته شد: $ENV_BACKUP"
+    ok "Backup created: $ENV_BACKUP"
 }
 
 # ===========================================================================
-#  ساخت .env / build the .env file
+#  Build the .env file
 # ===========================================================================
 write_env() {
     local target secret_key pg_password webhook_secret
     local bot_token admin_ids support_ids panel_port panel_url
-    local owner_username owner_password app_name secret_len
+    local owner_username owner_password app_name app_name_default secret_len
     local domain_input acme_input panel_bind domain_error
     local DOMAIN_FROM_PROMPT=""
     local DOMAIN_VALUE="" ACME_EMAIL_VALUE="" PANEL_BIND_VALUE=""
 
-    step "ساخت فایل تنظیمات .env"
+    step "Writing the .env configuration file"
 
-    # -- رمزها: اگر نصب قبلی داشته باشیم، همان‌ها را نگه می‌داریم -------------
+    # -- secrets: on an existing install we keep the current ones -------------
     secret_key="${OLD_SECRET_KEY:-}"
     pg_password="${OLD_POSTGRES_PASSWORD:-}"
     webhook_secret="${OLD_WEBHOOK_SECRET:-}"
@@ -739,7 +739,7 @@ write_env() {
     [ -n "$pg_password" ] || pg_password="$(gen_password)"
     [ -n "$webhook_secret" ] || webhook_secret="$(gen_webhook_secret)"
 
-    # -- پرسش‌های تعاملی ----------------------------------------------------
+    # -- interactive prompts ----------------------------------------------------
     bot_token="$OPT_BOT_TOKEN"
     admin_ids="$OPT_ADMIN_IDS"
     support_ids="$OPT_SUPPORT_IDS"
@@ -749,7 +749,7 @@ write_env() {
     owner_password="$OPT_OWNER_PASSWORD"
     app_name="$OPT_APP_NAME"
 
-    # مقادیر قبلی به‌عنوان پیش‌فرض
+    # previous values as defaults
     [ -n "$bot_token" ]       || bot_token="${OLD_BOT_TOKEN:-}"
     [ -n "$admin_ids" ]       || admin_ids="${OLD_ADMIN_IDS:-}"
     [ -n "$support_ids" ]     || support_ids="${OLD_SUPPORT_IDS:-}"
@@ -759,32 +759,32 @@ write_env() {
     [ -n "$app_name" ]        || app_name="${OLD_APP_NAME:-}"
 
     if [ "$ASSUME_YES" = "true" ]; then
-        # ---- حالت غیرتعاملی: اعتبارسنجی سخت و خطای سریع -------------------
+        # ---- non-interactive mode: strict validation, fail fast -------------------
         if [ -z "$bot_token" ]; then
-            err "در حالت --yes باید توکن ربات را بدهید."
-            say "  نمونه: bash install.sh --yes --bot-token 123456789:AA... --admin-ids 111111111"
+            err "In --yes mode you must pass the bot token."
+            say "  Example: bash install.sh --yes --bot-token 123456789:AA... --admin-ids 111111111"
             exit 2
         fi
         if ! printf '%s' "$bot_token" | grep -Eq '^[0-9]{6,}:[A-Za-z0-9_-]{30,}$'; then
-            err "قالب توکن ربات درست نیست. باید شبیه این باشد: 123456789:AAH... (از @BotFather)"
+            err "The bot token format is wrong. It must look like: 123456789:AAH... (from @BotFather)"
             exit 2
         fi
         if [ -z "$admin_ids" ]; then
-            err "در حالت --yes باید حداقل یک شناسه‌ی مدیر بدهید."
-            say "  نمونه: --admin-ids 111111111,222222222"
+            err "In --yes mode you must pass at least one admin ID."
+            say "  Example: --admin-ids 111111111,222222222"
             exit 2
         fi
         if ! validate_ids "$admin_ids"; then
-            err "شناسه‌های مدیر باید عدد و با کاما جدا شده باشند؛ مثال: 111111111,222222222"
+            err "Admin IDs must be numeric and comma-separated; example: 111111111,222222222"
             exit 2
         fi
         if [ -n "$support_ids" ] && ! validate_ids "$support_ids"; then
-            err "شناسه‌های پشتیبان باید عدد و با کاما جدا شده باشند."
+            err "Support IDs must be numeric and comma-separated."
             exit 2
         fi
         [ -n "$panel_port" ] || panel_port="$PANEL_PORT_DEFAULT"
         if ! validate_port "$panel_port"; then
-            err "پورت نامعتبر: $panel_port (باید بین ۱ تا ۶۵۵۳۵ باشد)"
+            err "Invalid port: $panel_port (must be between 1 and 65535)"
             exit 2
         fi
         [ -n "$owner_username" ] || owner_username="$OWNER_USERNAME_DEFAULT"
@@ -794,65 +794,65 @@ write_env() {
             [ -n "$owner_password" ] || owner_password="$(gen_readable_password)"
         fi
     else
-        # ---- حالت تعاملی ---------------------------------------------------
+        # ---- interactive mode ---------------------------------------------------
         say ""
-        info "به چند سؤال کوتاه جواب بدهید. هر جا پیش‌فرضی در [ ] دیدید، فقط Enter بزنید."
+        info "Answer a few short questions. Wherever you see a default in [ ], just press Enter."
         say ""
 
         if [ -z "$bot_token" ]; then
             bot_token="$(ask_required \
-                "توکن ربات (از @BotFather)" "" \
-                "در تلگرام به @BotFather پیام بدهید → /newbot → توکن را کپی کنید" \
+                "Bot token (from @BotFather)" "" \
+                "Message @BotFather on Telegram → /newbot → copy the token" \
                 '^[0-9]{6,}:[A-Za-z0-9_-]{30,}$' \
-                "توکن نامعتبر است. باید شبیه 123456789:AAH... باشد (حداقل ۳۰ کاراکتر بعد از دونقطه).")"
+                "Invalid token. It must look like 123456789:AAH... (at least 30 characters after the colon).")"
         else
-            ok "توکن ربات از فلگ خوانده شد."
+            ok "Bot token taken from the flag."
         fi
 
         if [ -z "$admin_ids" ]; then
             admin_ids="$(ask_required \
-                "شناسه‌ی عددی مدیران (با کاما جدا کنید)" "" \
-                "شناسه‌ی خودتان را از @userinfobot بگیرید. مثال: 111111111,222222222" \
+                "Numeric admin IDs (comma-separated)" "" \
+                "Get your own ID from @userinfobot. Example: 111111111,222222222" \
                 '^[0-9]+([[:space:]]*,[[:space:]]*[0-9]+)*$' \
-                "حداقل یک شناسه‌ی عددی لازم است (فقط عدد و کاما).")"
+                "At least one numeric ID is required (digits and commas only).")"
         else
-            ok "شناسه‌های مدیر از فلگ خوانده شد."
+            ok "Admin IDs taken from the flag."
         fi
 
         support_ids="$(ask \
-            "شناسه‌ی عددی پشتیبان‌ها (اختیاری، با کاما)" "$support_ids" \
-            "پشتیبان‌ها دسترسی محدود دارند؛ اگر نمی‌خواهید، خالی بگذارید")"
+            "Numeric support IDs (optional, comma-separated)" "$support_ids" \
+            "Support users have limited access; leave this empty if you do not want any")"
         support_ids="$(printf '%s' "$support_ids" | tr -d '[:space:]')"
         if [ -n "$support_ids" ] && ! validate_ids "$support_ids"; then
-            warn "شناسه‌های پشتیبان نامعتبر بود و نادیده گرفته شد."
+            warn "The support IDs were invalid and have been ignored."
             support_ids=""
         fi
 
-        panel_port="$(ask "پورت پنل مدیریت" "${panel_port:-$PANEL_PORT_DEFAULT}" \
-            "پورت HTTP پنل؛ اگر اشغال است عدد دیگری بدهید (مثلاً 8090)")"
+        panel_port="$(ask "Admin panel port" "${panel_port:-$PANEL_PORT_DEFAULT}" \
+            "HTTP port for the panel; if it is taken, use another one (for example 8090)")"
         panel_port="$(printf '%s' "$panel_port" | tr -d '[:space:]')"
         while ! validate_port "$panel_port"; do
-            err "پورت نامعتبر است؛ عددی بین ۱ تا ۶۵۵۳۵ وارد کنید."
-            panel_port="$(ask "پورت پنل مدیریت" "$PANEL_PORT_DEFAULT" "")"
+            err "Invalid port; enter a number between 1 and 65535."
+            panel_port="$(ask "Admin panel port" "$PANEL_PORT_DEFAULT" "")"
             panel_port="$(printf '%s' "$panel_port" | tr -d '[:space:]')"
         done
 
         if [ -z "$panel_url" ]; then
-            panel_url="$(ask "آدرس عمومی پنل" "http://${PUBLIC_IP}:${panel_port}" \
-                "اگر دامنه و SSL دارید بنویسید: https://bot.example.com")"
+            panel_url="$(ask "Public panel URL" "http://${PUBLIC_IP}:${panel_port}" \
+                "If you have a domain and SSL, enter it like: https://bot.example.com")"
         fi
         panel_url="$(printf '%s' "$panel_url" | sed -e 's|[[:space:]]||g' -e 's|/*$||')"
 
-        # -- دامنه و SSL (اختیاری) -------------------------------------------
-        # خالی گذاشتن دامنه = همان رفتار قبلی: polling روی http://IP:PORT
+        # -- domain and SSL (optional) -------------------------------------------
+        # leaving the domain empty keeps the old behaviour: polling on http://IP:PORT
         if [ "$NO_DOMAIN" != "true" ]; then
-            domain_input="$(ask "دامنه یا زیردامنه (خالی = بدون دامنه و بدون SSL)" "" \
-                "اگر دامنه دارید، اول یک رکورد A از آن به IP این سرور (${PUBLIC_IP}) بسازید")"
+            domain_input="$(ask "Domain or subdomain (empty = no domain, no SSL)" "" \
+                "If you have a domain, first point an A record at this server IP (${PUBLIC_IP})")"
             DOMAIN_FROM_PROMPT="$(normalize_domain "$domain_input")"
         fi
 
-        owner_username="$(ask "نام کاربری مالک پنل" "${owner_username:-$OWNER_USERNAME_DEFAULT}" \
-            "با این نام کاربری وارد پنل می‌شوید")"
+        owner_username="$(ask "Panel owner username" "${owner_username:-$OWNER_USERNAME_DEFAULT}" \
+            "you will sign in to the panel with this username")"
         owner_username="$(printf '%s' "$owner_username" | tr -d '[:space:]')"
         [ -n "$owner_username" ] || owner_username="$OWNER_USERNAME_DEFAULT"
 
@@ -863,12 +863,16 @@ write_env() {
             fi
         fi
 
-        app_name="$(ask "نام نمایشی فروشگاه" "${app_name:-$APP_NAME_DEFAULT}" \
-            "همین نام در پیام‌های ربات و پنل دیده می‌شود")"
-        [ -n "$app_name" ] || app_name="$APP_NAME_DEFAULT"
+        # The built-in default is a Persian shop name, which a terminal without
+        # bidi support would render reversed - so it is never echoed back as a
+        # prompt default.  Pressing Enter keeps whatever this install had.
+        app_name_default="${app_name:-$APP_NAME_DEFAULT}"
+        app_name="$(ask "Shop display name" "" \
+            "shown in the bot messages and the panel; press Enter to keep the current name")"
+        [ -n "$app_name" ] || app_name="$app_name_default"
     fi
 
-    # -- اعتبارسنجی دامنه (هر دو حالت) -------------------------------------
+    # -- domain validation (both modes) -------------------------------------
     domain_input="${OPT_DOMAIN:-}"
     [ -n "$domain_input" ] || domain_input="$DOMAIN_FROM_PROMPT"
     DOMAIN_VALUE="$(normalize_domain "$domain_input")"
@@ -877,48 +881,48 @@ write_env() {
         DOMAIN_VALUE=""
     fi
 
-    # در حالت تعاملی، دامنه‌ی نامعتبر را دوباره می‌پرسیم؛ در --yes خطا می‌دهیم.
+    # interactive mode asks again for a bad domain; --yes mode fails.
     while [ -n "$DOMAIN_VALUE" ]; do
         domain_error=""
         if is_ip_address "$DOMAIN_VALUE"; then
-            domain_error="برای IP نمی‌توان گواهی SSL گرفت؛ «${DOMAIN_VALUE}» یک IP است."
+            domain_error="You cannot get an SSL certificate for an IP; '${DOMAIN_VALUE}' is an IP."
         elif [ "$DOMAIN_VALUE" = "localhost" ] || [ "${DOMAIN_VALUE#*.}" = "local" ]; then
-            domain_error="«${DOMAIN_VALUE}» دامنه‌ی عمومی نیست و Let's Encrypt برایش گواهی صادر نمی‌کند."
+            domain_error="'${DOMAIN_VALUE}' is not a public domain and Let's Encrypt will not issue a certificate for it."
         elif ! validate_domain "$DOMAIN_VALUE"; then
-            domain_error="دامنه‌ی «${DOMAIN_VALUE}» معتبر نیست؛ قالب درست: bot.example.com"
+            domain_error="The domain '${DOMAIN_VALUE}' is not valid; the right format is: bot.example.com"
         fi
 
         [ -n "$domain_error" ] || break
 
         err "$domain_error"
         if [ "$ASSUME_YES" = "true" ] || [ "$DOMAIN_FROM_PROMPT" = "" ]; then
-            say "  در این حالت دامنه را خالی بگذارید تا ربات بدون SSL اجرا شود"
-            say "  و پنل روی http://${PUBLIC_IP}:${PANEL_PORT_DEFAULT} در دسترس باشد."
+            say "  In this mode leave the domain empty so the bot runs without SSL"
+            say "  and the panel is reachable on http://${PUBLIC_IP}:${PANEL_PORT_DEFAULT}."
             if [ "$ASSUME_YES" = "true" ]; then exit 2; fi
             DOMAIN_VALUE=""
             break
         fi
-        say "  برای بدون‌دامنه‌بودن، فقط Enter بزنید."
-        domain_input="$(ask "دامنه یا زیردامنه (خالی = بدون دامنه و بدون SSL)" "")"
+        say "  To run without a domain, just press Enter."
+        domain_input="$(ask "Domain or subdomain (empty = no domain, no SSL)" "")"
         DOMAIN_VALUE="$(normalize_domain "$domain_input")"
     done
 
-    # -- ایمیل Let's Encrypt (فقط وقتی دامنه داریم) --------------------------
+    # -- Let's Encrypt email (only when a domain is set) --------------------------
     if [ -n "$DOMAIN_VALUE" ]; then
         if [ -n "$OPT_ACME_EMAIL" ]; then
             acme_input="$OPT_ACME_EMAIL"
         elif [ "$ASSUME_YES" = "true" ]; then
             acme_input="${OLD_ACME_EMAIL:-}"
         else
-            acme_input="$(ask "ایمیل برای Let's Encrypt (اختیاری)" "${OLD_ACME_EMAIL:-}" \
-                "برای اطلاع‌رسانی نزدیک‌شدن انقضای گواهی؛ خالی هم قابل قبول است")"
+            acme_input="$(ask "Email for Let's Encrypt (optional)" "${OLD_ACME_EMAIL:-}" \
+                "used to warn you before the certificate expires; leaving it empty is fine")"
         fi
         acme_input="$(printf '%s' "$acme_input" | tr -d '[:space:]')"
         if [ -z "$acme_input" ]; then
-            warn "ایمیلی برای Let's Encrypt ثبت نشد؛ گواهی صادر می‌شود اما هشدار انقضا نمی‌آید."
-            dim "  (اگر بعداً خواستید، فقط ACME_EMAIL را در .env پر کنید و سرویس‌ها را دوباره بالا بیاورید)"
+            warn "No Let's Encrypt email was set; the certificate is still issued but no expiry warning will arrive."
+            dim "  (to add one later, just set ACME_EMAIL in .env and bring the services up again)"
         elif ! is_email "$acme_input"; then
-            warn "ایمیل «${acme_input}» معتبر به‌نظر نمی‌رسد و نادیده گرفته شد."
+            warn "The email '${acme_input}' does not look valid and was ignored."
             acme_input=""
         fi
         ACME_EMAIL_VALUE="$acme_input"
@@ -926,28 +930,28 @@ write_env() {
         ACME_EMAIL_VALUE=""
     fi
 
-    # -- مقادیر نهایی دامنه/TLS --------------------------------------------
+    # -- final domain/TLS values --------------------------------------------
     if [ -n "$DOMAIN_VALUE" ]; then
         TLS_ENABLED="true"
         panel_url="https://${DOMAIN_VALUE}"
         panel_bind="$TLS_BIND"
-        ok "دامنه ثبت شد: ${DOMAIN_VALUE} — SSL خودکار با Caddy فعال می‌شود."
+        ok "Domain saved: ${DOMAIN_VALUE} — automatic SSL via Caddy is enabled."
     else
         TLS_ENABLED="false"
         panel_bind="$PANEL_BIND_DEFAULT"
         if [ -n "${OPT_DOMAIN:-}" ] || [ "${NO_DOMAIN:-false}" = "true" ]; then
-            dim "  بدون دامنه: ربات در حالت polling و پنل روی http://${PUBLIC_IP}:${panel_port} اجرا می‌شود."
+            dim "  No domain: the bot runs in polling mode and the panel on http://${PUBLIC_IP}:${panel_port}."
         fi
     fi
     PANEL_BIND_VALUE="$panel_bind"
     DOMAIN_VALUE_FINAL="$DOMAIN_VALUE"
     ACME_EMAIL_VALUE_FINAL="$ACME_EMAIL_VALUE"
 
-    # -- نوشتن مقادیر در .env ----------------------------------------------
-    # تا اینجا هیچ فایلی ساخته نشده: اگر اعتبارسنجی بالا شکست بخورد، نصب
-    # نیمه‌کاره و .env ناقص روی سرور باقی نمی‌ماند.
+    # -- write the values into .env ----------------------------------------------
+    # nothing has been written yet: if the validation above fails, no
+    # half-finished install or partial .env is left behind on the server.
     if [ -f .env ]; then
-        # حالت --force یا بازسازی تعاملی: .env فعلی را سر جایش دست نمی‌زنیم
+        # --force or an interactive rebuild: leave the current .env where it is
         cp .env.example .env.new
         target=".env.new"
     else
@@ -968,12 +972,12 @@ write_env() {
     env_set "$target" APP_NAME "$app_name"
     env_set "$target" ENV "production"
 
-    # -- دامنه و SSL --------------------------------------------------------
+    # -- domain and SSL --------------------------------------------------------
     env_set "$target" DOMAIN "$DOMAIN_VALUE"
     env_set "$target" ACME_EMAIL "$ACME_EMAIL_VALUE"
     env_set "$target" PANEL_BIND "$PANEL_BIND_VALUE"
     if [ -n "$DOMAIN_VALUE" ]; then
-        # حالت webhook: تلگرام باید بتواند روی HTTPS به ما وصل شود
+        # webhook mode: Telegram must be able to reach us over HTTPS
         env_set "$target" BOT_MODE "webhook"
         env_set "$target" WEBHOOK_BASE_URL "https://${DOMAIN_VALUE}"
         env_set "$target" PANEL_BEHIND_PROXY "true"
@@ -989,35 +993,35 @@ write_env() {
         chmod 600 .env 2>/dev/null || true
     fi
 
-    # پاک‌سازی متغیرهای حساس از حافظه‌ی محیطی این نشست
+    # clear the sensitive variables from this session's environment
     OWNER_PASSWORD_SHOWN="$owner_password"
     OWNER_USERNAME_SHOWN="$owner_username"
 
     secret_len="${#secret_key}"
-    ok "فایل .env ساخته شد (SECRET_KEY با ${secret_len} کاراکتر)."
+    ok ".env written (SECRET_KEY is ${secret_len} characters)."
     return 0
 }
 
 # ===========================================================================
-#  بالا آوردن سرویس‌ها / bring the stack up
+#  Bring the stack up
 # ===========================================================================
 compose_up() {
-    step "دریافت ایمیج‌های پایه (Postgres و Redis و Caddy)"
-    # در اولین اجرا ممکن است ایمیج اختصاصی ما در رجیستری نباشد؛ خطا را نادیده می‌گیریم.
+    step "Pulling the base images (Postgres, Redis and Caddy)"
+    # on a first run our own image may not be in the registry yet; ignore that error.
     $COMPOSE_PROFILE pull --ignore-pull-failures 2>/dev/null || $COMPOSE_PROFILE pull || true
-    ok "ایمیج‌های پایه آماده‌اند."
+    ok "Base images are ready."
 
     if [ "$TLS_ENABLED" = "true" ]; then
-        step "ساخت ایمیج ربات و اجرای سرویس‌ها + Caddy (SSL خودکار)"
+        step "Building the bot image and starting the services + Caddy (automatic SSL)"
     else
-        step "ساخت ایمیج ربات و اجرای سرویس‌ها"
+        step "Building the bot image and starting the services"
     fi
-    dim "  (بار اول چند دقیقه طول می‌کشد؛ وابستگی‌های پایتون کامپایل می‌شوند)"
+    dim "  (the first run takes a few minutes; the Python dependencies are compiled)"
     if ! $COMPOSE_PROFILE up -d --build; then
-        err "اجرای سرویس‌ها ناموفق بود."
+        err "Starting the services failed."
         return 1
     fi
-    ok "سرویس‌ها اجرا شدند."
+    ok "Services started."
     return 0
 }
 
@@ -1027,10 +1031,10 @@ wait_for_health() {
     local waited=0 interval=3
 
     health_port="$(printf '%s' "$url" | sed -e 's|^[a-z]*://||' -e 's|/.*$||' -e 's|:.*$||')"
-    step "انتظار برای آماده‌شدن پنل (تا ${timeout} ثانیه)"
-    dim "  آدرس بررسی سلامت: $url"
+    step "Waiting for the panel to become ready (up to ${timeout} seconds)"
+    dim "  Health check URL: $url"
     if [ "$TLS_ENABLED" = "true" ]; then
-        dim "  (اولین درخواست ممکن است چند ثانیه طول بکشد تا Caddy گواهی SSL را از Let's Encrypt بگیرد)"
+        dim "  (the first request may take a few seconds while Caddy gets the SSL certificate from Let's Encrypt)"
     fi
 
     while [ "$waited" -lt "$timeout" ]; do
@@ -1043,7 +1047,7 @@ wait_for_health() {
                 return 0
             fi
         else
-            # بدون curl/wget: فقط وضعیت سرویس را بررسی می‌کنیم
+            # no curl/wget: only check the service status
             if $COMPOSE ps --status running 2>/dev/null | grep -q "bot"; then
                 sleep 5
                 return 0
@@ -1052,7 +1056,7 @@ wait_for_health() {
         sleep "$interval"
         waited=$(( waited + interval ))
         if [ $(( waited % 30 )) -eq 0 ]; then
-            dim "  … ${waited} ثانیه"
+            dim "  … ${waited} seconds"
         fi
     done
     return 1
@@ -1060,48 +1064,48 @@ wait_for_health() {
 
 show_tls_failure_help() {
     say ""
-    err "پنل روی HTTPS پاسخ نداد؛ یعنی صدور گواهی SSL کامل نشده است."
+    err "The panel did not answer over HTTPS, so the SSL certificate was not issued."
     say ""
-    printf '%s── ۴۰ خط آخر لاگ Caddy ───────────────────────────%s\n' "$C_BOLD" "$C_RESET"
+    printf '%s── last 40 lines of the Caddy log ─────────────────%s\n' "$C_BOLD" "$C_RESET"
     $COMPOSE --profile tls logs --tail=40 caddy 2>&1 || true
     say ""
-    printf '%s── ۲۰ خط آخر لاگ ربات ────────────────────────────%s\n' "$C_BOLD" "$C_RESET"
+    printf '%s── last 20 lines of the bot log ───────────────────%s\n' "$C_BOLD" "$C_RESET"
     $COMPOSE --profile tls logs --tail=20 bot 2>&1 || true
     say ""
-    info "چک‌لیست رفع مشکل SSL (به ترتیب بررسی کنید):"
-    say "  ۱) رکورد DNS: باید یک رکورد A از «${DOMAIN_FINAL}» به ${PUBLIC_IP} باشد."
-    say "     بررسی:  dig +short ${DOMAIN_FINAL}"
-    say "  ۲) پورت ۸۰ باید از اینترنت باز باشد؛ Let's Encrypt برای تأیید مالکیت دامنه"
-    say "     به http://${DOMAIN_FINAL}/.well-known/acme-challenge/... وصل می‌شود."
-    say "     بررسی:  ufw allow 80/tcp  و  ufw allow 443/tcp"
-    say "  ۳) محدودیت نرخ Let's Encrypt: اگر چند بار پشت‌سرهم تلاش کرده‌اید،"
-    say "     باید حدود یک ساعت صبر کنید (سقف هفتگی: ۵ گواهی برای هر دامنه)."
-    say "  ۴) اگر پروکسی/CDN مثل Cloudflare دارید، آن را موقتاً روی حالت DNS only بگذارید."
+    info "SSL troubleshooting checklist (check in this order):"
+    say "  1) DNS record: there must be an A record from '${DOMAIN_FINAL}' to ${PUBLIC_IP}."
+    say "     Check:  dig +short ${DOMAIN_FINAL}"
+    say "  2) Port 80 must be open from the internet; Let's Encrypt connects to"
+    say "     http://${DOMAIN_FINAL}/.well-known/acme-challenge/... to verify domain ownership."
+    say "     Check:  ufw allow 80/tcp  and  ufw allow 443/tcp"
+    say "  3) Let's Encrypt rate limit: if you have retried several times in a row,"
+    say "     wait about an hour (weekly limit: 5 certificates per domain)."
+    say "  4) If you use a proxy/CDN such as Cloudflare, set it to DNS only for now."
     say ""
-    dim "بعد از درست‌کردن مشکل، دوباره اجرا کنید:  bash install.sh   یا   bash scripts/set-domain.sh ${DOMAIN_FINAL}"
+    dim "After fixing the problem, run again:  bash install.sh   or   bash scripts/set-domain.sh ${DOMAIN_FINAL}"
     say ""
 }
 
 show_failure_diagnostics() {
     say ""
-    err "راه‌اندازی کامل نشد؛ اطلاعات زیر برای عیب‌یابی:"
+    err "The stack did not come up; the details below help with troubleshooting:"
     say ""
-    printf '%s── وضعیت سرویس‌ها ─────────────────────────────────%s\n' "$C_BOLD" "$C_RESET"
+    printf '%s── service status ─────────────────────────────────%s\n' "$C_BOLD" "$C_RESET"
     $COMPOSE ps 2>&1 | tail -n 20 || true
     say ""
-    printf '%s── ۴۰ خط آخر لاگ ربات ────────────────────────────%s\n' "$C_BOLD" "$C_RESET"
+    printf '%s── last 40 lines of the bot log ───────────────────%s\n' "$C_BOLD" "$C_RESET"
     $COMPOSE logs --tail=40 bot 2>&1 || true
     say ""
-    printf '%s── ۲۰ خط آخر لاگ دیتابیس ─────────────────────────%s\n' "$C_BOLD" "$C_RESET"
+    printf '%s── last 20 lines of the database log ──────────────%s\n' "$C_BOLD" "$C_RESET"
     $COMPOSE logs --tail=20 db 2>&1 || true
     say ""
-    info "کارهایی که معمولاً مشکل را حل می‌کنند:"
-    say "  • توکن ربات درست است؟ (خطای 401 در لاگ یعنی توکن اشتباه است)"
-    say "  • پورت ${PANEL_PORT_DEFAULT} آزاد است؟  ss -lntp | grep ${PANEL_PORT_DEFAULT}"
-    say "  • فضای دیسک کافی است؟  df -h /"
-    say "  • دوباره تلاش کنید:  $COMPOSE up -d --build"
+    info "Things that usually fix the problem:"
+    say "  • Is the bot token correct? (a 401 in the log means the token is wrong)"
+    say "  • Is port ${PANEL_PORT_DEFAULT} free?  ss -lntp | grep ${PANEL_PORT_DEFAULT}"
+    say "  • Is there enough disk space?  df -h /"
+    say "  • Try again:  $COMPOSE up -d --build"
     say ""
-    dim "برای دیدن لاگ زنده:  $COMPOSE logs -f bot"
+    dim "To follow the live log:  $COMPOSE logs -f bot"
 }
 
 success_box() {
@@ -1110,59 +1114,59 @@ success_box() {
 
     say ""
     printf '%s%s%s\n' "$C_GREEN" "$line" "$C_RESET"
-    printf '%s%s  ✅  نصب با موفقیت تمام شد!%s\n' "$C_BOLD" "$C_GREEN" "$C_RESET"
+    printf '%s%s  ✅  Installation finished successfully%s\n' "$C_BOLD" "$C_GREEN" "$C_RESET"
     printf '%s%s%s\n' "$C_GREEN" "$line" "$C_RESET"
     say ""
-    printf '  %s🌐 آدرس پنل مدیریت:%s\n' "$C_BOLD" "$C_RESET"
+    printf '  %s🌐 Admin panel URL:%s\n' "$C_BOLD" "$C_RESET"
     printf '     %s%s/panel/login%s\n' "$C_CYAN" "$url" "$C_RESET"
     if [ "$TLS_ENABLED" = "true" ]; then
-        printf '  %s🔒 گواهی SSL فعال است و %sخودکار تمدید می‌شود%s (حدود ۳۰ روز قبل از انقضا).%s\n' \
+        printf '  %s🔒 SSL is active and %srenews automatically%s (about 30 days before expiry).%s\n' \
             "$C_BOLD" "$C_GREEN" "$C_RESET" "$C_RESET"
         if [ "$CERT_ISSUED" = "true" ] && [ -n "$CERT_DETAILS" ]; then
             printf '     %s%s%s\n' "$C_DIM" "$CERT_DETAILS" "$C_RESET"
         fi
-        printf '     %sبرای دیدن وضعیت گواهی: bash scripts/set-domain.sh --status%s\n' "$C_DIM" "$C_RESET"
+        printf '     %sTo see the certificate status: bash scripts/set-domain.sh --status%s\n' "$C_DIM" "$C_RESET"
     elif [ -n "$ip" ] && [ "$ip" != "SERVER_IP" ] && [ "$url" != "http://${ip}:${port}" ]; then
-        printf '     %s(آدرس موقت بدون دامنه: http://%s:%s/panel/login)%s\n' "$C_DIM" "$ip" "$port" "$C_RESET"
+        printf '     %s(temporary URL without a domain: http://%s:%s/panel/login)%s\n' "$C_DIM" "$ip" "$port" "$C_RESET"
     fi
     say ""
-    printf '  %s👤 نام کاربری مالک:%s %s%s%s\n' "$C_BOLD" "$C_RESET" "$C_CYAN" "$username" "$C_RESET"
-    printf '  %s🔑 رمز عبور مالک:%s   %s%s%s\n' "$C_BOLD" "$C_RESET" "$C_CYAN" "$password" "$C_RESET"
+    printf '  %s👤 Owner username:%s %s%s%s\n' "$C_BOLD" "$C_RESET" "$C_CYAN" "$username" "$C_RESET"
+    printf '  %s🔑 Owner password:%s   %s%s%s\n' "$C_BOLD" "$C_RESET" "$C_CYAN" "$password" "$C_RESET"
     if [ "$REUSE_ENV" = "true" ]; then
-        printf '     %sمقدار بالا از فایل .env خوانده شده است و فقط در اولین نصب اعمال می‌شود.%s\n' "$C_DIM" "$C_RESET"
-        printf '     %sاگر رمز را از پنل عوض کرده‌اید، این رمز دیگر معتبر نیست.%s\n' "$C_DIM" "$C_RESET"
-        printf '     %sبازنشانی رمز: بخش «بازنشانی رمز مالک» در docs/DEPLOYMENT.md%s\n' "$C_DIM" "$C_RESET"
+        printf '     %sThe value above was read from .env and only applies to the first install.%s\n' "$C_DIM" "$C_RESET"
+        printf '     %sIf you changed the password from the panel, this one is no longer valid.%s\n' "$C_DIM" "$C_RESET"
+        printf '     %sPassword reset: the "Reset owner password" section in docs/DEPLOYMENT.md%s\n' "$C_DIM" "$C_RESET"
     fi
     say ""
-    printf '  %s%s⚠  همین حالا این رمز را یک جای امن ذخیره کنید و بعد از اولین ورود،%s\n' "$C_BOLD" "$C_YELLOW" "$C_RESET"
-    printf '  %s%s   از داخل پنل (حساب کاربری → تغییر رمز) رمز را عوض کنید.%s\n' "$C_BOLD" "$C_YELLOW" "$C_RESET"
+    printf '  %s%s⚠  Save this password somewhere safe right now, and after the first sign-in%s\n' "$C_BOLD" "$C_YELLOW" "$C_RESET"
+    printf '  %s%s   change it from inside the panel (Account → Change password).%s\n' "$C_BOLD" "$C_YELLOW" "$C_RESET"
     say ""
     printf '%s%s%s\n' "$C_GREEN" "$line" "$C_RESET"
     say ""
-    printf '  %s🧰 دستورهای پرکاربرد (داخل پوشه‌ی %s):%s\n' "$C_BOLD" "$INSTALL_DIR" "$C_RESET"
+    printf '  %s🧰 Common commands (inside %s):%s\n' "$C_BOLD" "$INSTALL_DIR" "$C_RESET"
     if [ "$TLS_ENABLED" = "true" ]; then
-        printf '     %s%s--profile tls logs -f bot%s      %s→ دیدن لاگ زنده‌ی ربات%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
-        printf '     %s%s--profile tls logs -f caddy%s    %s→ دیدن لاگ گواهی SSL%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
-        printf '     %s%s restart bot%s      %s→ راه‌اندازی دوباره‌ی ربات%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
-        printf '     %s%s down%s             %s→ خاموش کردن سرویس‌ها (داده‌ها می‌مانند)%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
+        printf '     %s%s--profile tls logs -f bot%s      %s→ follow the bot log%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
+        printf '     %s%s--profile tls logs -f caddy%s    %s→ follow the SSL certificate log%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
+        printf '     %s%s restart bot%s      %s→ restart the bot%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
+        printf '     %s%s down%s             %s→ stop the services (data is kept)%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
     else
-        printf '     %s%s logs -f bot%s      %s→ دیدن لاگ زنده‌ی ربات%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
-        printf '     %s%s restart bot%s      %s→ راه‌اندازی دوباره‌ی ربات%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
-        printf '     %s%s down%s             %s→ خاموش کردن سرویس‌ها (داده‌ها می‌مانند)%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
+        printf '     %s%s logs -f bot%s      %s→ follow the bot log%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
+        printf '     %s%s restart bot%s      %s→ restart the bot%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
+        printf '     %s%s down%s             %s→ stop the services (data is kept)%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
     fi
-    printf '     %s%s ps%s               %s→ وضعیت سرویس‌ها%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
+    printf '     %s%s ps%s               %s→ service status%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
     say ""
-    printf '  %s💾 پشتیبان‌گیری خودکار فعال است (هر %s ساعت) و فایل‌ها در %s ذخیره می‌شوند.%s\n' \
+    printf '  %s💾 Automatic backups are on (every %s hours) and the files are stored in %s.%s\n' \
         "$C_BOLD" "${BACKUP_HOURS_SHOWN:-24}" "$(printf '%s/backups' "$INSTALL_DIR")" "$C_RESET"
-    printf '  %s🔄 برای به‌روزرسانی در آینده: %s%s\n' "$C_BOLD" "bash update.sh" "$C_RESET"
+    printf '  %s🔄 To update later: %s%s\n' "$C_BOLD" "bash update.sh" "$C_RESET"
     if [ "$TLS_ENABLED" = "true" ]; then
-        printf '  %s🌐 برای تغییر یا حذف دامنه: bash scripts/set-domain.sh --status%s\n' "$C_BOLD" "$C_RESET"
+        printf '  %s🌐 To change or remove the domain: bash scripts/set-domain.sh --status%s\n' "$C_BOLD" "$C_RESET"
     else
-        printf '  %s🔒 برای فعال‌کردن دامنه و SSL خودکار: bash scripts/set-domain.sh example.com%s\n' "$C_BOLD" "$C_RESET"
+        printf '  %s🔒 To enable a domain and automatic SSL: bash scripts/set-domain.sh example.com%s\n' "$C_BOLD" "$C_RESET"
     fi
     say ""
     if [ "$ALLOW_UFW_HINT" = "true" ]; then
-        printf '  %s🔥 اگر فایروال (ufw) فعال دارید، پورت‌ها را باز کنید:%s\n' "$C_BOLD" "$C_RESET"
+        printf '  %s🔥 If you have a firewall (ufw) enabled, open the ports:%s\n' "$C_BOLD" "$C_RESET"
         if [ "$TLS_ENABLED" = "true" ]; then
             printf '     %sufw allow 80/tcp && ufw allow 443/tcp%s\n' "$C_CYAN" "$C_RESET"
         else
@@ -1170,7 +1174,7 @@ success_box() {
         fi
         say ""
     fi
-    printf '  %s🗑  برای حذف کامل: bash uninstall.sh   (داده‌ها پیش‌فرض حفظ می‌شوند)%s\n' "$C_DIM" "$C_RESET"
+    printf '  %s🗑  To remove everything: bash uninstall.sh   (data is kept by default)%s\n' "$C_DIM" "$C_RESET"
     return 0
 }
 
@@ -1184,7 +1188,7 @@ firewall_hint_needed() {
 }
 
 # ===========================================================================
-#  برنامه‌ی اصلی / main
+#  Main
 # ===========================================================================
 main() {
     parse_args "$@"
@@ -1200,12 +1204,12 @@ main() {
     require_root "$@"
     install_docker
     if ! detect_compose; then
-        err "پلاگین Docker Compose پیدا نشد."
-        say "  نصب: apt-get update && apt-get install -y docker-compose-plugin"
-        say "  سپس دوباره همین اسکریپت را اجرا کنید."
+        err "The Docker Compose plugin was not found."
+        say "  Install it: apt-get update && apt-get install -y docker-compose-plugin"
+        say "  Then run this script again."
         exit 1
     fi
-    ok "داکر آماده است (${COMPOSE})."
+    ok "Docker is ready (${COMPOSE})."
 
     prepare_dir
     load_existing
@@ -1216,7 +1220,7 @@ main() {
 
     detect_public_ip
     if [ "$PUBLIC_IP" != "SERVER_IP" ]; then
-        dim "  IP سرور: ${PUBLIC_IP}"
+        dim "  Server IP: ${PUBLIC_IP}"
     fi
 
     if [ "$REUSE_ENV" = "true" ]; then
@@ -1247,7 +1251,7 @@ main() {
     [ -n "$PANEL_URL_FINAL" ] || PANEL_URL_FINAL="http://127.0.0.1:${PANEL_PORT_FINAL}"
     [ -n "$BACKUP_HOURS_SHOWN" ] || BACKUP_HOURS_SHOWN="24"
 
-    # -- حالت دامنه / بدون دامنه -------------------------------------------
+    # -- domain / no-domain mode -------------------------------------------
     if [ -n "$DOMAIN_FINAL" ]; then
         TLS_ENABLED="true"
         COMPOSE_PROFILE="$COMPOSE --profile tls"
@@ -1258,39 +1262,39 @@ main() {
         [ -n "$PANEL_BIND_FINAL" ] || PANEL_BIND_FINAL="$PANEL_BIND_DEFAULT"
     fi
 
-    # خلاصه‌ی تنظیمات قبل از اجرا
+    # configuration summary before the run
     say ""
-    printf '%s── خلاصه‌ی تنظیمات ────────────────────────────────%s\n' "$C_BOLD" "$C_RESET"
-    printf '  پوشه‌ی نصب    : %s\n' "$INSTALL_DIR"
+    printf '%s── configuration summary ──────────────────────────%s\n' "$C_BOLD" "$C_RESET"
+    printf '  Install dir   : %s\n' "$INSTALL_DIR"
     if [ "$TLS_ENABLED" = "true" ]; then
-        printf '  دامنه         : %s%s%s (SSL خودکار)\n' "$C_CYAN" "$DOMAIN_FINAL" "$C_RESET"
-        printf '  ایمیل ACME    : %s\n' "${ACME_EMAIL_FINAL:-(ثبت نشده — هشدار انقضا نمی‌آید)}"
-        printf '  حالت ربات     : webhook\n'
+        printf '  Domain        : %s%s%s (automatic SSL)\n' "$C_CYAN" "$DOMAIN_FINAL" "$C_RESET"
+        printf '  ACME email    : %s\n' "${ACME_EMAIL_FINAL:-(not set — no expiry warning)}"
+        printf '  Bot mode      : webhook\n'
     else
-        printf '  دامنه         : (بدون دامنه — بدون SSL)\n'
-        printf '  حالت ربات     : polling\n'
+        printf '  Domain        : (no domain — no SSL)\n'
+        printf '  Bot mode      : polling\n'
     fi
-    printf '  پورت پنل      : %s\n' "$PANEL_PORT_FINAL"
-    printf '  آدرس عمومی    : %s\n' "$PANEL_URL_FINAL"
-    printf '  مالک پنل      : %s\n' "$OWNER_USERNAME_SHOWN"
-    printf '  مدیران        : %s\n' "$ADMIN_IDS_FINAL"
+    printf '  Panel port    : %s\n' "$PANEL_PORT_FINAL"
+    printf '  Public URL    : %s\n' "$PANEL_URL_FINAL"
+    printf '  Panel owner   : %s\n' "$OWNER_USERNAME_SHOWN"
+    printf '  Admins        : %s\n' "$ADMIN_IDS_FINAL"
     if [ -n "${BOT_TOKEN_FINAL:-}" ]; then
-        printf '  توکن ربات     : %s…%s (مخفی)\n' "$(printf '%s' "$BOT_TOKEN_FINAL" | cut -c1-10)" "$(printf '%s' "$BOT_TOKEN_FINAL" | rev | cut -c1-4 | rev)"
+        printf '  Bot token     : %s…%s (hidden)\n' "$(printf '%s' "$BOT_TOKEN_FINAL" | cut -c1-10)" "$(printf '%s' "$BOT_TOKEN_FINAL" | rev | cut -c1-4 | rev)"
     fi
     printf '%s───────────────────────────────────────────────────%s\n' "$C_BOLD" "$C_RESET"
 
-    # -- بررسی DNS قبل از درخواست گواهی ------------------------------------
+    # -- check DNS before requesting the certificate ------------------------------------
     if [ "$TLS_ENABLED" = "true" ]; then
-        step "بررسی اینکه دامنه به این سرور اشاره می‌کند"
+        step "Checking that the domain points to this server"
         if check_dns_points_here "$DOMAIN_FINAL"; then
-            ok "دامنه درست به این سرور اشاره می‌کند (${PUBLIC_IP})."
+            ok "The domain points to this server (${PUBLIC_IP})."
         else
             show_dns_warning
             if [ "$ASSUME_YES" = "true" ]; then
-                warn "حالت --yes: بدون تأیید ادامه می‌دهیم؛ اگر DNS درست نشده باشد گواهی صادر نمی‌شود."
-            elif ! confirm "با این وضعیت ادامه می‌دهیم؟ (اگر DNS هنوز درست نشده، بهتر است اول درستش کنید)" "n"; then
+                warn "--yes mode: continuing without confirmation; if DNS is not ready, no certificate will be issued."
+            elif ! confirm "Continue anyway? (if DNS is not ready yet, fix it first)" "n"; then
                 say ""
-                info "نصب متوقف شد. بعد از درست‌کردن رکورد DNS دوباره اجرا کنید:"
+                info "Install stopped. After fixing the DNS record, run again:"
                 dim "    bash install.sh --domain ${DOMAIN_FINAL}"
                 exit 0
             fi
