@@ -1,6 +1,13 @@
 # Development
 
-## Setup
+Setting up, running, and debugging this project locally.
+
+For *what to run as evidence* see [`VERIFICATION.md`](VERIFICATION.md). This file
+is about getting a working environment and finding your way around it.
+
+---
+
+## 1. Setup
 
 ```bash
 git clone https://github.com/Sir-Adnan/wg-guard-bot.git
@@ -11,7 +18,11 @@ source .venv/bin/activate       # Linux/macOS
 pip install -r requirements-dev.txt
 ```
 
-### Configuration
+`requirements-dev.txt` includes the runtime requirements plus `pytest`,
+`pytest-asyncio` and `ruff`. The production image installs **only**
+`requirements.txt`, so it has neither pytest nor ruff — see §5.
+
+## 2. Local configuration
 
 ```bash
 cp .env.example .env
@@ -23,68 +34,85 @@ For local work the minimum is:
 ENV=development
 SECRET_KEY=dev-only-secret-key-that-is-long-enough-0000000000
 BOT_TOKEN=                      # leave empty: the panel still runs
-POSTGRES_HOST=127.0.0.1
-POSTGRES_PORT=55432             # if you use the compose database
 REDIS_URL=                      # empty = in-memory FSM
 ```
 
 `ENV=development` relaxes the `SECRET_KEY` check and generates one if missing;
-`ENV=production` refuses to boot without a real key.
+`ENV=production` refuses to boot without a real key. The full variable list is in
+[`CONFIGURATION.md`](CONFIGURATION.md).
 
-### Database for local work
+## 3. A database for local work
 
-The compose file already ships a PostgreSQL:
-
-```bash
-docker compose up -d db redis
-docker compose exec db psql -U wgguard -d postgres -c "CREATE DATABASE wgguard_test"
-```
-
-Or start a throwaway one:
+`docker-compose.yml` deliberately does **not** publish the `db` port — a
+production host should not expose PostgreSQL. For host-side work, run a
+throwaway instance on a non-standard port:
 
 ```bash
-docker run -d --name wgguard-dev \
-  -e POSTGRES_PASSWORD=wgguard -e POSTGRES_USER=wgguard -e POSTGRES_DB=wgguard \
-  -p 55432:5432 postgres:16-alpine
+docker run -d --name wgguard-pg -p 55432:5432 \
+  -e POSTGRES_USER=wgguard -e POSTGRES_PASSWORD=wgguard -e POSTGRES_DB=wgguard \
+  postgres:16-alpine
+docker exec wgguard-pg psql -U wgguard -d postgres -c "CREATE DATABASE wgguard_test"
 ```
 
-### Run
+Then point the test-suite at it (see [`VERIFICATION.md`](VERIFICATION.md) §4 for
+the full environment block):
+
+```bash
+TEST_DATABASE_URL="postgresql+asyncpg://wgguard:wgguard@127.0.0.1:55432/wgguard_test"
+```
+
+Remove the container when you are done with it. Leaving throwaway containers and
+images behind is a handoff defect, not a convenience.
+
+## 4. Run
 
 ```bash
 alembic upgrade head
 uvicorn app.main:app --reload --port 8080
 ```
 
-The panel is at <http://127.0.0.1:8080/panel>. On the first start the owner
-account is seeded from `OWNER_USERNAME` / `OWNER_PASSWORD`. Give the bot a
-token and message it to exercise the bot side.
+The panel is at <http://127.0.0.1:8080/panel>. On first start the owner account
+is seeded from `OWNER_USERNAME` / `OWNER_PASSWORD`. Give the bot a token and
+message it to exercise the Telegram side.
 
-## Tests
+## 5. Commands
+
+**Run these from the host venv.** The `make test`, `make lint` and `make format`
+targets exec into the runtime container, which has no pytest and no ruff, so they
+currently fail — that is gap #1 in [`VERIFICATION.md`](VERIFICATION.md) §7.
 
 ```bash
-# unit tests only — no database, no network
-pytest tests/test_core.py -q
-
-# everything (needs a database)
-export TEST_DATABASE_URL="postgresql+asyncpg://wgguard:wgguard@127.0.0.1:55432/wgguard_test"
-pytest -q
-
-# with coverage
-pytest --cov=app --cov-report=term-missing
+ruff check .                     # lint (the CI gate)
+ruff format .                    # format
+pytest -m "not db" -q            # everything that needs no database
+pytest -q                        # everything (needs PostgreSQL)
+pytest tests/test_core.py -q     # one module
+alembic upgrade head             # apply migrations
 ```
 
-Without a reachable database the `db`-marked tests **skip** instead of failing,
-so `pytest` is useful on any machine.
+Sample data and a fake node, when you need them:
 
-### What each file covers
+```bash
+cd tools && python -m mock_wg_panel --host 127.0.0.1 --port 8787
+```
+
+## 6. Test map
+
+Pick the file that already covers your area before writing a new one.
 
 | File | Needs DB | Covers |
 |---|---|---|
-| `tests/test_core.py` | no | money conversion/formatting, password hashing, secret encryption, session signing, Jalali dates |
-| `tests/test_wg_client.py` | no | the WG-Guard client against the in-repo mock: auth, idempotent purchases, pagination, error envelopes, retry on 503 |
-| `tests/test_purchase_flow.py` | yes | pricing, wallet reservation/refund, provisioning, idempotent retries, receipts, renewals, ledger invariant |
-| `tests/test_catalog_features.py` | yes | category tree (depth, cycles, cascade), gift codes, guides |
-| `tests/test_panel.py` | yes | login, CSRF, every panel page renders 200, card creation round trip, receipt approval through the panel |
+| `tests/test_core.py` | no | money conversion/formatting, digit translation, password hashing, secret encryption, session signing, CSRF binding, Jalali dates |
+| `tests/test_wg_client.py` | no | the WG-Guard transport against the in-process mock: auth, idempotent purchases, pagination, error envelopes, retry on 503 |
+| `tests/test_bot_wiring.py` | no | dispatcher/router composition, idempotent startup, handler order |
+| `tests/test_purchase_flow.py` | yes | pricing, wallet reservation and refund, provisioning, idempotent retries, receipts, renewals, ledger invariant |
+| `tests/test_catalog_features.py` | yes | category tree (depth, cycles, cascade), gift codes, guides, catalog filters |
+| `tests/test_panel_providers.py` | yes | the provider port: registry, capability flags, canonical mapping, exactly-once purchase |
+| `tests/test_panel.py` | yes | login, CSRF, every page renders, card round trip, receipt approval through the UI |
+
+The database marker is `@pytest.mark.db` (module-level `pytestmark`). Note that
+it currently only *selects* — without a reachable PostgreSQL those tests fail
+rather than skip; see [`VERIFICATION.md`](VERIFICATION.md) §7 gap #2.
 
 ### Writing a test
 
@@ -101,84 +129,79 @@ async def test_something(session, customer, plan) -> None:
 ```
 
 Fixtures (`session`, `customer`, `plan`, `panel_row`, `admin`, `wg_client`,
-`mock_panel`) come from `tests/conftest.py`. Database fixtures **commit** like
-production and every test starts from a `TRUNCATE` — services such as
-provisioning open their own session and would not see uncommitted rows.
+`mock_panel`) come from `tests/conftest.py`.
 
-## Mock WG-Guard panel
+Two things about that fixture model are load-bearing:
 
-`tools/mock_wg_panel` is an in-memory implementation of the upstream REST
-contract (61 of 63 documented method/path pairs).
+- Database fixtures **commit** like production, and each test starts from a
+  `TRUNCATE`. Services such as provisioning open their own session and would not
+  see uncommitted rows, so a rollback-per-test wrapper would silently break them.
+- The session fixture takes a PostgreSQL advisory lock. Two `pytest` runs against
+  one `TEST_DATABASE_URL` would otherwise recreate the schema underneath each
+  other. A second run now waits instead of corrupting the first — do not remove
+  the lock to "speed things up".
 
-```bash
-cd tools && python -m mock_wg_panel --host 127.0.0.1 --port 8787
-```
-
-It authenticates `wg_test_token` (all scopes) and `wg_readonly_token` (read
-scopes) and offers test affordances:
-
-| Endpoint | Effect |
-|---|---|
-| `POST /__mock__/reset` | wipe all state |
-| `GET /__mock__/requests` | journal of every request received |
-| `POST /__mock__/fail` | make the next N matching requests fail |
-| `POST /__mock__/slow` | delay matching requests |
-| `POST /__mock__/seed/plan` | add a plan |
-| `POST /__mock__/expire` | force-expire a user |
-
-In tests, inject it without a network via `httpx.ASGITransport`; the
-`wg_client` fixture already does this.
-
-## Lint and format
-
-```bash
-ruff check .
-ruff format .
-```
-
-## Database migrations
+## 7. Migrations
 
 ```bash
 alembic revision --autogenerate -m "add plan categories"
 alembic upgrade head
-alembic check                    # must report no pending operations
-alembic downgrade -1             # verify the downgrade works too
+alembic check                    # must print "No new upgrade operations detected."
+alembic downgrade -1             # then upgrade again: the downgrade must work
 ```
 
-Two tables reference each other (`orders.service_id` ↔
-`services.origin_order_id`); the second FK uses `use_alter=True`, so
-autogenerate cannot emit it and the initial migration creates it explicitly.
-Keep that comment if you regenerate.
+Two tables reference each other (`orders.service_id` ↔ `services.origin_order_id`).
+The second FK uses `use_alter=True`, so autogenerate cannot emit it and the
+initial migration creates it by hand. If you regenerate migrations, keep that
+comment and that call.
 
-## Adding a feature
+Never edit a migration that has been released; add a new revision.
 
-1. **Model** — `app/db/models.py`, then a migration.
-2. **Service** — `app/services/<concept>.py`. Keep it free of Telegram and
-   FastAPI imports; it should be testable with just a session.
-3. **Panel page** — `app/web/routes/<name>.py` + `templates/<name>.html`, then
-   register in `app/web/routes/__init__.py`. Follow
-   [`PANEL-CONTRACT.md`](PANEL-CONTRACT.md).
-4. **Bot screen** — `app/bot/handlers/<name>.py`, then register in
-   `ROUTE_ORDER`. Add any new strings to `app/locales/fa.json` and any new
-   buttons to `appearance._BUTTON_RAW`.
-5. **Tests** — extend the closest existing file (see the table above).
-6. **Docs** — update `CHANGELOG.md` and, if behaviour changed, the README.
+## 8. Adding a feature
 
-## Debugging tips
+The mechanics live next to the thing you are changing — follow the pointer
+rather than duplicating the contract here:
+
+| Adding | Start at |
+|---|---|
+| A panel page | [`PANEL-CONTRACT.md`](PANEL-CONTRACT.md) — it ends with the "done" checklist |
+| A VPN backend or node call | [`PROVIDERS.md`](PROVIDERS.md) |
+| A bot screen | `app/bot/handlers/`, then append to `ROUTE_ORDER` in `handlers/__init__.py` |
+| A shop setting | one `SettingSpec` in `app/services/settings_store.py`; the panel renders it |
+| A bot string | one key in `app/locales/fa.json` — see `AGENTS.md` §6 for the copy rules |
+| A button colour or emoji | one entry in `_BUTTON_RAW` in `app/services/appearance.py` |
+| A table | a model in `app/db/models.py`, then a migration (§7) |
+| A scheduled job | a method on `Jobs` plus one `scheduler.add_job(...)` line |
+
+Services stay free of Telegram and FastAPI imports so they remain testable with
+nothing but a session — that is the layering rule in `AGENTS.md` §1.3, and it is
+what keeps the focused tests in §6 cheap.
+
+## 9. Debugging
 
 - `LOG_LEVEL=DEBUG` and `DB_ECHO=true` make everything visible.
-- `POST /__mock__/fail` is the fastest way to exercise the retry and
-  recovery paths without touching real infrastructure.
-- The panel keeps working without a bot token; that is deliberate and is
-  covered by `tests/test_panel.py`.
-- If a test hangs, it is almost always an un-closed `AsyncEngine`. Use
-  `NullPool` in tests (the `engine` fixture does).
+- `POST /__mock__/fail` on the mock node is the fastest way to exercise retry and
+  recovery paths without real infrastructure.
+- The panel keeps working without a bot token. That is deliberate and covered by
+  `tests/test_panel.py`.
+- If a test hangs it is almost always an unclosed `AsyncEngine`; the `engine`
+  fixture uses `NullPool` for this reason.
+- `POST /panel/...` returning 403 in a test is usually a missing CSRF token, not
+  an auth failure.
 
-## Definition of done
+## 10. Repository conventions
 
-- [ ] `ruff check .` passes.
-- [ ] `pytest -q` passes (including the database tests).
-- [ ] `alembic check` reports no drift.
-- [ ] New panel pages appear in `tests/test_panel.py::PAGES`.
-- [ ] `CHANGELOG.md` has an entry.
-- [ ] No secret is logged, no money is a float, no layering rule is broken.
+```
+app/core/       config, logging, security, money, jalali, cache, errors
+app/db/         models, session, base
+app/panels/     the VPN-backend port (see PROVIDERS.md)
+app/services/   business logic — one module per concept
+app/bot/        handlers/, middlewares/, keyboards, callbacks, states, setup
+app/web/        app, routes/, templates/, static/
+app/workers/    jobs, scheduler
+app/locales/    fa.json
+tools/          mock WG-Guard node and developer utilities (not shipped)
+```
+
+`ruff check .` and `ruff format .` must both pass; CI gates on `check` and treats
+formatting as informational, so run `ruff format .` before you push.

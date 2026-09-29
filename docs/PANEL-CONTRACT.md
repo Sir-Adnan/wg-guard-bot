@@ -207,11 +207,28 @@ Toman→Rial automatically (a trailing `ریال`/`تومان` overrides).
 
 ## 8. Checklist before a page is "done"
 
-1. No path starts with `/panel` inside the router.
-2. Every POST calls `verify_csrf` and ends in `redirect(...)`.
-3. Every destructive action carries `data-confirm`.
-4. Empty states use `empty_state(...)`.
-5. Money goes through `form_money` / `|money`.
-6. Persian copy is fluent, uses ZWNJ (‌) and Persian digits, and lives in the
-   template (or `app/locales/fa.json` for bot-facing strings).
-7. The page renders inside `base.html` and does not add its own `<html>`.
+**Wiring** — a page that renders but is registered nowhere is invisible; a page
+that is registered but unlisted in the smoke test breaks silently later.
+
+1. The module is appended to `ROUTE_MODULES` in `app/web/routes/__init__.py`.
+2. The path is added to `PAGES` in `tests/test_panel.py`, so the smoke test
+   fetches it through a real login on every run. This is the step most often
+   missed — the test-suite will not tell you that a page is missing.
+3. If it is a top-level page, it has an entry in the sidebar list in
+   `templates/base.html`; otherwise nobody will find it.
+4. No path starts with `/panel` inside the router.
+
+**Behaviour**
+
+5. Every POST calls `verify_csrf` and ends in `redirect(...)`.
+6. Every destructive action carries `data-confirm`.
+7. Empty states use `empty_state(...)`.
+8. Money goes through `form_money` / `|money` — never a raw division.
+9. Persian copy is fluent, uses ZWNJ (‌) and Persian digits, and lives in the
+   template (or `app/locales/fa.json` for bot-facing strings). See
+   [`../AGENTS.md`](../AGENTS.md) §6.
+10. The page renders inside `base.html` and does not add its own `<html>`.
+
+**Evidence** — a page change is a T1/T3 change; see
+[`VERIFICATION.md`](VERIFICATION.md) §3 for what to run. Adding or renaming a
+path means `pytest tests/test_panel.py -q`.

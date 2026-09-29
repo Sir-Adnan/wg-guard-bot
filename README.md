@@ -6,6 +6,9 @@ Sales, card-to-card payment with multi-admin approval, wallet, trial service, su
 
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
+[![CI](https://github.com/Sir-Adnan/wg-guard-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/Sir-Adnan/wg-guard-bot/actions/workflows/ci.yml)
+
+> **Repository:** <https://github.com/Sir-Adnan/wg-guard-bot>
 
 ## Table of contents
 
@@ -29,7 +32,7 @@ Sales, card-to-card payment with multi-admin approval, wallet, trial service, su
 On a fresh Ubuntu or Debian server (Docker is installed automatically):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/USER/REPO/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/Sir-Adnan/wg-guard-bot/main/install.sh)
 ```
 
 The installer asks you these questions in Persian (bot token, numeric admin IDs, panel port) and does the rest itself:
@@ -51,17 +54,23 @@ bash install.sh --yes \
 |---|---|
 | `--bot-token` | Bot token from [@BotFather](https://t.me/BotFather) |
 | `--admin-ids` | Numeric admin IDs, comma-separated (required) |
+| `--support-ids` | Numeric support-staff IDs, comma-separated |
 | `--domain` | Domain or subdomain (e.g. `bot.example.com`) — **enables automatic HTTPS** |
 | `--acme-email` | Contact address for Let's Encrypt (optional but recommended) |
 | `--port` | Panel port (default `8080`) |
 | `--panel-url` | Public panel URL |
+| `--app-name` | Shop name shown to customers |
 | `--owner-username` | Panel username (default `admin`) |
 | `--owner-password` | Panel password (random by default) |
 | `--ip` | Override the detected public IP (used for the DNS pre-check) |
+| `--branch` | Git branch to install (default `main`) |
 | `--dir` | Install directory |
+| `--yes`, `-y` | Unattended: take every value from the flags or the defaults |
 | `--no-docker-install` | Skip the automatic Docker install |
 | `--no-domain` | Force no-domain mode even if `DOMAIN` is already set |
-| `--force` | Overwrite an existing `.env` |
+| `--force` | Overwrite an existing `.env` (backs it up first) |
+
+> Run `bash install.sh --help` for the authoritative list.
 
 ### Domain and automatic HTTPS
 
@@ -166,7 +175,7 @@ make psql      # connect to the database
 <summary>If you want to control everything yourself</summary>
 
 ```bash
-git clone https://github.com/USER/REPO.git wg-guard-bot
+git clone https://github.com/Sir-Adnan/wg-guard-bot.git wg-guard-bot
 cd wg-guard-bot
 cp .env.example .env
 ```
@@ -394,7 +403,7 @@ change — no business logic, no admin-panel UI work:
 `app/panels/providers/example.py` is a fully documented skeleton to copy, and
 `tests/test_panel_providers.py` pins the contract every adapter must meet.
 
-Further documentation: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/PANEL-CONTRACT.md`](docs/PANEL-CONTRACT.md)
+Further documentation: [`docs/README.md`](docs/README.md) (index) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/PANEL-CONTRACT.md`](docs/PANEL-CONTRACT.md) · [`docs/PROVIDERS.md`](docs/PROVIDERS.md) · [`docs/VERIFICATION.md`](docs/VERIFICATION.md) · [`AGENTS.md`](AGENTS.md)
 
 ---
 
@@ -411,12 +420,19 @@ pip install -r requirements-dev.txt
 ### Running the tests
 
 ```bash
-# a test database is required
+# no database needed — unit tests, the WG-Guard mock, bot wiring
+pytest -m "not db" -q
+
+# the full suite (needs a test database)
 export TEST_DATABASE_URL="postgresql+asyncpg://user:pass@127.0.0.1:5432/wgguard_test"
 pytest -q
 ```
 
-Tests skip themselves automatically when no database is available, so `pytest` runs on any machine.
+The database-backed tests are marked `db`; without a reachable database they
+**fail rather than skip**, so use `-m "not db"` on a machine that has none.
+Ports, containers and the exact environment block are in
+[`docs/VERIFICATION.md`](docs/VERIFICATION.md#4-the-environment-the-commands-need).
+
 To test without a real node, use the **mock panel** shipped in the repository:
 
 ```bash

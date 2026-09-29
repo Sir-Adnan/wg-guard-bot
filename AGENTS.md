@@ -1,221 +1,157 @@
 # AGENTS.md
 
-Rules for anyone — human or AI agent — changing this repository. Read this
-before opening a pull request. It is deliberately short and specific; when a
-rule here conflicts with your instinct, the rule wins.
+Working agreement for anyone — human or AI — changing this repository.
+
+Two ideas carry the whole file: **keep the invariants**, and **spend evidence in
+proportion to risk**. Read the section that matches what you are about to touch;
+you do not need the rest.
 
 ---
 
-## 1. The five non-negotiables
+## 1. Non-negotiables
 
-1. **Money is Rial, everywhere, as an integer.**
-   Database columns, service signatures and API payloads all use Rial. Toman is
-   a *display* concern handled by `app/core/money.py`. A new `*_rial` column that
-   is not `BigInteger`, or a service that returns Toman, is a bug.
-   Never use floats for money.
+Break one of these and the change is wrong, no matter how well it tests.
 
-2. **No secret is ever stored in plaintext.**
-   Panel API tokens, WireGuard configs and subscription links go through
-   `app.core.security.encrypt_secret(..., purpose=...)`. Each secret has its own
-   `purpose`; never reuse one. Never log a secret, never render it in a
-   template without `mask_secret`, never put it in an error message.
+1. **Money is an integer in Rial.** Everywhere: columns, function signatures,
+   API payloads. Toman is a display concern owned by `app/core/money.py`. A
+   `*_rial` column that is not `BigInteger`, or a service that returns Toman, is
+   a bug. Never a float.
 
-3. **The layering is one-way.**
-   `core → db / panels → services → bot / web`. Nothing lower may import
-   anything higher. If you feel you need to, the logic belongs one layer down.
+2. **No secret is ever plaintext.** Panel tokens, WireGuard configs and
+   subscription links go through `app.core.security.encrypt_secret(...,
+   purpose=...)`; each secret gets its own purpose. Never log one, never render
+   one without `mask_secret`, never put one in an error message.
 
-4. **Only `app/panels/providers/*` speaks HTTP to a VPN node.**
-   Business rules never build URLs and never import a vendor client. If you
-   need a new node call, add it to the `PanelProvider` port
-   (`app/panels/base.py`) and implement it in every adapter.
+3. **Layering is one-way:** `core → db / panels → services → bot / web`.
+   Nothing lower imports anything higher. If you need to, the logic belongs one
+   layer down.
 
-5. **Every behaviour change ships with a test.**
-   See §6. A PR that changes money, provisioning or auth without a test will be
-   sent back.
+4. **Card payments never touch the wallet.** Only `WALLET`, `ADMIN` and `GIFT`
+   orders debit a balance. Card revenue is tracked through orders.
 
-## 2. Environment
+5. **Provisioning is exactly-once.** Reuse the same `Idempotency-Key` when
+   retrying the same payload; after an ambiguous failure ask
+   `recover_purchase()` first. `None` means "not committed, safe to retry" —
+   answering `None` for a purchase that did commit creates a duplicate account.
 
-| | |
+## 2. What you may do without asking
+
+| Area | Allowed |
 |---|---|
-| Python | 3.12 in Docker, 3.11+ supported |
-| Package manager | `pip` with pinned `requirements.txt` |
-| Database | PostgreSQL 16 (`asyncpg` + SQLAlchemy 2.x async) |
-| Bot | aiogram 3.x, **Bot API 9.5** |
-| Web | FastAPI + Jinja2, no build step, no CDN, no npm |
+| Code | Add and refactor freely inside the layering rules. |
+| Tests | Add tests; extend existing ones; strengthen assertions. |
+| Dependencies | **Dev-only** additions (`requirements-dev.txt`) for tooling. |
+| Migrations | Create new revisions. |
+| Docs | Rewrite any document, including this one. |
+| Git | Work on a branch; commit locally. |
+| Local Docker | Build images, start/stop the stack, run the test database. |
 
-```bash
-python -m venv .venv
-.venv/Scripts/activate          # Windows
-source .venv/bin/activate       # Linux/macOS
-pip install -r requirements-dev.txt
-```
+## 3. What needs an explicit instruction first
 
-## 3. Code style
+Do not do these because they seem convenient. Ask, or leave it.
 
-- `ruff check .` and `ruff format .` must pass (config in `pyproject.toml`).
-- `from __future__ import annotations` at the top of every module.
-- Full type hints on public functions. No bare `except:`; catch the specific
-  exception, or `AppError` for domain failures.
-- Docstrings explain **why**, not what. A docstring that restates the function
-  name is noise.
-- Prefer small, named helpers over long functions. If a function needs a
-  paragraph to explain, split it.
-- Comments are for non-obvious decisions. Keep the existing bilingual comments
-  where they explain a trap (they are there for a reason).
+- **Runtime dependencies** — `requirements.txt` is deliberately minimal and the
+  panel ships zero frontend/build tooling. Adding a runtime dep changes the
+  deployment contract.
+- **Deleting or weakening a test, guardrail, or check** to make something pass.
+  Adding `# noqa`, `xfail`, `skip`, or an `except: pass` for that purpose is the
+  same act.
+- **Editing a released migration.** Add a new revision instead.
+- **Pushing to `main`**, force-pushing, rewriting history, or touching tags.
+- **Publishing images** or changing what CI does on release.
+- **Anything against a live deployment**: the owner's server, a real database, a
+  real WG-Guard node, a real bot token. Read-only inspection is fine.
+- **Destructive Docker**: `system prune`, `volume rm`, `down -v`.
+- **Bulk rewrites** of Persian copy across the product — wording is product.
 
-### Module layout
+## 4. Verification: match evidence to risk
 
-```
-app/core/       config, logging, security, money, jalali, cache, errors
-app/db/         models, session, base
-app/panels/     the VPN-backend port: base (interface), models (canonical DTOs),
-                registry, manager, providers/<vendor>.py adapters
-app/services/   business logic — one module per concept
-app/bot/        handlers/, middlewares/, keyboards, callbacks, states, setup
-app/web/        app, routes/, templates/, static/
-app/workers/    jobs, scheduler
-app/locales/    fa.json
-```
+A docs typo and a change to the money path do not deserve the same afternoon.
+Full policy, commands and rationale: **[`docs/VERIFICATION.md`](docs/VERIFICATION.md)**.
 
-## 4. Adding things
+Start at the lowest tier that plausibly covers your change and climb only when
+the evidence says you must.
 
-| To add… | Do this |
+| Tier | Change | Smallest sufficient evidence |
+|---|---|---|
+| **T0** | Docs, comments, docstrings | Read the diff. If you edited a command in a doc, run that one command. |
+| **T1** | Persian strings, templates, CSS, icons, button labels | Render the affected page or parse the locale file. No database, no full suite. |
+| **T2** | One service, helper, or adapter mapping | `ruff check .` + the one focused test module. |
+| **T3** | Money, auth, provisioning, models, migrations, the provider port, router order | Focused tests first, then the full suite. Migrations add `alembic check`. |
+| **T4** | Release, deploy, migration on real data | Full suite + mock suite + migration round trip + image build. |
+
+Three rules make this work:
+
+- **Smallest sufficient evidence first.** Run the narrow check; widen only if it
+  fails or you are genuinely unsure.
+- **Never repeat a check that is still valid.** Evidence belongs to a tree
+  state. If nothing executable changed since it passed, cite that result instead
+  of re-running it. State the tree state you tested.
+- **Never run two `pytest` processes against one `TEST_DATABASE_URL`.** The
+  fixtures recreate the schema per session; concurrent runs destroy each other.
+  A lock now serialises them, so a parallel run *waits* — do not "fix" that by
+  deleting the lock.
+
+## 5. Where to read more
+
+Read on trigger, not by default.
+
+| Trigger | Read |
 |---|---|
-| a bot screen | `app/bot/handlers/<name>.py` exposing `router`; append the module to `ROUTE_ORDER` in `handlers/__init__.py` |
-| a panel page | `app/web/routes/<name>.py` exposing `router`; append the name to `ROUTE_MODULES`; add `templates/<name>.html` extending `base.html` |
-| a shop setting | one `SettingSpec` in `app/services/settings_store.py` — the panel renders it automatically |
-| a bot string | one key in `app/locales/fa.json`; never hard-code user-facing Persian in a handler when a key would do |
-| a button colour/emoji | one entry in `_BUTTON_RAW` in `app/services/appearance.py` |
-| a table | a model in `app/db/models.py`, then `alembic revision --autogenerate -m "…"` |
-| a scheduled job | a method on `Jobs` + one `scheduler.add_job(...)` line |
-| a WG-Guard call | a typed method on `WGGuardClient` + a schema in `panels/schemas.py` |
-| **a new VPN backend** | `app/panels/providers/<name>.py` implementing `PanelProvider`, decorated with `@register`; import it in `providers/__init__.py`. Copy `providers/example.py`. **No business logic changes.** |
+| Touching `app/panels/**`, or adding a VPN backend | [`docs/PROVIDERS.md`](docs/PROVIDERS.md) |
+| Adding or changing a panel page | [`docs/PANEL-CONTRACT.md`](docs/PANEL-CONTRACT.md) |
+| Deciding what to test / how much evidence to gather | [`docs/VERIFICATION.md`](docs/VERIFICATION.md) |
+| Setting up, running, or debugging locally | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) |
+| Needing the design rationale behind a boundary | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| Changing a setting, env var, or default | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) |
+| Changing deployment, TLS, domains, backups | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) |
+| Handling secrets, auth, or a vulnerability | [`docs/SECURITY.md`](docs/SECURITY.md) |
+| Writing customer-facing Persian | §6 below |
+| Checking what shipped when | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) |
 
-### Adding a panel provider
+The upstream contract is [`docs/upstream-api/openapi-wg-guard.json`](docs/upstream-api/openapi-wg-guard.json);
+it is additive-only — tolerate unknown fields, never assume one is absent.
 
-`app/panels` is a port-and-adapter boundary. The domain talks to `PanelProvider`
-and the canonical models in `app/panels/models.py` — never to a vendor payload.
+## 6. Persian copy rules
 
-1. Copy `app/panels/providers/example.py` to `providers/<vendor>.py`.
-2. Implement the abstract methods against that vendor's HTTP API, mapping every
-   response into the canonical models. Keep vendor-only fields in `.raw`.
-3. Declare only the capabilities you really support (`CAP_*` in
-   `app/panels/base.py`). A partial backend is fine; the domain degrades.
-4. Import the module in `app/panels/providers/__init__.py` so `@register` runs.
-5. Run `pytest tests/test_panel_providers.py` — it pins the contract.
+The wording is part of the product, not a translation layer.
 
-The admin panel's "panel type" dropdown is generated from the registry and
-`Panel.kind` selects the adapter at runtime, so no UI change is needed either.
+- Natural, polite Persian. No «کاربر گرامی», no «لطفاً منتظر بمانید».
+- **ZWNJ** written as a literal `\u200c`: میشود، سرویسها، نمیتوانید. A
+  missing ZWNJ is a visible typo to a Persian speaker.
+- Persian digits in user-facing text (۱، ۲، ۳) via `fa_digits` or the `|fa`
+  filter — never hard-coded.
+- Telegram messages are **HTML**, not Markdown. Only
+  `<b> <i> <u> <s> <code> <pre> <a> <blockquote> <tg-emoji>`. No `*`, `_`, `#`
+  or `[text](url)`.
+- Escape user input with `html_escape` (bot) or `|e` (templates).
+- Button labels and emoji come from `app/services/appearance.py`, never from a
+  handler, so the owner can rename them without a deploy.
 
-Follow [`docs/PANEL-CONTRACT.md`](docs/PANEL-CONTRACT.md) for anything under
-`app/web`.
+## 7. Handoff
 
-## 5. Persian copy rules
+When you stop, report in this shape — it is what a reviewer needs and nothing
+more:
 
-The product is for Persian speakers; the wording is part of the product.
-
-- Write natural, polite Persian — not machine translation. No
-  «کاربر گرامی», no «لطفاً منتظر بمانید».
-- Use **ZWNJ** (`\u200c`) correctly: میشود، سرویسها، نمیتوانید.
-  Write it as a literal character (this repo's tooling preserves it); if your
-  editor strips it, inject it explicitly and verify.
-- Persian digits in user-facing text (۱، ۲، ۳). Use `fa_digits` or the `|fa`
-  filter — never hard-code them.
-- Messages that contain HTML must use only Telegram's subset:
-  `<b> <i> <u> <s> <code> <pre> <a> <blockquote> <tg-emoji>`. **Never** Markdown
-  (`*`, `_`, `#`, `[text](url)`) — `parse_mode` is HTML.
-- Escape user-provided values with `html_escape` (bot) or `|e` (templates)
-  before embedding them in a message.
-- Button labels come from the appearance catalog, not from handlers, so the
-  owner can rename them from the panel.
-
-## 6. Testing
-
-```bash
-# unit + panel tests (no database needed)
-pytest tests/test_core.py
-
-# everything (needs a database)
-export TEST_DATABASE_URL="postgresql+asyncpg://user:pass@127.0.0.1:5432/wgguard_test"
-pytest -q
+```
+Changed:   what, and why (one short paragraph)
+Files:     the paths that matter
+Evidence:  the exact commands you ran and their result, plus the tree state
+Not run:   checks you deliberately skipped, and why that was safe
+Risk:      migrations, env vars, new deps, or behaviour that needs a human look
 ```
 
-- New service logic → extend `tests/test_purchase_flow.py` or add
-  `tests/test_<area>.py`.
-- New panel page → it must be reachable from `PAGES` in `tests/test_panel.py`.
-- New WG-Guard call → test it against `tools/mock_wg_panel`, never the network.
-- Fixtures commit like production; each database test starts from a `TRUNCATE`.
-  Do not reintroduce a rollback-per-test wrapper — services open their own
-  sessions and will not see uncommitted rows.
+Do not paste a full suite log. One line per check is enough. If you skipped a
+tier, say so — a silent gap is worse than a named one.
 
-## 7. Database changes
-
-```bash
-alembic revision --autogenerate -m "add plan categories"
-alembic upgrade head
-alembic check          # must print "No new upgrade operations detected."
-```
-
-- Never edit a migration that has been released; add a new one.
-- Never drop a column in the same release that stops writing to it.
-- Two tables reference each other (`orders.service_id` ↔ `services.origin_order_id`).
-  The second uses `use_alter=True`, so autogenerate cannot emit it — the
-  initial migration creates it by hand. Keep that comment.
-
-## 8. Working with WG-Guard's API
-
-The contract is `docs/upstream-api/openapi-wg-guard.json`. It is
-**additive-only**: never assume a field is absent, and tolerate unknown fields
-(`extra="allow"` in every schema).
-
-- `POST /api/v1/purchases` is idempotent for 90 days. **Reuse the same
-  `Idempotency-Key` when retrying the same payload.** Only derive a new key
-  (`<base>-r1`) after the node has *definitively* refused the body.
-- After an ambiguous failure (timeout, 5xx) ask `GET /api/v1/operations/result`
-  before retrying.
-- Never retry a mutation that has no idempotency key and is not naturally
-  idempotent (`/devices/{id}/regenerate`, for example).
-- `config` and `subscription` responses are secrets: `Cache-Control: no-store`,
-  never logged, always encrypted at rest.
-
-## 9. Git & pull requests
-
-- Branch names: `feat/<topic>`, `fix/<topic>`, `docs/<topic>`, `chore/<topic>`.
-- Commit messages: [Conventional Commits](https://www.conventionalcommits.org/),
-  imperative mood, ≤ 72 characters in the subject.
-
-  ```
-  feat(shop): category tree with nested sub-categories
-  fix(provisioning): reuse the idempotency key on transport retry
-  docs: document the panel page contract
-  ```
-
-- One logical change per commit. Do not mix formatting with behaviour.
-- A PR must state: what changed, why, how it was verified, and any migration or
-  environment change. Green CI is a precondition, not a result.
-- Never commit `.env`, `backups/`, `logs/`, or anything in `.gitignore`.
-
-## 10. Things that will get a PR rejected
+## 8. Automatic rejection
 
 - Money as a float, or Toman in the database.
-- A plaintext secret, a secret in a log line, or a secret in an error message.
-- A new import from a higher layer (e.g. `services` importing `app.bot`).
-- A migration that was edited after release, or a model change with no migration.
-- Markdown formatting in bot text, or unescaped user input in an HTML message.
-- A hard-coded button label or emoji id in a handler instead of going through
-  `app/services/appearance.py`.
-- Comparing money with `==` after a division instead of using the helpers.
-- Removing or weakening the styled-keyboard fallback in `notifier`.
-- `except Exception: pass`.
-
-## 11. Where to look
-
-| Question | File |
-|---|---|
-| How is the code organised? | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
-| How do I write a panel page? | [`docs/PANEL-CONTRACT.md`](docs/PANEL-CONTRACT.md) |
-| What does each setting do? | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) |
-| How do I deploy it? | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) |
-| What changed between versions? | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) |
-| How do I report a vulnerability? | [`docs/SECURITY.md`](docs/SECURITY.md) |
-| What does the upstream panel offer? | [`docs/upstream-api/openapi-wg-guard.json`](docs/upstream-api/openapi-wg-guard.json) |
+- A plaintext secret, or a secret in a log/error message.
+- An import that crosses the layering in §1.3.
+- A model change with no migration, or an edited released migration.
+- Markdown in bot text, or unescaped user input in an HTML message.
+- A hard-coded button label or emoji id in a handler.
+- A deleted or weakened test, or a `# noqa` used to silence a real finding.
+- A card payment that debits a wallet.
+- A retry of a mutation that has no idempotency key and is not idempotent.

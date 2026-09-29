@@ -206,69 +206,46 @@ as a `SystemEvent`), so one failing job can never take the scheduler down.
 
 ## 10. Extension points
 
-| To add… | Do this |
-|---|---|
-| a bot screen | `app/bot/handlers/<name>.py` with a `router`, append the module to `ROUTE_ORDER` |
-| a panel page | `app/web/routes/<name>.py` with a `router`, append the name to `ROUTE_MODULES`, add a template |
-| a shop setting | one `SettingSpec` entry in `app/services/settings_store.py` — the panel renders it automatically |
-| a bot string | one key in `app/locales/fa.json`; operators can override it from the panel |
-| a button colour/emoji | one entry in `app/services/appearance.py::_BUTTON_RAW` |
-| a database table | a model in `app/db/models.py` + `alembic revision --autogenerate` |
-| a scheduled job | a method on `Jobs` + one `scheduler.add_job(...)` line |
+The mechanics of adding anything — a page, a handler, a setting, a table — are
+kept next to the contract they must satisfy, so there is one place to read and one
+place to update:
+
+- [`DEVELOPMENT.md`](DEVELOPMENT.md) §8 — the "adding a feature" index
+- [`PANEL-CONTRACT.md`](PANEL-CONTRACT.md) — admin panel pages, ending in a checklist
+- [`PROVIDERS.md`](PROVIDERS.md) — VPN backends and node calls
+
+The architectural constraint behind all of them is the layering in §1: a new
+feature is a new module in the right layer, never a new dependency direction.
 
 ## 11. Testing strategy
 
-| Layer | How it is tested |
-|---|---|
-| money, security, calendar | pure unit tests, no I/O (`tests/test_core.py`) |
-| WG-Guard client | against the in-repo mock node via `httpx.ASGITransport` — retries, idempotency, pagination, error envelopes (`tests/test_wg_client.py`) |
-| services | real PostgreSQL; fixtures commit like production and each test starts from a `TRUNCATE` (`tests/test_purchase_flow.py`) |
-| panel | every registered page is requested through the real cookie login and must render 200 (`tests/test_panel.py`) |
+The *shape* of the suite is an architectural decision, not a testing detail:
+
+| Layer | How it is tested | Why that way |
+|---|---|---|
+| money, security, calendar | pure unit tests, no I/O | the logic is pure; a database would add cost and hide nothing |
+| WG-Guard transport | against the in-repo mock via `httpx.ASGITransport` | the vendor contract is external and must be exercised offline and deterministically |
+| services | real PostgreSQL, fixtures that commit | services open their own sessions; a rollback-based wrapper would not see the rows they write |
+| panel | every registered page fetched through a real cookie login | the failure mode is a template that renders for the author and 500s for everyone else |
+| bot wiring | dispatcher construction and handler order | routers are single-parent singletons; a second construction used to gut the first |
 
 The mock node (`tools/mock_wg_panel`) implements 61 of the 63 documented
 method/path pairs of the upstream OpenAPI document, including fault injection
 (`POST /__mock__/fail`) and a request journal (`GET /__mock__/requests`).
 
-## 12. Panel providers — supporting more than one VPN backend
+Which of these to run, and when, is [`VERIFICATION.md`](VERIFICATION.md).
 
-WG-Guard is the first backend, not the only one. The integration is written as a
-**port and adapter** boundary so adding PasarGuard, Marzban, x-ui or a plain
-WireGuard server is a new file rather than a refactor.
+## 12. Panel providers
 
-```
-app/panels/
-├── models.py            canonical DTOs the domain speaks
-│                        RemoteUser · RemoteDevice · PlanSpec · PurchaseResult …
-├── base.py              the port: PanelProvider (ABC) + CAP_* capability flags
-├── registry.py          kind -> adapter class; drives the "panel type" dropdown
-├── manager.py           picks a node, caches one adapter per panel, probes health
-├── client.py            WG-Guard HTTP transport      ┐ implementation details
-├── schemas.py           WG-Guard payload models      ┘ of the adapter below
-└── providers/
-    ├── wgguard.py       WGGuardProvider  — maps vendor payloads to canonical ones
-    └── example.py       a documented skeleton to copy when adding a backend
-```
+WG-Guard is the first backend, not the only one: `app/panels` is a port and
+adapter boundary, and `Panel.kind` selects the adapter at runtime.
 
-Three things make this work in practice:
-
-**1. A canonical vocabulary.** Vendor statuses, field names and error shapes stop
-at the adapter. `active | waiting_first_connection | disabled | expired |
-traffic_exceeded` is the only status set the domain knows, so reporting,
-reminders and the panel need no per-backend branch.
-
-**2. Capabilities, not assumptions.** A backend that cannot queue a successor
-plan simply omits `CAP_NEXT_PLAN`; `provider.require(...)` turns an attempt into
-a clear Persian message instead of an `AttributeError`. A partial backend is a
-supported configuration.
-
-**3. The hard guarantee stays in one place.** `purchase()` must be exactly-once
-per `idempotency_key`, and `recover_purchase()` answering `None` means "not
-committed, safe to retry". Those two sentences are the whole duplicate-account
-defence; everything else about a vendor's API is the adapter's problem.
-
-`Panel.kind` selects the adapter at runtime, so a WG-Guard node and a PasarGuard
-node can serve different plans in the same shop, and
-`tests/test_panel_providers.py` pins the contract every new adapter must meet.
+The interface, the canonical models, the capability flags, the steps for adding a
+backend and the WG-Guard vendor traps are documented in
+[`PROVIDERS.md`](PROVIDERS.md). The design note that matters here is why the
+boundary sits where it does: vendor statuses and payloads stop at the adapter so
+that reporting, reminders and the admin panel never grow a per-backend branch,
+and the exactly-once guarantee lives in the port rather than in each adapter.
 
 ## 13. Operational notes
 
