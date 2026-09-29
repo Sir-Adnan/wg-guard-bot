@@ -3,6 +3,30 @@ name = "wg-guard-bot"
 version = "1.0.0"
 description = "Telegram VPN shop bot for WG-Guard (AmneziaWG) panels — sales, card-to-card receipts, admin panel"
 requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Sir-Adnan" }]
+keywords = ["telegram", "bot", "vpn", "wireguard", "amneziawg", "wg-guard", "aiogram", "fastapi"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: Persian",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Chat",
+    "Topic :: System :: Networking",
+]
+
+[project.urls]
+Homepage = "https://github.com/Sir-Adnan/wg-guard-bot"
+Repository = "https://github.com/Sir-Adnan/wg-guard-bot"
+Issues = "https://github.com/Sir-Adnan/wg-guard-bot/issues"
+Changelog = "https://github.com/Sir-Adnan/wg-guard-bot/blob/main/docs/CHANGELOG.md"
+Documentation = "https://github.com/Sir-Adnan/wg-guard-bot/tree/main/docs"
+"Upstream panel" = "https://github.com/Sir-Adnan/wg-guard"
 
 [tool.ruff]
 line-length = 120

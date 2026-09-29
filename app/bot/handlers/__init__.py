@@ -19,6 +19,8 @@ change in a predictable place:
 
 from __future__ import annotations
 
+from contextlib import suppress
+
 from aiogram import Router
 
 from app.bot.handlers import (
@@ -50,12 +52,39 @@ ROUTER_ORDER = (
 )
 
 
+def detach_router(router: Router) -> None:
+    """Detach ``router`` from its current parent so it can be re-included.
+
+    aiogram routers are single-parent by design and ``include_router`` is *not*
+    idempotent: attaching the same router to a second parent raises
+    ``RuntimeError: Router is already attached``. Because the leaves here are
+    module-level singletons, that made a second ``build_root_router()`` in one
+    process fail — which is exactly what a test suite, a hot reload or an
+    embedded restart does.
+
+    Only the router itself is detached, never its children: its own subtree must
+    survive intact for the re-include to be meaningful. aiogram offers no public
+    detach, so this clears the same private field that ``include_router`` sets.
+    """
+    parent = router.parent_router
+    if parent is None:
+        return
+    with suppress(ValueError):
+        parent.sub_routers.remove(router)
+    router._parent_router = None
+
+
 def build_root_router() -> Router:
-    """Compose every feature router into one root router."""
+    """Compose every feature router into one root router.
+
+    Safe to call more than once per process: each module router is detached from
+    a previous root before being included in the new one.
+    """
     root = Router(name="root")
     for module in ROUTER_ORDER:
+        detach_router(module.router)
         root.include_router(module.router)
     return root
 
 
-__all__ = ["ROUTER_ORDER", "build_root_router"]
+__all__ = ["ROUTER_ORDER", "build_root_router", "detach_router"]

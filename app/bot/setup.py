@@ -12,7 +12,7 @@ from aiogram.fsm.storage.base import BaseStorage
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, BotCommandScopeAllChatAdministrators, BotCommandScopeChat, BotCommandScopeDefault
 
-from app.bot.handlers import build_root_router
+from app.bot.handlers import build_root_router, detach_router
 from app.bot.handlers import errors as error_handlers
 from app.bot.middlewares import (
     ContextMiddleware,
@@ -73,8 +73,26 @@ async def create_storage() -> BaseStorage:
         return MemoryStorage()
 
 
+#: The process-wide dispatcher.  aiogram routers are single-parent singletons,
+#: so a second dispatcher would either raise or silently strip the first one of
+#: its handlers.  Building once and handing the same instance back is the only
+#: behaviour that cannot surprise a caller.
+_dispatcher: Dispatcher | None = None
+
+
 def create_dispatcher(storage: BaseStorage | None = None) -> Dispatcher:
-    """Assemble middlewares + routers into a ready-to-run dispatcher."""
+    """Return the process dispatcher, assembling it on first use.
+
+    Safe to call from anywhere and any number of times: subsequent calls return
+    the same instance rather than rebuilding the router tree.  Tests that need a
+    clean tree call :func:`reset_dispatcher` first.
+    """
+    global _dispatcher
+    if _dispatcher is not None:
+        if storage is not None and _dispatcher.storage is not storage:
+            log.warning("create_dispatcher() ignored a new storage: the dispatcher already exists")
+        return _dispatcher
+
     dispatcher = Dispatcher(storage=storage or MemoryStorage())
 
     # -- middlewares -------------------------------------------------------
@@ -90,10 +108,24 @@ def create_dispatcher(storage: BaseStorage | None = None) -> Dispatcher:
         observer.middleware(throttle)
 
     # -- routers -----------------------------------------------------------
+    # ``build_root_router`` detaches the module-level routers from any previous
+    # root first; aiogram refuses to attach one router to two parents.
     dispatcher.include_router(build_root_router())
+    detach_router(error_handlers.router)
     dispatcher.include_router(error_handlers.router)
 
+    _dispatcher = dispatcher
     return dispatcher
+
+
+def reset_dispatcher() -> None:
+    """Drop the cached dispatcher so the next call rebuilds the router tree.
+
+    For tests and for an embedded restart.  The old dispatcher is left empty on
+    purpose — its routers now belong to the new tree.
+    """
+    global _dispatcher
+    _dispatcher = None
 
 
 async def setup_bot_commands(bot: Bot) -> None:

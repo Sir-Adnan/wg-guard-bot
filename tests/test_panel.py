@@ -31,6 +31,7 @@ PAGES: tuple[str, ...] = (
     "/users",
     "/tickets",
     "/buttons",
+    "/panels",
     "/texts",
     "/settings",
     "/reports",

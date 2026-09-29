@@ -55,7 +55,7 @@ FROM python:3.12-slim AS runtime
 LABEL org.opencontainers.image.title="WG-Guard Bot" \
       org.opencontainers.image.description="Telegram VPN shop bot for WG-Guard (AmneziaWG) panels — sales, card-to-card receipts, admin panel" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.source="https://github.com/USER/REPO"
+      org.opencontainers.image.source="https://github.com/Sir-Adnan/wg-guard-bot"
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \

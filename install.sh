@@ -4,7 +4,7 @@
 #  WG-Guard Bot — one-command installer for a fresh Ubuntu/Debian VPS.
 #
 #  اجرای سریع / quick start:
-#      bash <(curl -fsSL https://raw.githubusercontent.com/USER/REPO/main/install.sh)
+#      bash <(curl -fsSL https://raw.githubusercontent.com/Sir-Adnan/wg-guard-bot/main/install.sh)
 #
 #  این اسکریپت: داکر را (در صورت نبود) نصب می‌کند، فایل .env را با کلیدها و
 #  رمزهای تصادفی می‌سازد، اطلاعات ربات را می‌پرسد، سرویس‌ها را بالا می‌آورد و
@@ -15,7 +15,7 @@ set -euo pipefail
 # ===========================================================================
 #  پیکربندی پیش‌فرض / defaults
 # ===========================================================================
-REPO_URL="${WGGB_REPO_URL:-https://github.com/USER/REPO.git}"
+REPO_URL="${WGGB_REPO_URL:-https://github.com/Sir-Adnan/wg-guard-bot.git}"
 BRANCH="main"
 INSTALL_DIR=""
 ASSUME_YES="false"
@@ -122,10 +122,10 @@ usage() {
 ${C_BOLD}WG-Guard Bot — راهنمای نصب${C_RESET}
 
 ${C_BOLD}روش سریع (توصیه‌شده):${C_RESET}
-  bash <(curl -fsSL https://raw.githubusercontent.com/USER/REPO/main/install.sh)
+  bash <(curl -fsSL https://raw.githubusercontent.com/Sir-Adnan/wg-guard-bot/main/install.sh)
 
 ${C_BOLD}روش دستی:${C_RESET}
-  git clone https://github.com/USER/REPO.git wg-guard-bot
+  git clone https://github.com/Sir-Adnan/wg-guard-bot.git wg-guard-bot
   cd wg-guard-bot && bash install.sh
 
 ${C_BOLD}گزینه‌ها / گزینه‌های خط فرمان:${C_RESET}
@@ -143,6 +143,7 @@ ${C_BOLD}گزینه‌ها / گزینه‌های خط فرمان:${C_RESET}
                           (دامنه خودکار https و حالت webhook را فعال می‌کند)
   ${C_CYAN}--acme-email MAIL${C_RESET}     ایمیل Let's Encrypt برای هشدار انقضای گواهی (اختیاری)
   ${C_CYAN}--no-domain${C_RESET}           بدون دامنه و بدون SSL (حالت polling روی http://IP:PORT)
+  ${C_CYAN}--ip ADDRESS${C_RESET}          تعیین دستی IP عمومی سرور (پیش‌فرض: تشخیص خودکار)
   ${C_CYAN}--dir PATH${C_RESET}            مسیر نصب/مخزن (پیش‌فرض: پوشه‌ی فعلی یا ~/wg-guard-bot)
   ${C_CYAN}--branch NAME${C_RESET}         شاخه‌ی مخزن برای نصب و به‌روزرسانی (پیش‌فرض: main)
   ${C_CYAN}--force${C_RESET}               بازنویسی .env موجود (با نسخه‌ی پشتیبان) حتی در حالت --yes
@@ -604,7 +605,7 @@ prepare_dir() {
         if ! git clone --branch "$BRANCH" --depth 1 "$REPO_URL" "$INSTALL_DIR"; then
             err "دریافت کد از مخزن ناموفق بود: $REPO_URL"
             say "  اگر مخزن شما جای دیگری است، آدرس درست را بدهید:"
-            dim "    WGGB_REPO_URL=https://github.com/USER/REPO.git bash install.sh --branch $BRANCH"
+            dim "    WGGB_REPO_URL=https://github.com/Sir-Adnan/wg-guard-bot.git bash install.sh --branch $BRANCH"
             say "  یا پروژه را دستی clone کنید و install.sh را از داخل همان پوشه اجرا کنید."
             exit 1
         fi

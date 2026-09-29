@@ -90,7 +90,7 @@ class WGGuardClient:
             headers={
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/json",
-                "User-Agent": "wg-guard-bot/1.0 (+https://github.com/)",
+                "User-Agent": "wg-guard-bot/1.0 (+https://github.com/Sir-Adnan/wg-guard-bot)",
             },
         )
 
