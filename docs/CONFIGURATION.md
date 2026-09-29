@@ -111,9 +111,11 @@ These values are stored in the database and take effect immediately.
 | Support ID | — | Without the `@` |
 | Support hours | Every day, 9:00–23:00 | Display only |
 | Maintenance mode | Off | Only admins can access |
+| Maintenance message | Empty (built-in text) | Shown while maintenance mode is on |
 | Receipt deadline | 90 minutes | |
 | Minimum wallet top-up | 50,000 Toman | |
 | Referral reward | 0% | |
+| Referral programme | On | Shows the referral button in the profile |
 | **Purchase cashback** | 0% | Percentage returned to the wallet automatically |
 | Gift code | On | Shows the button in the menu |
 | Connection guide | On | Shows the button in the menu |

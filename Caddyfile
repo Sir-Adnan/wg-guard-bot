@@ -15,8 +15,8 @@
 #                sending expiry notices.  Setting a real address is recommended.
 #
 #  Everything the application serves — /panel, /healthz, /readyz,
-#  /tg/webhook/<secret>, /wg/webhook/<secret> — is one ASGI app on one port, so
-#  a single reverse_proxy is all that is needed.  Do not split paths.
+#  /tg/webhook/<WEBHOOK_SECRET>, /wg/webhook/<panel_id> — is one ASGI app on one
+#  port, so a single reverse_proxy is all that is needed.  Do not split paths.
 # ===========================================================================
 {
 	# The `:default` part matters: an empty {$ACME_EMAIL} would make `email`
