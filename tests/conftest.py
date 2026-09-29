@@ -3,9 +3,11 @@
 Two kinds of test live here:
 
 * **pure** tests (money, security, calendar, client) that run anywhere;
-* **db** tests marked with ``@pytest.mark.db`` that need PostgreSQL.  They are
-  skipped automatically when ``TEST_DATABASE_URL`` is unreachable, so
-  ``pytest`` is still useful on a laptop without Docker.
+* **db** tests marked with ``@pytest.mark.db`` that need PostgreSQL.  Without a
+  reachable database they are **skipped**, not failed, so ``pytest`` stays
+  useful on a laptop with no Docker — the session header always says which
+  database was probed, so a skip is never silent.  Set ``REQUIRE_DB=1`` (CI does
+  it for you) to turn that skip into a hard error.
 
 The WG-Guard node is replaced by the in-repo mock panel
 (``tools/mock_wg_panel``) driven through ``httpx.ASGITransport`` — no network.
@@ -69,6 +71,59 @@ def _db_available() -> bool:
 DB_AVAILABLE = _db_available()
 requires_db = pytest.mark.skipif(not DB_AVAILABLE, reason="PostgreSQL is not reachable")
 
+#: A missing database must never look like a passing run in CI.  GitHub Actions
+#: exports ``CI``; ``REQUIRE_DB=1`` does the same locally.
+REQUIRE_DB = os.environ.get("REQUIRE_DB", "").strip().lower() in {"1", "true", "yes", "on"} or bool(
+    os.environ.get("CI")
+)
+
+
+def _safe_db_url() -> str:
+    """``TEST_DATABASE_URL`` without the password, for terminal output."""
+    from urllib.parse import urlparse, urlunparse
+
+    parsed = urlparse(TEST_DB_URL)
+    if parsed.password is None:
+        return TEST_DB_URL
+    host = parsed.hostname or ""
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    netloc = f"{parsed.username}@{host}" if parsed.username else host
+    return urlunparse(parsed._replace(netloc=netloc))
+
+
+# ---------------------------------------------------------------------------
+# pytest hooks
+# ---------------------------------------------------------------------------
+def pytest_configure(config) -> None:
+    if REQUIRE_DB and not DB_AVAILABLE:
+        raise pytest.UsageError(
+            f"REQUIRE_DB/CI is set but no database answered at {_safe_db_url()} — "
+            "refusing to run a suite in which every database test would be skipped."
+        )
+
+
+def pytest_report_header(config) -> str:
+    """Always state which database was probed: a skip must be visible."""
+    if DB_AVAILABLE:
+        return f"test database: reachable ({_safe_db_url()})"
+    return f"test database: UNREACHABLE ({_safe_db_url()}) — db-marked tests will be skipped"
+
+
+def pytest_collection_modifyitems(config, items) -> None:
+    """Apply ``requires_db`` to everything marked ``db``.
+
+    Marking at collection time means the database fixtures are never even
+    requested for a skipped module, and one database-free run reports the same
+    outcome whether or not the ``engine`` fixture happens to be used.
+    """
+    if DB_AVAILABLE:
+        return
+    for item in items:
+        if item.get_closest_marker("db") is not None:
+            item.add_marker(requires_db)
+
+
 #: Advisory-lock key.  Two pytest runs sharing one database would otherwise drop
 #: each other's schema mid-test — the fixtures recreate it per session — so the
 #: run takes a session-level lock and concurrent runs serialise instead of
@@ -81,9 +136,13 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def database_schema():
     """Create the schema once per session, drop it at the end.
+
+    Deliberately **not** ``autouse``: only the fixtures that actually touch the
+    database request it, so a pure-logic run (``pytest tests/test_core.py``)
+    never pays for a schema rebuild.
 
     Deliberately synchronous: mixing a session-scoped *async* fixture with
     function-scoped async tests makes event loops cross, which asyncpg hates.
@@ -139,7 +198,7 @@ def database_schema():
 
 
 @pytest.fixture
-async def engine():
+async def engine(database_schema):
     """Function-scoped engine (connection failures surface immediately)."""
     if not DB_AVAILABLE:
         pytest.skip("PostgreSQL is not reachable")

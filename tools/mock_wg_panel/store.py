@@ -16,7 +16,7 @@ import json
 import secrets
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 SCOPE_ALL = "*"
@@ -129,7 +129,7 @@ DEVICE_FIELDS: tuple[str, ...] = (
 # --------------------------------------------------------------------------- #
 def utc_now() -> datetime:
     """Return the current UTC time."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def iso(value: datetime | None) -> str | None:
@@ -140,7 +140,7 @@ def iso(value: datetime | None) -> str | None:
     """
     if value is None:
         return None
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def parse_iso(value: str) -> datetime:
@@ -149,7 +149,7 @@ def parse_iso(value: str) -> datetime:
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
     parsed = datetime.fromisoformat(text)
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def new_id(prefix: str, size: int = 12) -> str:
@@ -218,7 +218,7 @@ def next_ipv4(subnet: str, used: set[str]) -> str | None:
 def subnet_dns(subnet: str) -> str:
     """Return the in-tunnel DNS address of a subnet."""
     head = subnet.split("/")[0].split(".")
-    return ".".join(head[:3] + ["1"]) if len(head) == 4 else "1.1.1.1"
+    return ".".join([*head[:3], "1"]) if len(head) == 4 else "1.1.1.1"
 
 
 # --------------------------------------------------------------------------- #
@@ -483,7 +483,8 @@ def build_interface(
         "preset": payload.get("preset") or ("custom" if payload.get("obfuscation") else "recommended"),
         "enabled": bool(payload.get("enabled", True)),
         "backend_mode": payload.get("backend_mode") or "kernel",
-        "endpoint_override": payload.get("endpoint_override") or f"vpn.mock.local:{int(payload.get('listen_port') or 51820)}",
+        "endpoint_override": payload.get("endpoint_override")
+        or f"vpn.mock.local:{int(payload.get('listen_port') or 51820)}",
         "created_at": payload.get("created_at", stamp),
         "updated_at": stamp,
     }

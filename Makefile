@@ -13,9 +13,12 @@ COMPOSE := docker compose
 COMPOSE_TLS := docker compose --profile tls
 SERVICE ?= bot
 BACKUP_DIR ?= backups
+PY ?= .venv/bin/python
+TEST_DB_PORT ?= 55432
+TEST_DATABASE_URL ?= postgresql+asyncpg://wgguard:wgguard@127.0.0.1:$(TEST_DB_PORT)/wgguard_test
 
 .DEFAULT_GOAL := help
-.PHONY: help install up tls domain cert down logs restart migrate test lint format backup shell psql version health clean
+.PHONY: help install up tls domain cert down logs restart migrate test test-db lint format dev-venv venv-check backup shell psql version health clean
 
 help: ## نمایش همین راهنما / show this help
 	@printf '\n\033[1mWG-Guard Bot\033[0m — دستورهای موجود (make <target>):\n\n'
@@ -49,15 +52,40 @@ restart: ## راه‌اندازی دوباره‌ی ربات / restart the bot c
 migrate: ## اجرای مایگریشن‌های دیتابیس / apply Alembic migrations
 	$(COMPOSE) exec -T $(SERVICE) alembic upgrade head
 
-test: ## اجرای تست‌ها / run the test-suite
-	$(COMPOSE) exec -T $(SERVICE) python -m pytest -q
+# ---------------------------------------------------------------------------
+#  ابزارهای توسعه / development tooling
+#
+#  ایمیج تولیدی عمداً هیچ ابزار توسعه‌ای ندارد (فقط requirements.txt
+#  نصب می‌شود)، پس test / lint / format روی venv محلی اجرا می‌شوند.
+#  یک‌بار: make dev-venv     و برای تست‌های دیتابیسی: make test-db
+#  ویندوز: make test PY=.venv/Scripts/python.exe
+# ---------------------------------------------------------------------------
+venv-check:
+	@test -x "$(PY)" || { \
+	  printf '\n\033[31mابزارهای توسعه نصب نیستند:\033[0m %s\n' "$(PY)"; \
+	  printf '  اجرا کنید: make dev-venv\n\n'; \
+	  exit 1; }
 
-lint: ## بررسی کد با ruff / lint the codebase with ruff
-	$(COMPOSE) exec -T $(SERVICE) ruff check .
+dev-venv: ## ساخت venv توسعه + نصب ابزارها / create .venv with the dev tooling
+	python3 -m venv .venv
+	.venv/bin/python -m pip install --upgrade pip
+	.venv/bin/python -m pip install -r requirements-dev.txt
 
-format: ## مرتب‌سازی و قالب‌بندی کد با ruff / auto-format with ruff
-	$(COMPOSE) exec -T $(SERVICE) ruff check --fix .
-	$(COMPOSE) exec -T $(SERVICE) ruff format .
+test-db: ## دیتابیس موقت تست روی پورت ۵۵۴۳۲ / start the throwaway test database
+	@docker start wgguard-pg >/dev/null 2>&1 || docker run -d --name wgguard-pg \
+	  -p $(TEST_DB_PORT):5432 -e POSTGRES_USER=wgguard -e POSTGRES_PASSWORD=wgguard \
+	  -e POSTGRES_DB=wgguard_test postgres:16-alpine >/dev/null
+	@printf 'دیتابیس تست آماده است: %s\n' "$(TEST_DATABASE_URL)"
+
+test: venv-check ## اجرای تست‌ها / run the test-suite — db tests need `make test-db`
+TEST_DATABASE_URL="$(TEST_DATABASE_URL)" $(PY) -m pytest -q
+
+lint: venv-check ## بررسی کد با ruff / lint the codebase with ruff
+	$(PY) -m ruff check .
+
+format: venv-check ## مرتب‌سازی و قالب‌بندی کد با ruff / auto-format with ruff
+	$(PY) -m ruff check --fix .
+	$(PY) -m ruff format .
 
 backup: ## گرفتن پشتیبان دستی از دیتابیس در ./backups / manual pg_dump into ./backups
 	@mkdir -p $(BACKUP_DIR)

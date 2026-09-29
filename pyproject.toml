@@ -31,7 +31,7 @@ Documentation = "https://github.com/Sir-Adnan/wg-guard-bot/tree/main/docs"
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-exclude = [".venv", "tools"]
+exclude = [".venv"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
@@ -52,7 +52,12 @@ asyncio_mode = "auto"
 # share one event loop; otherwise asyncpg connections cross loops.
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
-testpaths = ["tests"]
+# Both suites run from a bare `pytest`.  The mock WG-Guard panel lives outside
+# tests/ because it is a test double the app talks to over HTTP, but it is part
+# of the suite: `pythonpath` makes `mock_wg_panel` importable without the
+# PYTHONPATH= incantation that used to be needed.
+testpaths = ["tests", "tools/mock_wg_panel"]
+pythonpath = ["tools"]
 addopts = "--strict-markers"
 markers = [
     "db: requires a live PostgreSQL (set TEST_DATABASE_URL)",

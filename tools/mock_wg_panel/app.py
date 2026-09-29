@@ -14,8 +14,9 @@ import logging
 import secrets
 import struct
 import zlib
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Body, Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -54,13 +55,31 @@ LOGGER = logging.getLogger("mock_wg_panel")
 TELEMETRY_CADENCE_SECONDS = 15
 TELEMETRY_MAX_POINTS = 180
 WEBHOOK_EVENTS: tuple[str, ...] = (
-    "user.created", "user.updated", "user.enabled", "user.disabled", "user.expired",
-    "user.traffic_exceeded", "user.first_connected", "device.created", "device.deleted", "node.started",
+    "user.created",
+    "user.updated",
+    "user.enabled",
+    "user.disabled",
+    "user.expired",
+    "user.traffic_exceeded",
+    "user.first_connected",
+    "device.created",
+    "device.deleted",
+    "node.started",
 )
 PLAN_SORTS = ("created_at", "username", "expires_at", "used")
 USER_PATCHABLE = (
-    "display_name", "note", "tags", "traffic_limit_bytes", "speed_limit_down_kbps",
-    "speed_limit_up_kbps", "device_limit", "plan_id", "interface_id", "duration_seconds", "enabled", "metadata",
+    "display_name",
+    "note",
+    "tags",
+    "traffic_limit_bytes",
+    "speed_limit_down_kbps",
+    "speed_limit_up_kbps",
+    "device_limit",
+    "plan_id",
+    "interface_id",
+    "duration_seconds",
+    "enabled",
+    "metadata",
 )
 
 
@@ -348,7 +367,9 @@ def _idempotency_key(request: Request, *, required: bool) -> str | None:
             raise ApiError(400, "INVALID_REQUEST", "Idempotency-Key header is required")
         return None
     if not valid_idempotency_key(key):
-        raise ApiError(400, "INVALID_REQUEST", "Idempotency-Key must be 1-128 printable ASCII characters without spaces")
+        raise ApiError(
+            400, "INVALID_REQUEST", "Idempotency-Key must be 1-128 printable ASCII characters without spaces"
+        )
     return key
 
 
@@ -654,8 +675,12 @@ def _telemetry_points(store: MockStore, count: int) -> list[dict[str, Any]]:
 
 # --- client configuration --------------------------------------------------- #
 def _config_text(
-    store: MockStore, user: dict[str, Any], device: dict[str, Any], iface: dict[str, Any],
-    private_key: str, preshared_key: str,
+    store: MockStore,
+    user: dict[str, Any],
+    device: dict[str, Any],
+    iface: dict[str, Any],
+    private_key: str,
+    preshared_key: str,
 ) -> str:
     """Render the canonical AmneziaWG client configuration (one trailing newline)."""
     obf = {**DEFAULT_OBFUSCATION, **(iface.get("obfuscation") or {})}
@@ -697,7 +722,7 @@ def _config_stem(store: MockStore, user: dict[str, Any], device: dict[str, Any])
     suffix = str(store.settings.get("downloads.filename_suffix") or "")[:2]
     label = "".join(ch for ch in user["username"] if ch.isascii() and ch.isalnum())[:6]
     code = hashlib.sha256(device["id"].encode("utf-8")).hexdigest()[:8]
-    return f"{prefix}{label}{suffix}-{code}"[:15 + 9]
+    return f"{prefix}{label}{suffix}-{code}"[: 15 + 9]
 
 
 def _png_chunk(tag: bytes, data: bytes) -> bytes:
@@ -1041,7 +1066,9 @@ async def patch_user(request: Request, user_id: str, payload: UserPatch) -> dict
             _need_interface(store, patch["interface_id"])
         user.update({key: value for key, value in patch.items() if key in USER_PATCHABLE})
         if patch.get("duration_seconds") and user.get("activated_at"):
-            user["expires_at"] = iso(parse_iso(user["activated_at"]) + timedelta(seconds=int(patch["duration_seconds"])))
+            user["expires_at"] = iso(
+                parse_iso(user["activated_at"]) + timedelta(seconds=int(patch["duration_seconds"]))
+            )
         user["updated_at"] = store.now_iso()
         return serialize_user(user, store.now())
 
@@ -1060,7 +1087,9 @@ async def delete_user(request: Request, user_id: str) -> dict[str, Any]:
 
 
 # --- subscription ----------------------------------------------------------- #
-@router.get("/api/v1/users/{user_id}/subscription", tags=["integration"], dependencies=[Depends(require("subscriptions.read"))])
+@router.get(
+    "/api/v1/users/{user_id}/subscription", tags=["integration"], dependencies=[Depends(require("subscriptions.read"))]
+)
 async def get_subscription(request: Request, user_id: str) -> dict[str, str]:
     """Retrieve a customer's private subscription link."""
     store = _store(request)
@@ -1069,7 +1098,11 @@ async def get_subscription(request: Request, user_id: str) -> dict[str, str]:
         return {"path": f"/sub/{user['sub_token']}"}
 
 
-@router.post("/api/v1/users/{user_id}/subscription/rotate", tags=["integration"], dependencies=[Depends(require("subscriptions.rotate"))])
+@router.post(
+    "/api/v1/users/{user_id}/subscription/rotate",
+    tags=["integration"],
+    dependencies=[Depends(require("subscriptions.rotate"))],
+)
 async def rotate_subscription(request: Request, user_id: str) -> dict[str, Any]:
     """Revoke the old link and every old device configuration."""
     store = _store(request)
@@ -1099,7 +1132,9 @@ async def enable_user(request: Request, user_id: str) -> dict[str, Any]:
 
 
 @router.post("/api/v1/users/{user_id}/disable", tags=["users"], dependencies=[Depends(require("users.update"))])
-async def disable_user(request: Request, user_id: str, payload: DisableRequest | None = Body(default=None)) -> dict[str, Any]:
+async def disable_user(
+    request: Request, user_id: str, payload: DisableRequest | None = Body(default=None)
+) -> dict[str, Any]:
     """Disable a user."""
     store = _store(request)
     reason = (payload or DisableRequest()).reason
@@ -1133,8 +1168,11 @@ async def renew_user(request: Request, user_id: str, payload: RenewRequest) -> R
             current = parse_iso(user["expires_at"]) if user.get("expires_at") else now
             expiry = max(current, now) + timedelta(seconds=duration)
         user.update(
-            expires_at=iso(expiry), duration_seconds=duration, enabled=True,
-            disable_reason=None, updated_at=store.now_iso(),
+            expires_at=iso(expiry),
+            duration_seconds=duration,
+            enabled=True,
+            disable_reason=None,
+            updated_at=store.now_iso(),
         )
         refresh_user(user, now)  # traffic_exceeded is NOT reactivated here
         result = serialize_user(user, store.now())
@@ -1144,7 +1182,9 @@ async def renew_user(request: Request, user_id: str, payload: RenewRequest) -> R
 
 # --- traffic ---------------------------------------------------------------- #
 @router.get("/api/v1/users/{user_id}/traffic", tags=["stats"], dependencies=[Depends(require("traffic.read"))])
-async def get_user_traffic(request: Request, user_id: str, granularity: str = "samples", hours: int = 48) -> dict[str, Any]:
+async def get_user_traffic(
+    request: Request, user_id: str, granularity: str = "samples", hours: int = 48
+) -> dict[str, Any]:
     """Traffic time series for the user's devices."""
     store = _store(request)
     if granularity not in ("samples", "hourly", "daily"):
@@ -1189,7 +1229,8 @@ async def add_user_traffic(request: Request, user_id: str, payload: TrafficAdd) 
             return replay
         user = _need_user(store, user_id)
         result = _apply_traffic(
-            store, user,
+            store,
+            user,
             int(user.get("traffic_used_rx", 0)) + body["rx_bytes"],
             int(user.get("traffic_used_tx", 0)) + body["tx_bytes"],
         )
@@ -1241,7 +1282,12 @@ async def list_devices(request: Request, user_id: str) -> dict[str, Any]:
         return {"items": [serialize_device(device) for device in store.devices_of(user_id)]}
 
 
-@router.post("/api/v1/users/{user_id}/devices", tags=["devices"], status_code=201, dependencies=[Depends(require("devices.write"))])
+@router.post(
+    "/api/v1/users/{user_id}/devices",
+    tags=["devices"],
+    status_code=201,
+    dependencies=[Depends(require("devices.write"))],
+)
 async def create_device(request: Request, user_id: str, payload: DeviceCreate) -> dict[str, Any]:
     """Create a device (keys generated server-side)."""
     store = _store(request)
@@ -1255,7 +1301,9 @@ async def create_device(request: Request, user_id: str, payload: DeviceCreate) -
             raise ApiError(409, "CONFLICT", f"device name {payload.name} already exists for this user")
         if payload.interface_id:
             _need_interface(store, payload.interface_id)
-        return serialize_device(_new_device(store, user, payload.name, payload.interface_id, payload.preshared_key, store.now()))
+        return serialize_device(
+            _new_device(store, user, payload.name, payload.interface_id, payload.preshared_key, store.now())
+        )
 
 
 @router.get("/api/v1/devices/{device_id}", tags=["devices"], dependencies=[Depends(require("devices.read"))])
@@ -1283,7 +1331,7 @@ async def delete_device(request: Request, device_id: str) -> dict[str, Any]:
     """Delete a device (IP released; peer removed)."""
     store = _store(request)
     async with store.lock:
-        device = _need_device(store, device_id)
+        _need_device(store, device_id)  # raises 404 when the id is unknown
         store.devices.pop(device_id, None)
         store.device_secrets.pop(device_id, None)
         return {"id": device_id, "deleted": True}
@@ -1309,8 +1357,12 @@ async def disable_device(request: Request, device_id: str) -> dict[str, Any]:
         return serialize_device(device)
 
 
-@router.post("/api/v1/devices/{device_id}/regenerate", tags=["devices"], dependencies=[Depends(require("devices.write"))])
-async def regenerate_device(request: Request, device_id: str, payload: DeviceRegenerate | None = Body(default=None)) -> dict[str, Any]:
+@router.post(
+    "/api/v1/devices/{device_id}/regenerate", tags=["devices"], dependencies=[Depends(require("devices.write"))]
+)
+async def regenerate_device(
+    request: Request, device_id: str, payload: DeviceRegenerate | None = Body(default=None)
+) -> dict[str, Any]:
     """Regenerate device keys (peer key revoked by reconciliation)."""
     store = _store(request)
     async with store.lock:
@@ -1336,8 +1388,12 @@ async def device_config(request: Request, device_id: str, format: str | None = N
             raise ApiError(409, "NODE_UNAVAILABLE", "device has no tunnel interface")
         secrets_map = store.device_secrets.get(device_id, {})
         text = _config_text(
-            store, user, device, iface,
-            secrets_map.get("private_key") or new_wg_key(), secrets_map.get("preshared_key", ""),
+            store,
+            user,
+            device,
+            iface,
+            secrets_map.get("private_key") or new_wg_key(),
+            secrets_map.get("preshared_key", ""),
         )
         headers = {
             "Cache-Control": "no-store",
@@ -1361,8 +1417,12 @@ async def device_qr(request: Request, device_id: str) -> Response:
             raise ApiError(409, "NODE_UNAVAILABLE", "device has no tunnel interface")
         secrets_map = store.device_secrets.get(device_id, {})
         text = _config_text(
-            store, user, device, iface,
-            secrets_map.get("private_key") or new_wg_key(), secrets_map.get("preshared_key", ""),
+            store,
+            user,
+            device,
+            iface,
+            secrets_map.get("private_key") or new_wg_key(),
+            secrets_map.get("preshared_key", ""),
         )
         stem = _config_stem(store, user, device)
     return Response(
@@ -1389,8 +1449,16 @@ async def get_stats(request: Request) -> dict[str, Any]:
             "uptime_seconds": store.uptime_seconds(),
             "generated_at": store.now_iso(),
             **counts,
-            "users": {"total": counts["users_total"], "active": counts["users_active"], "online": counts["users_online"]},
-            "devices": {"total": counts["devices_total"], "enabled": counts["devices_enabled"], "online": counts["users_online"]},
+            "users": {
+                "total": counts["users_total"],
+                "active": counts["users_active"],
+                "online": counts["users_online"],
+            },
+            "devices": {
+                "total": counts["devices_total"],
+                "enabled": counts["devices_enabled"],
+                "online": counts["users_online"],
+            },
             "traffic": {
                 "rx_bytes": counts["traffic_rx_bytes"],
                 "tx_bytes": counts["traffic_tx_bytes"],
@@ -1516,7 +1584,9 @@ async def list_interfaces(request: Request) -> dict[str, Any]:
         return {"items": [dict(iface) for iface in store.interfaces.values()]}
 
 
-@router.post("/api/v1/interfaces", tags=["interfaces"], status_code=201, dependencies=[Depends(require("interfaces.write"))])
+@router.post(
+    "/api/v1/interfaces", tags=["interfaces"], status_code=201, dependencies=[Depends(require("interfaces.write"))]
+)
 async def create_interface(request: Request, payload: InterfaceCreate) -> dict[str, Any]:
     """Create a profile (server keypair generated)."""
     store = _store(request)
@@ -1530,7 +1600,9 @@ async def create_interface(request: Request, payload: InterfaceCreate) -> dict[s
         return iface
 
 
-@router.get("/api/v1/interfaces/{interface_id}", tags=["interfaces"], dependencies=[Depends(require("interfaces.read"))])
+@router.get(
+    "/api/v1/interfaces/{interface_id}", tags=["interfaces"], dependencies=[Depends(require("interfaces.read"))]
+)
 async def get_interface(request: Request, interface_id: str) -> dict[str, Any]:
     """Get a profile."""
     store = _store(request)
@@ -1538,7 +1610,9 @@ async def get_interface(request: Request, interface_id: str) -> dict[str, Any]:
         return dict(_need_interface(store, interface_id))
 
 
-@router.patch("/api/v1/interfaces/{interface_id}", tags=["interfaces"], dependencies=[Depends(require("interfaces.write"))])
+@router.patch(
+    "/api/v1/interfaces/{interface_id}", tags=["interfaces"], dependencies=[Depends(require("interfaces.write"))]
+)
 async def update_interface(request: Request, interface_id: str, payload: InterfaceUpdate) -> dict[str, Any]:
     """Update MTU/endpoint/obfuscation/enabled (name, port and pool are immutable)."""
     store = _store(request)
@@ -1558,7 +1632,9 @@ async def update_interface(request: Request, interface_id: str, payload: Interfa
         return dict(iface)
 
 
-@router.delete("/api/v1/interfaces/{interface_id}", tags=["interfaces"], dependencies=[Depends(require("interfaces.write"))])
+@router.delete(
+    "/api/v1/interfaces/{interface_id}", tags=["interfaces"], dependencies=[Depends(require("interfaces.write"))]
+)
 async def delete_interface(request: Request, interface_id: str) -> dict[str, Any]:
     """Delete a profile (refused while devices exist)."""
     store = _store(request)
@@ -1666,7 +1742,9 @@ async def delete_webhook(request: Request, webhook_id: str) -> dict[str, Any]:
         return {"id": webhook_id, "deleted": True}
 
 
-@router.post("/api/v1/webhooks/{webhook_id}/redeliver", tags=["webhooks"], dependencies=[Depends(require("webhooks.write"))])
+@router.post(
+    "/api/v1/webhooks/{webhook_id}/redeliver", tags=["webhooks"], dependencies=[Depends(require("webhooks.write"))]
+)
 async def redeliver_webhook(request: Request, webhook_id: str, payload: RedeliverRequest) -> Response:
     """Manually redeliver one delivery (resets attempts)."""
     store = _store(request)
@@ -1679,7 +1757,9 @@ async def redeliver_webhook(request: Request, webhook_id: str, payload: Redelive
         return _json_response(202, {"delivery_id": receipt["id"], "status": receipt["status"]})
 
 
-@router.get("/api/v1/webhooks/{webhook_id}/deliveries", tags=["webhooks"], dependencies=[Depends(require("webhooks.read"))])
+@router.get(
+    "/api/v1/webhooks/{webhook_id}/deliveries", tags=["webhooks"], dependencies=[Depends(require("webhooks.read"))]
+)
 async def list_deliveries(
     request: Request, webhook_id: str, limit: int = 50, before: str | None = None, event_id: str | None = None
 ) -> dict[str, Any]:
@@ -1698,7 +1778,11 @@ async def list_deliveries(
         return {"items": page, "next_before": page[-1]["id"] if page else ""}
 
 
-@router.get("/api/v1/webhooks/{webhook_id}/deliveries/{delivery_id}", tags=["webhooks"], dependencies=[Depends(require("webhooks.read"))])
+@router.get(
+    "/api/v1/webhooks/{webhook_id}/deliveries/{delivery_id}",
+    tags=["webhooks"],
+    dependencies=[Depends(require("webhooks.read"))],
+)
 async def get_delivery(request: Request, webhook_id: str, delivery_id: str) -> dict[str, Any]:
     """Get one non-secret delivery receipt."""
     store = _store(request)
@@ -1819,7 +1903,9 @@ def _with_request_id(payload: Any, request_id: str) -> Any:
     return payload
 
 
-async def _send_json(send: Callable[[dict[str, Any]], Awaitable[None]], status_code: int, payload: Any, request_id: str) -> None:
+async def _send_json(
+    send: Callable[[dict[str, Any]], Awaitable[None]], status_code: int, payload: Any, request_id: str
+) -> None:
     """Send a complete JSON response from middleware."""
     body = json.dumps(payload).encode("utf-8")
     await send(
@@ -1868,7 +1954,11 @@ class MockMiddleware:
             await asyncio.sleep(delay)
         if failure is not None:
             LOGGER.warning("injecting %s for %s", failure.status_code, path)
-            payload = failure.body if failure.body is not None else _envelope("NODE_UNAVAILABLE", "injected failure", request_id)
+            payload = (
+                failure.body
+                if failure.body is not None
+                else _envelope("NODE_UNAVAILABLE", "injected failure", request_id)
+            )
             await _send_json(send, failure.status_code, _with_request_id(payload, request_id), request_id)
             return
         delivered = False
@@ -1946,6 +2036,8 @@ def create_app(config: MockConfig | None = None) -> FastAPI:
     app.include_router(router)
     LOGGER.info(
         "mock WG-Guard panel ready: %d token(s), %d plan(s), %d interface(s)",
-        len(store.config.tokens), len(store.plans), len(store.interfaces),
+        len(store.config.tokens),
+        len(store.plans),
+        len(store.interfaces),
     )
     return app
