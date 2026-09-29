@@ -44,7 +44,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Sir-Adnan/wg-guard-bot/main/
 The script does the following:
 
 1. Checks for Docker and installs it if needed
-2. Asks for the bot token and the admin IDs (in Persian)
+2. Asks for the bot token and the admin IDs, in English on the terminal
 3. Generates `SECRET_KEY`, the database password and the panel password at random
 4. Writes `.env` and brings the services up
 5. Runs the database migrations

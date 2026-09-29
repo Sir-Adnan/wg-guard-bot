@@ -1,7 +1,10 @@
 # Documentation
 
-Guide to the **WG-Guard Bot** project. Documents are in English; the product's
-own user-facing copy — bot strings, panel labels, installer prompts — is Persian.
+Guide to the **WG-Guard Bot** project. Documents are in English. The product's
+own user-facing copy — bot strings and panel labels — is Persian, because that
+is what customers and the owner read; everything an operator sees in a terminal
+or an editor (installer, updater, Makefile, `.env.example`) is English, since
+Linux terminals render Persian badly.
 
 **You do not need to read all of this.** Find your situation below and read one
 document.

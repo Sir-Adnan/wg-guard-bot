@@ -7,6 +7,33 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+Operator-facing text is English everywhere: the installer, updater and uninstaller
+no longer print Persian, which Linux terminals render reversed (the Makefile help
+and `.env.example` comments follow). Bot copy, panel labels and customer messages
+stay Persian — that is what customers read.
+
+Also on `main` since 1.0.0:
+
+- The gift-code switch in the panel now actually gates the gift screen (the bot
+  read a key the panel could never write), and `/rules` answers instead of
+  falling through to the catch-all.
+- The development provider template is registered outside production only, so it
+  no longer appears as a selectable panel type for an operator.
+- `make test` / `lint` / `format` work again: they run against the project venv
+  rather than the runtime image, which ships no development tooling.
+- Database tests skip instead of failing when PostgreSQL is unreachable, the
+  session header names the database it probed, and `REQUIRE_DB=1` (CI sets `CI`)
+  turns that skip into an error.
+- The mock WG-Guard panel is collected by the same `pytest`, and `tools/` is
+  linted and formatted like the rest of the repository.
+- Documentation for agents was restructured around invariants, authority
+  boundaries and risk-proportional evidence (`AGENTS.md`, `docs/VERIFICATION.md`,
+  `docs/UX-WRITING.md`, `docs/PROVIDERS.md`).
+
+---
+
 ## [1.0.0] — 2026-09-29
 
 First public release. A complete Telegram VPN shop for WG-Guard

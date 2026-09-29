@@ -39,10 +39,18 @@ is swappable (§13).
 
 ### A note on `app.services.notifications`
 
-The notifier is the one deliberate inversion: it lives in `services` but has to
+The notifier is the most deliberate inversion: it lives in `services` but has to
 know about the bot's keyboards (for the styled-keyboard fallback). It handles
 this by duck-typing (`hasattr(keyboard, "markup")`) instead of importing
 `app.bot`, so the layering rule holds and there is no import cycle.
+
+Two services go the other way and import the bot layer **inside a function body**
+— `app/services/membership.py:127` and `app/services/receipts.py:226` build a
+`KeyboardBuilder` with the callbacks their message needs. That is the same
+inversion, contained: the import only runs when that message is actually sent,
+so `app.bot` is never pulled in at module import time and the cycle stays closed.
+If you add a third, keep it inside the function and keep the keyboard there — or
+move the keyboard construction up into the handler, which is the cleaner fix.
 
 ## 2. Money
 

@@ -35,7 +35,7 @@ On a fresh Ubuntu or Debian server (Docker is installed automatically):
 bash <(curl -fsSL https://raw.githubusercontent.com/Sir-Adnan/wg-guard-bot/main/install.sh)
 ```
 
-The installer asks you these questions in Persian (bot token, numeric admin IDs, panel port) and does the rest itself:
+The installer asks you these questions on the terminal, in English (bot token, numeric admin IDs, panel port), and does the rest itself:
 generating the secrets, bringing up the database, running the migrations and starting the bot.
 
 At the end it prints the panel URL, the username and the generated password. **Change the password on first login.**
