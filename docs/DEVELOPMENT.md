@@ -71,8 +71,10 @@ alembic upgrade head
 uvicorn app.main:app --reload --port 8080
 ```
 
-The panel is at <http://127.0.0.1:8080/panel>. On first start the owner account
-is seeded from `OWNER_USERNAME` / `OWNER_PASSWORD`. Give the bot a token and
+The panel is at <http://127.0.0.1:8080/panel>. Every start seeds the owner account
+from `OWNER_USERNAME` / `OWNER_PASSWORD` (see
+[deployment](DEPLOYMENT.md#reset-owner-password)); a password you changed inside
+the panel is never overwritten by the environment. Give the bot a token and
 message it to exercise the Telegram side.
 
 ## 5. Commands

@@ -43,7 +43,7 @@ class ContextMiddleware(BaseMiddleware):
     """Resolve the customer + operator behind an update, and gate the bot."""
 
     def __init__(self) -> None:
-        self._bootstrap_done = False
+        self._caches_loaded = False
 
     async def __call__(
         self,
@@ -59,9 +59,9 @@ class ContextMiddleware(BaseMiddleware):
         if tg_user is None:
             return await handler(event, data)
 
-        if not self._bootstrap_done:
-            await self._bootstrap(session)
-            self._bootstrap_done = True
+        if not self._caches_loaded:
+            await self._warm_caches(session)
+            self._caches_loaded = True
 
         user, created = await user_service.get_or_create(session, tg_user)
         data["user"] = user
@@ -130,33 +130,20 @@ class ContextMiddleware(BaseMiddleware):
             return staff
         return None
 
-    async def _bootstrap(self, session) -> None:
-        """Seed the owner account and cache warm-up on the first update."""
-        from app.core.config import settings
-        from app.core.security import hash_password
+    async def _warm_caches(self, session) -> None:
+        """Load editable settings, texts and button visuals on the first update.
+
+        The panel owner account is deliberately **not** created here: this session
+        is shared with the handler, so a handler that raises rolls the row back and
+        the panel stays permanently un-loggable-in.  Startup owns that row — see
+        :mod:`app.services.bootstrap`.
+        """
         from app.services.appearance import appearance
         from app.services.texts import texts
 
         await app_settings.load(session, force=True)
         await texts.load(session, force=True)
         await appearance.load(session, force=True)
-
-        owner_login = settings.owner_username.strip() or "admin"
-        existing = (await session.execute(select(Staff).where(Staff.login == owner_login))).scalar_one_or_none()
-        if existing is None:
-            password = settings.owner_password or None
-            session.add(
-                Staff(
-                    telegram_id=settings.admin_id_list[0] if settings.admin_id_list else None,
-                    name="مالک",
-                    role=StaffRole.OWNER,
-                    login=owner_login,
-                    password_hash=hash_password(password) if password else None,
-                    receive_receipts=True,
-                )
-            )
-            await session.flush()
-            log.info("Seeded web-panel owner account %r", owner_login)
 
     async def _announce_new_user(self, session, user) -> None:
         if not app_settings.get_bool("notify.admin_new_user", False):

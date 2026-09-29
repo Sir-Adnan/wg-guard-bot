@@ -117,8 +117,9 @@ Pick the lowest tier that plausibly covers the change.
 **4.2 The full suite is genuinely required when…** — any one is enough:
 
 - the change touches shared foundations: `app/db/models.py`, `app/core/config.py`,
-  `app/core/security.py`, `app/db/session.py`, router order in
-  `app/bot/handlers/__init__.py`, or the `PanelProvider` port itself;
+  `app/core/security.py`, `app/db/session.py`, `app/bot/keyboards.py` (every
+  screen's markup), router order in `app/bot/handlers/__init__.py`, or the
+  `PanelProvider` port itself;
 - you changed a contract other modules call — a service signature, a callback
   payload, a DTO field, a template variable;
 - the focused tests pass, but you cannot say which other modules consume what
@@ -141,7 +142,7 @@ Read on trigger, not by default.
 | Setting up, running, or debugging locally | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) |
 | Needing the design rationale behind a boundary | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | Changing a setting, env var, or default | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) |
-| Changing deployment, TLS, domains, backups | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) |
+| Changing deployment, TLS, domains, backups, or panel access | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) |
 | Handling secrets, auth, or a vulnerability | [`docs/SECURITY.md`](docs/SECURITY.md) |
 | Writing or rewording anything the customer reads | §6 below, then [`docs/UX-WRITING.md`](docs/UX-WRITING.md) |
 | Checking what shipped when | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) |

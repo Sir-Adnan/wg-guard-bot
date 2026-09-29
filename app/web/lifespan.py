@@ -22,6 +22,7 @@ from app.core.logging import get_logger, setup_logging
 from app.db.session import dispose_engine, ping, session_scope
 from app.panels.manager import panel_manager
 from app.services.appearance import appearance
+from app.services.bootstrap import seed_panel_owner
 from app.services.notifications import notifier
 from app.services.settings_store import app_settings
 from app.services.texts import texts
@@ -64,6 +65,17 @@ async def lifespan(app: FastAPI):
         message = "اتصال به دیتابیس برقرار نشد. مهاجرت‌ها را اجرا کنید: alembic upgrade head"
         log.error(message)
         runtime.warnings.append(message)
+    else:
+        # The panel has to be usable before the first bot update ever arrives, so the
+        # owner account is committed here, in its own session — never inside an
+        # update, where a failing handler would roll it back.
+        try:
+            owner = await seed_panel_owner()
+            log.info("Panel login ready: %r", owner.login)
+        except Exception as exc:
+            message = f"Seeding the panel owner account failed: {exc}"
+            log.exception(message)
+            runtime.warnings.append(message)
 
     # -- telegram ----------------------------------------------------------
     if settings.bot_token:

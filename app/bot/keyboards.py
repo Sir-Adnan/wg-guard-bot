@@ -34,6 +34,11 @@ from app.services.settings_store import button_styles_enabled, premium_emoji_ena
 
 _EMOJI_RE = re.compile(r"\{e:([a-z_]+)\}")
 
+#: Telegram rejects an inline row with more than eight buttons (``aiogram`` raises
+#: ``ValueError: Row size N is not allowed``), which would kill the whole screen.
+#: Enforced for every keyboard, whatever ``columns`` the caller asked for.
+MAX_ROW_BUTTONS = 8
+
 
 @dataclass(slots=True)
 class Button:
@@ -94,6 +99,9 @@ def _compose_label(clean: str, fallback: str, *, has_custom: bool) -> str:
 class KeyboardBuilder:
     """Async-friendly builder that resolves colours and premium emoji.
 
+    ``columns`` is how many buttons share a row; rows break automatically, and
+    never exceed :data:`MAX_ROW_BUTTONS`.  Call :meth:`row` for an explicit break.
+
     Usage::
 
         kb = KeyboardBuilder()
@@ -115,7 +123,7 @@ class KeyboardBuilder:
         self.session = session
         self.styles = button_styles_enabled() if styles is None else styles
         self.emoji = premium_emoji_enabled() if emoji is None else emoji
-        self.columns = max(1, columns)
+        self.columns = min(MAX_ROW_BUTTONS, max(1, columns))
         self._rows: list[list[Button]] = []
         self._current: list[Button] = []
 
@@ -143,6 +151,8 @@ class KeyboardBuilder:
         category tree, for instance, stores a per-category emoji key.
         """
         if new_row:
+            self.row()
+        if len(self._current) >= self.columns:
             self.row()
 
         resolved = await appearance.resolve(visual_key, self.session) if visual_key else None
@@ -181,6 +191,8 @@ class KeyboardBuilder:
         )
         for _ in range(max(1, width)):
             self._current.append(button)
+        if len(self._current) >= self.columns:
+            self.row()
         return self
 
     async def add_many(self, specs: Iterable[dict]) -> KeyboardBuilder:
@@ -227,7 +239,10 @@ class KeyboardBuilder:
                         text = _fallback_text(button)
                         kwargs["text"] = text
                     builder.add(InlineKeyboardButton(**kwargs))  # type: ignore[arg-type]
-                builder.adjust(len(row))
+            # One call for the whole keyboard: ``adjust`` rebuilds every row from all
+            # buttons, so calling it per row would leave only the last width in force.
+            if rows:
+                builder.adjust(*[len(row) for row in rows])
             return builder.as_markup()
 
         markup = factory(styled=True)
@@ -247,7 +262,12 @@ class KeyboardBuilder:
                 if not seen or seen[-1] is not button:
                     seen.append(button)
             collapsed.append(seen)
-        return collapsed
+        # Last line of defence: a keyboard Telegram refuses is a screen that never
+        # renders, so an over-wide row is split instead of raising.
+        split: list[list[Button]] = []
+        for row in collapsed:
+            split.extend(row[i : i + MAX_ROW_BUTTONS] for i in range(0, len(row), MAX_ROW_BUTTONS))
+        return split
 
     def __len__(self) -> int:
         return sum(len(row) for row in self._snapshot_rows())

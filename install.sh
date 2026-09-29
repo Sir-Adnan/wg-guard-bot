@@ -1152,7 +1152,7 @@ success_box() {
     printf '  %s👤 Owner username:%s %s%s%s\n' "$C_BOLD" "$C_RESET" "$C_CYAN" "$username" "$C_RESET"
     printf '  %s🔑 Owner password:%s   %s%s%s\n' "$C_BOLD" "$C_RESET" "$C_CYAN" "$password" "$C_RESET"
     if [ "$REUSE_ENV" = "true" ]; then
-        printf '     %sThe value above was read from .env and only applies to the first install.%s\n' "$C_DIM" "$C_RESET"
+        printf '     %sThe value above was read from .env; it is applied only while the account has no password.%s\n' "$C_DIM" "$C_RESET"
         printf '     %sIf you changed the password from the panel, this one is no longer valid.%s\n' "$C_DIM" "$C_RESET"
         printf '     %sPassword reset: the "Reset owner password" section in docs/DEPLOYMENT.md%s\n' "$C_DIM" "$C_RESET"
     fi

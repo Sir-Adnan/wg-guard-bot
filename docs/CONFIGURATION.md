@@ -65,8 +65,8 @@ Project settings live in two places:
 | `DOMAIN` | — | Domain or subdomain to serve (no scheme, no path). Empty = no TLS, long polling, no Caddy container |
 | `ACME_EMAIL` | — | Contact address for Let's Encrypt. Optional: the certificate is still issued, you just get no expiry notice |
 | `PANEL_BIND` | `0.0.0.0` | Host interface the app port binds to. With a domain, `127.0.0.1` keeps it off the public interface |
-| `OWNER_USERNAME` | `admin` | Owner username |
-| `OWNER_PASSWORD` | — | Owner password (created on first login) |
+| `OWNER_USERNAME` | `admin` | Panel login of the owner account |
+| `OWNER_PASSWORD` | — | Applied at start, and only while the account has no password. Change it later with `python -m app.cli set-password` ([deployment](DEPLOYMENT.md#reset-owner-password)) |
 | `ADMIN_IDS` | — | Numeric admin IDs, comma-separated |
 | `SUPPORT_IDS` | — | Numeric support-agent IDs |
 

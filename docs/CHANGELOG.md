@@ -16,6 +16,22 @@ stay Persian — that is what customers read.
 
 Also on `main` since 1.0.0:
 
+- **The main menu works.**  `KeyboardBuilder(columns=…)` stored the value and never
+  read it, and `build()` called `aiogram`'s `adjust()` once per row — where each
+  call replaces the whole layout, not just the row it follows.  Every screen
+  therefore collected its buttons into a single row, and any screen with more than
+  eight of them died while the markup was built: `/start` answered
+  «خطای غیر‌منتظره‌ای رخ داد» on a fresh installation.  Rows now honour `columns`
+  and are capped at Telegram's limit of eight.
+
+- **The panel owner account is seeded at startup, not inside an update.**  It used
+  to be created by the bot middleware, in the session the handler shares, so the
+  rollback that follows a failing handler took the row with it — a fresh
+  installation answered «نام کاربری یا رمز عبور نادرست است» for the password the
+  installer had just printed.  A password changed inside the panel is never
+  overwritten by `OWNER_PASSWORD`, and a lost password can be reset with
+  `python -m app.cli set-password` ([deployment](DEPLOYMENT.md#reset-owner-password)).
+
 - The interactive installer works.  `ask()` printed its question to stdout while
   every caller captured it (`answer="$(ask ...)"`), so the question never reached
   the terminal **and** its text was prepended to the answer: no typed bot token

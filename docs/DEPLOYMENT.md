@@ -263,6 +263,32 @@ docker compose exec bot alembic upgrade head
 
 ---
 
+## Reset owner password
+
+The owner account is created on **every start** from `OWNER_USERNAME` and
+`OWNER_PASSWORD`: the username becomes the login and the password is stored as a
+hash. `OWNER_PASSWORD` is applied only while the account has no password, so a
+password you changed inside the panel (Account → Change password) survives
+restarts and updates — editing `.env` afterwards does not override it.
+
+Forgot the password? Set a new one without signing in:
+
+```bash
+cd /root/wg-guard-bot
+docker compose exec bot python -m app.cli set-password --login admin --generate
+```
+
+`--generate` prints a fresh strong password; drop it to be prompted twice, or
+pass `--password 'the-new-one'` in a script. The command creates the account when
+it is missing and prints the panel URL. It enforces the same rule as the panel:
+at least 8 characters mixing letters and digits.
+
+The login is `OWNER_USERNAME` (`admin` by default). After six failed attempts from
+one IP the form locks for five minutes; look for `Failed web login attempt for
+'admin'` and `Panel login ready: 'admin'` in `docker compose logs bot`.
+
+---
+
 ## Monitoring and logs
 
 ```bash
@@ -324,6 +350,41 @@ docker compose exec bot alembic upgrade head
 
 If you changed the database password, you must also update `POSTGRES_PASSWORD`
 and probably `DATABASE_URL`.
+
+</details>
+
+<details>
+<summary><b>"Incorrect username or password" on a fresh installation</b></summary>
+
+The owner account is seeded when the container starts, so it exists even before
+the first message reaches the bot. Check what startup did:
+
+```bash
+docker compose restart bot
+docker compose logs --tail=30 bot | grep -iE "panel login ready|panel owner"
+```
+
+- no line at all → the database was unreachable at startup (`docker compose ps db`);
+- `Panel owner 'admin' has no password hash` → `OWNER_PASSWORD` is empty in `.env`;
+- `Seeding the panel owner account failed` → the traceback above it has the cause.
+
+Then set a password you know — see [Reset owner password](#reset-owner-password).
+Remember that a rejected sign-in is also what the form shows while an IP is locked
+out after six failed attempts.
+
+</details>
+
+<details>
+<summary><b>The bot answers «خطای غیر‌منتظره‌ای رخ داد» to every message</b></summary>
+
+A handler is raising. The traceback is in the log:
+
+```bash
+docker compose logs --tail=60 bot
+```
+
+Update to the latest release first (`bash update.sh`) — a keyboard with more than
+eight buttons in a row, for example, broke every screen until it was fixed.
 
 </details>
 

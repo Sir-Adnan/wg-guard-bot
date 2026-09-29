@@ -15,9 +15,9 @@ including the mock WG-Guard panel, which `testpaths` now collects.
 
 | Check | Cost | Notes |
 |---|---|---|
-| `pytest -q` | ~39 s, 172 tests | needs PostgreSQL; the only check that exercises everything |
-| `pytest -q -m "not db"` | ~4 s, 73 tests | no database; deselects the 99 `db` tests |
-| `pytest -q` with no database reachable | ~4 s | 73 pass, 99 skip, **0 fail**; the header names the database it probed |
+| `pytest -q` | ~42 s, 190 tests | needs PostgreSQL; the only check that exercises everything |
+| `pytest -q -m "not db"` | ~4 s, 83 tests | no database; deselects the 107 `db` tests |
+| `pytest -q` with no database reachable | ~4 s | 83 pass, 107 skip, **0 fail**; the header names the database it probed |
 | `ruff check .` | <0.1 s | cheap enough to run over the whole tree |
 | `alembic check` | seconds | needs a database; only for models and migrations |
 
@@ -193,8 +193,8 @@ Clean up after yourself (`docker rm -f wgguard-pg`); leaving containers and test
 images behind is reported in the handoff, not silently ignored.
 
 **Selecting tiers without a database.** A database-free run is a supported state,
-not a degraded one: 73 tests pass, the 99 `db` tests skip, nothing fails, and
-`pytest -q -m "not db"` selects the same 73 without even collecting the rest. The
+not a degraded one: 83 tests pass, the 107 `db` tests skip, nothing fails, and
+`pytest -q -m "not db"` selects the same 83 without even collecting the rest. The
 session header prints which database was probed, so a skip is never silent, and
 `REQUIRE_DB=1` turns a missing database into a hard error — that is what CI uses,
 where a silent skip would look like a green build.
@@ -242,18 +242,21 @@ tier that touches them, with no exceptions:
 
 ## 7. Known gaps (recorded, not yet fixed)
 
-1. **`ruff check .` is red on `tools/`.** The mock panel joined `testpaths`, so it
-   also left ruff's exclude list — and its six findings (four auto-fixable) are
-   not fixed yet. The CI lint gate fails until they are.
-2. **`make test-db` assumes port 55432 is free.** It starts or reuses a container
+1. **No test renders every screen's keyboard.** `tests/test_keyboards.py` pins the
+   builder's rules — `columns` is honoured, no row exceeds eight buttons — but a
+   screen that only breaks with an unusual amount of data (nine plans on one page,
+   nine categories in one level) is still found in production.
+2. **The operator CLI is exercised as a function, not through the image.**
+   `docker compose exec bot python -m app.cli …` is the documented way back into a
+   panel whose password is lost, and no check runs it inside a container.
+3. **`make test-db` assumes port 55432 is free.** It starts or reuses a container
    named `wgguard-pg`; a machine already running PostgreSQL on that port under
    another name gets a port conflict instead of a database.
-3. **258 Persian strings still live inside `app/bot/handlers/**`** rather than in
+4. **258 Persian strings still live inside `app/bot/handlers/**`** rather than in
    `app/locales/fa.json`, so most screens cannot be reworded from the panel.
    Measured, and written up in [`UX-WRITING.md`](UX-WRITING.md) §9.
-4. **The `/panels` admin page has only a render test** — no browser-level check of
+5. **The `/panels` admin page has only a render test** — no browser-level check of
    the provider dropdown, the connection test or the delete guard.
-5. **`docs/CHANGELOG.md` stops at 1.0.0** and does not mention anything shipped
-   after it.
 
-Fixing 1 and 2 is a small test-infrastructure change and earns its own commit.
+Items 1 and 2 are small test additions, 3 is test infrastructure; each earns its
+own commit.

@@ -238,6 +238,11 @@ Items such as the shop name, support hours, the receipt deadline, the minimum to
 
 URL: `http://SERVER_IP:8080/panel`
 
+Sign in with `OWNER_USERNAME` / `OWNER_PASSWORD` from `.env` (the installer prints
+both at the end). The account is created when the container starts, and a password
+you change inside the panel is kept. Lost it? See
+[Reset owner password](docs/DEPLOYMENT.md#reset-owner-password).
+
 | Section | Purpose |
 |---|---|
 | **Dashboard** | 30-day sales, orders in progress, receipts awaiting review, panel health |
@@ -431,7 +436,7 @@ pytest -q
 ```
 
 The database-backed tests are marked `db`; without a reachable database they are
-skipped rather than failed (73 pass, 99 skip), and every run prints which database
+skipped rather than failed (83 pass, 107 skip), and every run prints which database
 it probed. `make test-db` starts a throwaway PostgreSQL and `make test` runs the
 whole suite against it. Ports, containers and the exact environment block are in
 [`docs/VERIFICATION.md`](docs/VERIFICATION.md#4-the-environment-the-commands-need).
@@ -514,25 +519,14 @@ docker compose exec bot alembic upgrade head
 <summary><b>I forgot the panel password</b></summary>
 
 ```bash
-docker compose exec bot python - <<'PY'
-import asyncio
-from sqlalchemy import select
-
-from app.core.security import hash_password
-from app.db.models import Staff
-from app.db.session import session_scope
-
-
-async def main():
-    async with session_scope() as session:
-        row = (await session.execute(select(Staff).where(Staff.role == "owner"))).scalars().first()
-        row.password_hash = hash_password("NewStrongPass123")
-        print("Password changed for:", row.login)
-
-
-asyncio.run(main())
-PY
+cd /root/wg-guard-bot
+docker compose exec bot python -m app.cli set-password --login admin --generate
 ```
+
+It prints a fresh password and creates the account if it is missing. Drop
+`--generate` to type one yourself. Full details, including what `OWNER_PASSWORD`
+does and does not do after the first start:
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md#reset-owner-password).
 
 </details>
 
