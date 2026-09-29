@@ -25,7 +25,10 @@ router = Router(name="gift")
 
 
 def enabled() -> bool:
-    return app_settings.get_bool("gift.enabled", True)
+    # The key must be the one the admin panel writes (``shop.gift_enabled``).
+    # A key that is not a SettingSpec can never be changed by the operator, so
+    # the fallback below would silently win forever.
+    return app_settings.get_bool("shop.gift_enabled", True)
 
 
 @router.callback_query(MenuCB.filter(F.action == "gift"))

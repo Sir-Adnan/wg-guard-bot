@@ -113,7 +113,7 @@ async def render_catalog(
             await show(event, await texts.get("shop.empty", session))
             return
         slice_, page, total_pages = paginate(plans, page, PLANS_PER_PAGE)
-        body = "🔥 <b>پیشنهاد ویژه</b>\n\n" + await texts.get("shop.choose_plan", session)
+        body = await texts.get("shop.featured_title", session) + "\n\n" + await texts.get("shop.choose_plan", session)
         await show(
             event,
             body,
@@ -127,7 +127,7 @@ async def render_catalog(
             await show(event, await texts.get("shop.empty", session))
             return
         slice_, page, total_pages = paginate(plans, page, PLANS_PER_PAGE)
-        body = "🗂 <b>همه سرویس‌ها</b>\n\n" + await texts.get("shop.choose_plan", session)
+        body = await texts.get("shop.all_title", session) + "\n\n" + await texts.get("shop.choose_plan", session)
         if total_pages > 1:
             body += f"\n\n<i>صفحه {fa(page)} از {fa(total_pages)}</i>"
         await show(

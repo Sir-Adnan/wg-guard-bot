@@ -99,3 +99,55 @@ def test_every_route_module_is_composed_in_order() -> None:
     assert ROUTER_ORDER[0] is admin, "staff callbacks must be matched before customer menus"
     root = build_root_router()
     assert len(root.sub_routers) == len(ROUTER_ORDER)
+
+
+def _command_names(router) -> set[str]:
+    """Every ``Command(...)`` filter reachable from ``router``, recursively."""
+    from aiogram.filters import Command
+
+    names: set[str] = set()
+    for handler in router.message.handlers:
+        for filter_object in handler.filters:
+            callback = getattr(filter_object, "callback", None)
+            if isinstance(callback, Command):
+                names.update(str(command) for command in callback.commands)
+    for child in router.sub_routers:
+        names |= _command_names(child)
+    return names
+
+
+def test_every_advertised_command_has_a_handler() -> None:
+    """A command in the Telegram menu must not fall through to the catch-all.
+
+    ``/rules`` was advertised in ``USER_COMMANDS`` with no handler behind it, so
+    tapping it answered «متوجه نشدم».  Anything the menu offers has to exist.
+    """
+    from app.bot.setup import STAFF_EXTRA_COMMANDS, USER_COMMANDS
+
+    implemented = _command_names(build_root_router())
+    advertised = {name for name, _ in (*USER_COMMANDS, *STAFF_EXTRA_COMMANDS)}
+
+    assert advertised - implemented == set(), "advertised but not implemented"
+
+
+def test_the_gift_toggle_reads_the_key_the_panel_writes(monkeypatch) -> None:
+    """An operator's switch only works if the bot reads the key the panel saves.
+
+    The gift screen gated on ``gift.enabled``, which is not a ``SettingSpec``, so
+    the panel could never write it and the default silently won.
+    """
+    from app.bot.handlers import gift
+    from app.services.settings_store import SPECS, app_settings
+
+    assert "shop.gift_enabled" in SPECS, "the panel cannot save a key that has no spec"
+
+    asked: list[str] = []
+
+    def fake_get_bool(key: str, default: bool = False) -> bool:
+        asked.append(key)
+        return True
+
+    monkeypatch.setattr(app_settings, "get_bool", fake_get_bool)
+
+    assert gift.enabled() is True
+    assert asked == ["shop.gift_enabled"]

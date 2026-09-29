@@ -93,16 +93,11 @@ async def read_guide(callback: CallbackQuery, callback_data: GuideCB, session: A
 async def _render_sections(callback: CallbackQuery, session: AsyncSession) -> None:
     counts = await guides.sections(session)
     if not counts:
-        await show(
-            callback,
-            "بهزودی مطالب آموزشی اینجا قرار میگیرد.",
-        )
+        await show(callback, await texts.get("guides.empty", session))
         return
     await show(
         callback,
-        "📚 <b>مرکز آموزش</b>\n\n"
-        "راهنمای نصب و اتصال برای هر دستگاه را از فهرست زیر انتخاب کنید.\n"
-        "اگر پاسخ سؤالتان را پیدا نکردید، از بخش «پشتیبانی» بپرسید.",
+        await texts.get("guides.title", session),
         keyboard=await guide_sections(session, counts),
     )
 

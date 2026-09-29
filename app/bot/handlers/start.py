@@ -61,6 +61,12 @@ async def command_help(message: Message, session: AsyncSession) -> None:
     await show(message, await texts.get("start.help", session))
 
 
+@router.message(Command("rules"))
+async def command_rules(message: Message, session: AsyncSession) -> None:
+    """``/rules`` is advertised in the bot command menu — keep it answering."""
+    await show(message, await texts.get("rules.text", session))
+
+
 @router.callback_query(NavCB.filter(F.to == "main"))
 async def nav_main(
     callback: CallbackQuery, callback_data: NavCB, session: AsyncSession, user: User, staff=None
