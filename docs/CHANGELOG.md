@@ -22,6 +22,13 @@ a test that runs a real update through the assembled dispatcher.
   supposed to approve.  Identity is now resolved by **outer** middlewares, which
   run before filter evaluation. Nothing else about the middleware order changed.
 
+- **Alerts read like sentences, not like source code.**  Telegram does not parse
+  HTML in ``answerCallbackQuery``, so a popup built from a screen's text showed
+  the tags themselves — `<b>این دکمه دیگر معتبر نیست</b>`, and with premium emoji
+  configured, a raw `<tg-emoji>` element. Every alert now goes through
+  `app.bot.utils.alert_text`, which strips the markup, keeps the Unicode emoji,
+  collapses the line breaks and trims to Telegram's limit.
+
 - **A physical-keyboard press no longer crashes a screen.**  Seven buttons were
   built with `kb.add(..., event=…)`, a keyword the keyboard builder has never
   accepted — `TypeError: KeyboardBuilder.add() got an unexpected keyword argument

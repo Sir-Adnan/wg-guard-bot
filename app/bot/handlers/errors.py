@@ -15,7 +15,7 @@ from aiogram.types import CallbackQuery, ErrorEvent, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.menus import default_main_menu
-from app.bot.utils import show
+from app.bot.utils import alert_text, show
 from app.core.errors import AppError
 from app.core.logging import get_logger
 from app.db.models import User
@@ -89,12 +89,9 @@ async def stale_button(
     """
     log.info("Unanswered callback data: %r", callback.data)
     await state.clear()
-    await callback.answer(await texts.get("error.expired_action", session), show_alert=True)
-    await show(
-        callback,
-        await texts.get("error.expired_action", session),
-        keyboard=await default_main_menu(session, is_staff=bool(staff)),
-    )
+    body = await texts.get("error.expired_action", session)
+    await callback.answer(alert_text(body), show_alert=True)
+    await show(callback, body, keyboard=await default_main_menu(session, is_staff=bool(staff)))
 
 
 __all__ = ["router"]

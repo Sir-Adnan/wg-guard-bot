@@ -129,3 +129,7 @@ async def test_a_customer_cannot_reach_the_staff_buttons(
 
     assert not any("پنل مدیریت" in body for body in recording_bot.texts()), "a customer opened the admin menu"
     assert any(STALE_ALERT in alert for alert in recording_bot.alerts()), "the customer's press was silently dropped"
+    # …and the alert is readable: Telegram does not parse HTML in an alert.
+    for alert in recording_bot.alerts():
+        assert "<" not in alert and ">" not in alert, f"markup in an alert: {alert!r}"
+        assert "{" not in alert, f"an unresolved placeholder in an alert: {alert!r}"

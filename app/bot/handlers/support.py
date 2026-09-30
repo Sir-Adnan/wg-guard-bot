@@ -11,7 +11,7 @@ from app.bot.callbacks import MenuCB, SupportCB
 from app.bot.keyboards import KeyboardBuilder
 from app.bot.menus import support_menu, ticket_actions
 from app.bot.states import SupportStates
-from app.bot.utils import answer_callback, show, truncate
+from app.bot.utils import alert_text, answer_callback, show, truncate
 from app.core.errors import AppError
 from app.core.jalali import jalali_datetime
 from app.core.logging import get_logger
@@ -177,7 +177,9 @@ async def reply_ticket(
         await callback.answer("این تیکت پیدا نشد.", show_alert=True)
         return
     if ticket.status == TicketStatus.CLOSED:
-        await callback.answer(await texts.get("support.closed", session, code=ticket.ticket_code), show_alert=True)
+        await callback.answer(
+            alert_text(await texts.get("support.closed", session, code=ticket.ticket_code)), show_alert=True
+        )
         return
     await answer_callback(callback)
     await state.set_state(SupportStates.replying)

@@ -12,7 +12,7 @@ from app.bot.callbacks import BuyCB, MenuCB, NavCB
 from app.bot.keyboards import KB, KeyboardBuilder
 from app.bot.menus import card_payment_actions, default_main_menu, payment_methods, service_detail
 from app.bot.states import ShopStates
-from app.bot.utils import answer_callback, show
+from app.bot.utils import alert_text, answer_callback, show
 from app.core.errors import AppError, InsufficientFunds
 from app.core.jalali import jalali_datetime
 from app.core.logging import get_logger
@@ -239,7 +239,7 @@ async def resume_order(
     """Take the customer back to wherever their unfinished order stopped."""
     order = await _load_order(session, callback_data.order_id, user)
     if order is None or not order.is_open:
-        await callback.answer(await texts.get("error.expired_action", session), show_alert=True)
+        await callback.answer(alert_text(await texts.get("error.expired_action", session)), show_alert=True)
         return
     await answer_callback(callback)
     # Whatever half-finished flow was pending (a receipt photo, a discount code)
@@ -299,11 +299,11 @@ async def restart_order(
     """
     order = await _load_order(session, callback_data.order_id, user)
     if order is None:
-        await callback.answer(await texts.get("error.expired_action", session), show_alert=True)
+        await callback.answer(alert_text(await texts.get("error.expired_action", session)), show_alert=True)
         return
 
     if order.status not in (OrderStatus.DRAFT, OrderStatus.PENDING_PAYMENT):
-        await callback.answer(await texts.get("buy.cannot_restart", session), show_alert=True)
+        await callback.answer(alert_text(await texts.get("buy.cannot_restart", session)), show_alert=True)
         body, keyboard = await order_next_step(session, order)
         await show(callback, body, keyboard=keyboard)
         return

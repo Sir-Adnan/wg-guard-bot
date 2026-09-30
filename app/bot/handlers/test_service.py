@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.callbacks import MenuCB, NavCB, TestCB
 from app.bot.menus import default_main_menu, test_offer
-from app.bot.utils import answer_callback, show
+from app.bot.utils import alert_text, answer_callback, show
 from app.core.errors import AppError
 from app.core.jalali import now_utc
 from app.core.logging import get_logger
@@ -109,13 +109,14 @@ async def _render(event: Message | CallbackQuery, session: AsyncSession, user: U
 @router.callback_query(TestCB.filter(F.action == "claim"))
 async def claim_test(callback: CallbackQuery, session: AsyncSession, user: User) -> None:
     if not test_service_enabled():
-        await callback.answer(await texts.get("test.disabled", session), show_alert=True)
+        await callback.answer(alert_text(await texts.get("test.disabled", session)), show_alert=True)
         return
 
     remaining = cooldown_remaining(user)
     if remaining is not None:
         await callback.answer(
-            await texts.get("test.cooldown", session, days=str(max(remaining.days, 1))), show_alert=True
+            alert_text(await texts.get("test.cooldown", session, days=str(max(remaining.days, 1)))),
+            show_alert=True,
         )
         return
 
@@ -123,7 +124,7 @@ async def claim_test(callback: CallbackQuery, session: AsyncSession, user: User)
     try:
         order = await order_service.create(session, user, plan, kind=OrderKind.TEST, free=True)
     except AppError as exc:
-        await callback.answer(exc.message[:190], show_alert=True)
+        await callback.answer(alert_text(exc.message), show_alert=True)
         return
 
     user.test_used_at = now_utc()

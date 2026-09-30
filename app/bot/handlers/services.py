@@ -12,7 +12,7 @@ from app.bot.callbacks import DeviceCB, MenuCB, NavCB, ServiceCB
 from app.bot.keyboards import KeyboardBuilder
 from app.bot.menus import device_list, service_detail, service_list
 from app.bot.states import ServiceStates
-from app.bot.utils import answer_callback, paginate, show
+from app.bot.utils import alert_text, answer_callback, paginate, show
 from app.core.errors import AppError
 from app.core.logging import get_logger
 from app.core.money import parse_user_amount
@@ -343,7 +343,7 @@ async def toggle_autorenew(
         await callback.answer("پلن این سرویس حذف شده است.", show_alert=True)
         return
     if not plan.wg_plan_id:
-        await callback.answer(await texts.get("service.autorenew_unsupported", session), show_alert=True)
+        await callback.answer(alert_text(await texts.get("service.autorenew_unsupported", session)), show_alert=True)
         return
 
     from app.panels.base import UnsupportedCapability
@@ -361,10 +361,10 @@ async def toggle_autorenew(
             message = await texts.get("service.autorenew_on", session, name=service.wg_username)
         await session.flush()
     except UnsupportedCapability:
-        await callback.answer(await texts.get("service.autorenew_unsupported", session), show_alert=True)
+        await callback.answer(alert_text(await texts.get("service.autorenew_unsupported", session)), show_alert=True)
         return
     except AppError as exc:
-        await callback.answer(html_escape(exc.message)[:190], show_alert=True)
+        await callback.answer(alert_text(exc.message), show_alert=True)
         return
 
     await answer_callback(callback, "انجام شد ✅")

@@ -161,12 +161,13 @@ class ContextMiddleware(BaseMiddleware):
 
     @staticmethod
     async def _reply(event: TelegramObject, text: str) -> None:
+        from app.bot.utils import alert_text
         from app.services.notifications import notifier
 
         if isinstance(event, Message):
             await notifier.send(event.chat.id, text)
         elif isinstance(event, CallbackQuery):
-            await event.answer(text[:180], show_alert=True)
+            await event.answer(alert_text(text), show_alert=True)
 
 
 __all__ = ["ContextMiddleware", "DatabaseMiddleware"]

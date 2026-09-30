@@ -27,7 +27,7 @@ from app.bot.menus import (
     plan_actions,
     plan_list,
 )
-from app.bot.utils import answer_callback, paginate, show
+from app.bot.utils import alert_text, answer_callback, paginate, show
 from app.core.errors import AppError
 from app.core.logging import get_logger
 from app.core.money import format_amount, format_gb
@@ -361,7 +361,7 @@ async def buy_plan(callback: CallbackQuery, callback_data: PlanCB, session: Asyn
         return
 
     if not catalog.is_available(plan):
-        await callback.answer(await texts.get("shop.sold_out", session), show_alert=True)
+        await callback.answer(alert_text(await texts.get("shop.sold_out", session)), show_alert=True)
         return
 
     existing = await order_service.open_orders(session, user.id)

@@ -12,7 +12,7 @@ from app.bot import nav
 from app.bot.callbacks import MenuCB, NavCB, ReferralCB
 from app.bot.keyboards import KeyboardBuilder
 from app.bot.menus import back_to_main, default_main_menu
-from app.bot.utils import answer_callback, show
+from app.bot.utils import alert_text, answer_callback, show
 from app.core.config import settings
 from app.core.jalali import jalali_date
 from app.core.logging import get_logger
@@ -169,7 +169,7 @@ async def check_join(callback: CallbackQuery, session: AsyncSession, user: User,
     await membership.invalidate(user.telegram_id)
     if not status.ok:
         await callback.answer(
-            await texts.get("start.not_joined", session, channels=status.missing_titles), show_alert=True
+            alert_text(await texts.get("start.not_joined", session, channels=status.missing_titles)), show_alert=True
         )
         if callback.message is not None:
             await notifier.edit(

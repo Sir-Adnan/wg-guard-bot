@@ -3,12 +3,16 @@
 The important one is :func:`show` — it gives every screen the same behaviour
 whether it was opened from a button (edit in place) or from a command (send a
 new message), and it transparently retries without styling when needed.
+:func:`alert_text` is its counterpart for popups, which are plain text: a screen
+body has to be stripped before it can be shown in one.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from contextlib import suppress
+from html import unescape
 from typing import Any, TypeVar
 
 from aiogram.types import CallbackQuery, Message, TelegramObject
@@ -20,6 +24,25 @@ from app.services.notifications import notifier
 log = get_logger(__name__)
 
 T = TypeVar("T")
+
+#: Longest text a callback alert can show without Telegram cutting it mid-word.
+ALERT_LIMIT = 190
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def alert_text(body: str, *, limit: int = ALERT_LIMIT) -> str:
+    """Turn a message body into something an alert can actually show.
+
+    ``answerCallbackQuery`` renders plain text — it does not parse HTML — so
+    passing a screen's text straight through put «<b>این دکمه دیگر معتبر نیست</b>»
+    (and, with premium emoji configured, a raw ``<tg-emoji>`` tag) in front of
+    the customer.  Tags are stripped, entities unescaped, the line breaks of a
+    multi-paragraph message collapsed, and the result cut to the alert limit.
+    """
+    text = _TAG_RE.sub("", body or "")
+    text = " ".join(unescape(text).split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def chat_id_of(event: TelegramObject) -> int | None:
@@ -78,9 +101,14 @@ def paginate(items: Sequence[T], page: int, per_page: int = 6) -> tuple[list[T],
 
 
 async def answer_callback(event: TelegramObject, text: str = "", *, alert: bool = False) -> None:
+    """Stop the spinner; ``alert=True`` shows the text in a popup.
+
+    An alert is plain text, so HTML that is perfectly valid in a message is
+    stripped here rather than shown to the customer as source code.
+    """
     if isinstance(event, CallbackQuery):
         with suppress(Exception):  # pragma: no cover - callback already answered
-            await event.answer(text[:190], show_alert=alert)
+            await event.answer(alert_text(text, limit=ALERT_LIMIT), show_alert=alert)
 
 
 def parse_int(text: str | None, *, persian: bool = True) -> int | None:
@@ -116,6 +144,8 @@ async def notify_user(event_or_user, text: str, *, keyboard: KB | None = None) -
 
 
 __all__ = [
+    "ALERT_LIMIT",
+    "alert_text",
     "answer_callback",
     "chat_id_of",
     "notify_user",
