@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.security import password_strength_error, verify_password
-from app.db.models import Staff, StaffRole
+from app.db.models import EventLevel, Staff, StaffRole, SystemEvent
 from app.services import bootstrap
 
 ADMIN_ID = 733474221
@@ -113,13 +113,18 @@ async def test_a_password_changed_in_the_panel_survives_a_restart(session, owner
 # Startup, the update path, and recovery
 # ---------------------------------------------------------------------------
 @pytest.mark.db
-async def test_startup_seeds_the_owner_before_any_update(app_session_factory, session, owner_env):
+async def test_startup_seeds_the_owner_before_any_update(app_session_factory, session, owner_env, monkeypatch):
     """The deployment path: the lifespan every container start runs.
 
     Nothing else executes it — the page tests build the app with background tasks
     off — which is how the old "seeded inside an update" bug stayed hidden.
+
+    No token: a real one would send this test to Telegram's servers, and the
+    branch that *fails* to authorise is covered by the next test.
     """
     from app.web.app import create_app
+
+    monkeypatch.setattr(settings, "bot_token", "")
 
     app = create_app()
     async with app.router.lifespan_context(app):
@@ -127,6 +132,41 @@ async def test_startup_seeds_the_owner_before_any_update(app_session_factory, se
 
     assert row.role is StaffRole.OWNER
     assert verify_password(OWNER_PASSWORD, row.password_hash)
+
+
+@pytest.mark.db
+async def test_a_refused_bot_token_is_recorded_and_never_stops_the_startup(
+    app_session_factory, session, owner_env, monkeypatch
+):
+    """The panel boots even when Telegram refuses the token — and says so.
+
+    Recording that failure used to raise ``AttributeError`` over the severity
+    the caller handed in (``"critical"``), so a bad token took the whole panel
+    down instead of appearing in System events.
+    """
+    from aiogram.exceptions import TelegramUnauthorizedError
+    from aiogram.methods import GetMe
+
+    from app.web import lifespan as lifespan_module
+    from app.web.app import create_app
+
+    class RefusedBot:
+        async def get_me(self):
+            raise TelegramUnauthorizedError(method=GetMe(), message="Unauthorized")
+
+    monkeypatch.setattr(settings, "bot_token", "123456789:not-a-real-token")
+    monkeypatch.setattr(lifespan_module, "create_bot", lambda *args, **kwargs: RefusedBot())
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        runtime = app.state.runtime
+        owner = (await session.execute(select(Staff).where(Staff.login == "admin"))).scalar_one()
+
+    assert runtime.warnings, "the failed bot start was swallowed silently"
+    assert owner.role is StaffRole.OWNER, "the panel lost its login over a refused token"
+
+    event = (await session.execute(select(SystemEvent).where(SystemEvent.source == "startup"))).scalar_one()
+    assert event.level is EventLevel.CRITICAL
 
 
 @pytest.mark.db

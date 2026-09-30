@@ -22,7 +22,7 @@ TEST_DB_PORT ?= 55432
 TEST_DATABASE_URL ?= postgresql+asyncpg://wgguard:wgguard@127.0.0.1:$(TEST_DB_PORT)/wgguard_test
 
 .DEFAULT_GOAL := help
-.PHONY: help install up tls domain cert down logs restart migrate test test-db lint format dev-venv venv-check backup shell psql version health clean menu
+.PHONY: help install up tls domain cert down logs restart migrate test test-db lint format dev-venv venv-check backup shell psql version health clean menu menu-check
 
 help: ## show this help
 	@printf '\n\033[1mWG-Guard Bot\033[0m — available commands (make <target>):\n\n'
@@ -31,6 +31,9 @@ help: ## show this help
 
 menu: ## open the control menu (install, update, status, logs, backup, restore, uninstall)
 	@bash menu.sh
+
+menu-check: ## exercise the control menu's start-up paths (no Docker, no network)
+	@bash tools/menu_harness.sh
 
 install: ## first-time setup from scratch (runs install.sh)
 	@bash install.sh

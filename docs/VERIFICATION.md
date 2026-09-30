@@ -15,9 +15,10 @@ including the mock WG-Guard panel, which `testpaths` now collects.
 
 | Check | Cost | Notes |
 |---|---|---|
-| `pytest -q` | ~110 s, 409 tests | needs PostgreSQL; the only check that exercises everything |
-| `pytest -q -m "not db"` | ~4 s, 134 tests | no database; deselects the 275 `db` tests |
-| `pytest -q` with no database reachable | ~4 s | 134 pass, 275 skip, **0 fail**; the header names the database it probed |
+| `pytest -q` | ~113 s, 418 tests | needs PostgreSQL; the only check that exercises everything |
+| `pytest -q -m "not db"` | ~4 s, 141 tests | no database; deselects the 277 `db` tests |
+| `pytest -q` with no database reachable | ~4 s | 141 pass, 277 skip, **0 fail**; the header names the database it probed |
+| `bash tools/menu_harness.sh` | <2 s | the operator scripts, with Docker, `curl` and root stubbed |
 | `ruff check .` | <0.1 s | cheap enough to run over the whole tree |
 | `alembic check` | seconds | needs a database; only for models and migrations |
 
@@ -193,8 +194,8 @@ Clean up after yourself (`docker rm -f wgguard-pg`); leaving containers and test
 images behind is reported in the handoff, not silently ignored.
 
 **Selecting tiers without a database.** A database-free run is a supported state,
-not a degraded one: 134 tests pass, the 275 `db` tests skip, nothing fails, and
-`pytest -q -m "not db"` selects the same 134 without even collecting the rest. The
+not a degraded one: 141 tests pass, the 277 `db` tests skip, nothing fails, and
+`pytest -q -m "not db"` selects the same 141 without even collecting the rest. The
 session header prints which database was probed, so a skip is never silent, and
 `REQUIRE_DB=1` turns a missing database into a hard error — that is what CI uses,
 where a silent skip would look like a green build.
@@ -239,6 +240,12 @@ tier that touches them, with no exceptions:
   logic — the duplicate-account path.
 - **Authorisation.** Any change to `require_roles`, session handling, or CSRF.
 - **Migrations.** `alembic check` clean, and a downgrade that works.
+- **The operator scripts.** `bash -n` on every one of them, which is all CI did
+  until now, catches a syntax error and nothing else. `bash tools/menu_harness.sh`
+  starts `menu.sh` the five ways an operator does — inside a checkout, from
+  another directory, through the README's `curl` pipe, as a normal user, and on a
+  server where nothing is installed — with Docker, `curl` and root stubbed. It
+  needs no daemon and no network, and it asserts on the outcome of each case.
 
 ## 7. Known gaps (recorded, not yet fixed)
 
@@ -257,13 +264,13 @@ tier that touches them, with no exceptions:
    Measured, and written up in [`UX-WRITING.md`](UX-WRITING.md) §9.
 5. **The `/panels` admin page has only a render test** — no browser-level check of
    the provider dropdown, the connection test or the delete guard.
-6. **The installer, updater and control menu are only syntax-checked.** CI runs
-   `bash -n` over every script; there is no `shellcheck`, and `menu.sh`'s actions are
-   verified by hand against a throwaway project copy — the status screen, the error
-   paths for a missing Docker daemon, the `.env` rewrite against a Persian fixture
-   (values, custom keys, idempotency) and a pseudo-terminal render of the menu
-   (`script -qec`, with the box widths asserted). No test builds an image: the build
-   stamp was proved manually with
+6. **The installer, updater and control menu are covered unevenly.** CI runs
+   `bash -n` over every script and `tools/menu_harness.sh` over `menu.sh`'s start-up
+   paths; there is no `shellcheck`, `install.sh` and `update.sh` have no harness at
+   all, and `menu.sh`'s *actions* are still verified by hand against a throwaway
+   project copy — the status screen, the error paths for a missing Docker daemon,
+   and the `.env` rewrite against a Persian fixture (values, custom keys,
+   idempotency). No test builds an image: the build stamp was proved manually with
    `--build-arg GIT_COMMIT=deadbee`, then
    `docker run --rm --entrypoint /opt/venv/bin/python <image> -c "import app; print(app.__commit__)"`
    and `curl -s localhost:<port>/healthz`.

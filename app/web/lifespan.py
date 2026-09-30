@@ -20,6 +20,7 @@ from app.bot.setup import (
 from app.core.cache import cache
 from app.core.config import BASE_DIR, settings
 from app.core.logging import get_logger, setup_logging
+from app.db.models import EventLevel
 from app.db.session import dispose_engine, ping, session_scope
 from app.panels.manager import panel_manager
 from app.services.appearance import appearance
@@ -129,7 +130,7 @@ async def lifespan(app: FastAPI):
             message = f"راه‌اندازی ربات ناموفق بود: {exc}"
             log.exception(message)
             runtime.warnings.append(message)
-            await notifier.record_event("critical", message, source="startup")  # type: ignore[arg-type]
+            await notifier.record_event(EventLevel.CRITICAL, message, source="startup")
     else:
         message = "BOT_TOKEN تنظیم نشده است؛ فقط پنل وب اجرا می‌شود."
         log.warning(message)

@@ -57,7 +57,9 @@ jobs:
   #
   #  install.sh / update.sh / menu.sh / uninstall.sh run on a live server, where a
   #  syntax error costs an outage.  This job is cheap and catches exactly that; the
-  #  behaviour of the scripts is checked by hand (see docs/VERIFICATION.md §7).
+  #  behaviour of the scripts is checked by hand (see docs/VERIFICATION.md §7),
+  #  except for menu.sh's start-up paths, which tools/menu_harness.sh covers with
+  #  Docker, curl and root stubbed (no daemon, no network).
   # =========================================================================
   shell:
     name: shell syntax
@@ -69,7 +71,7 @@ jobs:
         run: |
           set -uo pipefail
           status=0
-          for f in *.sh scripts/*.sh; do
+          for f in *.sh scripts/*.sh tools/*.sh; do
             if bash -n "$f"; then
               echo "ok    $f"
             else
@@ -78,6 +80,9 @@ jobs:
             fi
           done
           exit $status
+
+      - name: menu.sh start-up paths
+        run: bash tools/menu_harness.sh
 
   # =========================================================================
   #  3) test — real PostgreSQL 16 service, ENV=test, no Redis

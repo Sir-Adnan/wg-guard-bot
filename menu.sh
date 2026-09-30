@@ -31,6 +31,11 @@ HINT_COL=44        # column where a menu item's hint starts
 LOG_TAIL=100
 BACKUP_KEEP_DEFAULT=7
 
+#: Where the released operator scripts live.  Used only when there is no
+#: checkout to run them from — an operator who pasted the one-liner from the
+#: README has no project directory yet, and item 1 has to still work.
+RAW_BASE="${WGGB_RAW_BASE:-https://raw.githubusercontent.com/Sir-Adnan/wg-guard-bot/main}"
+
 COMPOSE=""
 COMPOSE_TLS=""
 
@@ -220,22 +225,104 @@ project_version() {
 }
 
 detect_dir() {
-    if [ -n "$INSTALL_DIR" ]; then
-        :
-    elif [ -f "./docker-compose.yml" ]; then
-        INSTALL_DIR="$(pwd)"
-    else
-        INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # Where the project lives, in the order an operator expects:
+    #   --dir  ·  the current directory  ·  this script's own directory  ·
+    #   the installer's default location
+    #
+    # The script's own directory is skipped when it is a process substitution —
+    # `bash <(curl …/menu.sh)` hands us /dev/fd/63, which is not a directory
+    # anybody can act on.  Treating it as one is why item 2 answered "this
+    # server is not installed yet" on a server that was installed.
+    #
+    # When nothing is found we fall back to the directory an install would use,
+    # so every later step has a real path to talk about.
+    if [ -z "$INSTALL_DIR" ]; then
+        local self="${BASH_SOURCE[0]:-$0}" self_dir="" candidate
+        case "$self" in
+            /dev/fd/*|/proc/*/fd/*|/dev/stdin|-) self="" ;;
+            *) [ -f "$self" ] || self="" ;;
+        esac
+        if [ -n "$self" ]; then
+            self_dir="$(cd -- "$(dirname -- "$self")" 2>/dev/null && pwd -P || true)"
+        fi
+
+        for candidate in "$(pwd)" "$self_dir" "${HOME:-/root}/wg-guard-bot" "/root/wg-guard-bot" "/opt/wg-guard-bot"; do
+            [ -n "$candidate" ] || continue
+            if [ -f "$candidate/docker-compose.yml" ]; then
+                INSTALL_DIR="$candidate"
+                break
+            fi
+        done
+        [ -n "$INSTALL_DIR" ] || INSTALL_DIR="${HOME:-/root}/wg-guard-bot"
     fi
     INSTALL_DIR="${INSTALL_DIR%/}"
-    cd "$INSTALL_DIR" 2>/dev/null || true
+    # A directory that does not exist yet (a fresh server) must not trip `set -e`
+    # into exiting before anything is printed.
+    if [ -n "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR" ]; then
+        cd "$INSTALL_DIR" 2>/dev/null || true
+    fi
+    return 0
+}
+
+self_path() {
+    # A path to this script that another process (sudo) can open, or "" when it
+    # arrived through a pipe and has none.
+    local self="${BASH_SOURCE[0]:-$0}" dir=""
+    case "$self" in
+        /dev/fd/*|/proc/*/fd/*|/dev/stdin|-) return 1 ;;
+    esac
+    [ -f "$self" ] || return 1
+    dir="$(cd -- "$(dirname -- "$self")" 2>/dev/null && pwd -P || true)"
+    if [ -n "$dir" ]; then
+        printf '%s/%s' "$dir" "$(basename -- "$self")"
+    else
+        printf '%s' "$self"
+    fi
+    return 0
+}
+
+fetch_released() {
+    # fetch_released <script> — download a sibling script from RAW_BASE into a
+    # temporary file and print its path; returns 1 when that is impossible.
+    local script="$1" tmp=""
+    command -v curl >/dev/null 2>&1 || return 1
+    tmp="$(mktemp "${TMPDIR:-/tmp}/wgguard-${script%.sh}-XXXXXX.sh" 2>/dev/null || true)"
+    [ -n "$tmp" ] || return 1
+    if curl -fsSL "$RAW_BASE/$script" -o "$tmp" 2>/dev/null; then
+        chmod +x "$tmp" 2>/dev/null || true
+        printf '%s' "$tmp"
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
 }
 
 require_root() {
     [ "$(id -u)" -eq 0 ] && return 0
-    local self="$0"
-    [ -f "$INSTALL_DIR/menu.sh" ] && self="$INSTALL_DIR/menu.sh"
+
+    local self=""
+    if [ -f "$INSTALL_DIR/menu.sh" ]; then
+        self="$INSTALL_DIR/menu.sh"
+    else
+        self="$(self_path || true)"
+    fi
+    if [ -z "$self" ]; then
+        # `bash <(curl …/menu.sh)`: /dev/fd/63 belongs to this shell, so sudo
+        # cannot read it back.  The released copy can be read by anyone.
+        local tmp=""
+        tmp="$(fetch_released menu.sh || true)"
+        if [ -n "$tmp" ]; then
+            self="$tmp"
+            dim "  This copy of the menu arrived through a pipe; running the released copy under sudo."
+        fi
+    fi
+
     if command -v sudo >/dev/null 2>&1; then
+        if [ -z "$self" ]; then
+            err "This menu manages Docker, so it needs root — and this copy has no path to re-run."
+            hint "Download it first:  curl -fsSL $RAW_BASE/menu.sh -o menu.sh && sudo bash menu.sh"
+            exit 1
+        fi
         warn "This menu manages Docker, so it needs root; re-running it with sudo…"
         exec sudo -E bash "$self" "$@"
     fi
@@ -451,14 +538,37 @@ total_bytes() {
 }
 
 run_child() {
-    # run_child <script> [args…] — run a sibling script inside the project directory
-    local script="$1"
+    # run_child <script> [args…] — run a sibling script inside the project
+    # directory.  Without a checkout (the curl one-liner on a fresh server) the
+    # released copy is fetched and run in its place, so an item never dead-ends
+    # on "install.sh was not found in /dev/fd".
+    #
+    # The child's exit status is returned, never fatal: a failed update has to
+    # come back to the menu with "the update did not finish", not end the
+    # session (which is what `set -e` does to a bare failing command).
+    local script="$1" tmp="" status=0
     shift
-    if [ ! -f "$INSTALL_DIR/$script" ]; then
+    if [ -f "$INSTALL_DIR/$script" ]; then
+        ( cd "$INSTALL_DIR" && bash "$script" "$@" ) || status=$?
+        return $status
+    fi
+
+    tmp="$(fetch_released "$script" || true)"
+    if [ -z "$tmp" ]; then
         err "$script was not found in $INSTALL_DIR"
+        hint "Clone the project and run the menu from inside it:"
+        hint "  git clone https://github.com/Sir-Adnan/wg-guard-bot.git && cd wg-guard-bot && bash menu.sh"
         return 1
     fi
-    ( cd "$INSTALL_DIR" && bash "$script" "$@" )
+    dim "  $script is not in $INSTALL_DIR; running the released copy instead."
+    # install.sh creates the directory itself; everything else runs from inside it.
+    if [ -d "$INSTALL_DIR" ]; then
+        ( cd "$INSTALL_DIR" && bash "$tmp" "$@" ) || status=$?
+    else
+        bash "$tmp" "$@" || status=$?
+    fi
+    rm -f "$tmp"
+    return $status
 }
 
 # ===========================================================================
@@ -471,7 +581,7 @@ act_install() {
     if ! docker_present; then
         dim "  Docker is missing; install.sh installs it first."
     fi
-    run_child install.sh "$@"
+    run_child install.sh --dir "$INSTALL_DIR" "$@"
 }
 
 # -- 2) update --------------------------------------------------------------
@@ -1258,7 +1368,11 @@ render_home() {
     else
         box_row "${C_YELLOW}Not installed yet${C_RESET} — choose 1 to set everything up."
     fi
-    box_row "${C_DIM}${INSTALL_DIR}${C_RESET}"
+    if [ -d "$INSTALL_DIR" ]; then
+        box_row "${C_DIM}${INSTALL_DIR}${C_RESET}"
+    else
+        box_row "${C_DIM}${INSTALL_DIR} (will be created)${C_RESET}"
+    fi
     box_bottom
 
     if ! docker_present; then
@@ -1300,7 +1414,7 @@ main_loop() {
             break
         fi
         case "$choice" in
-            1)  act_install || warn "The installer did not finish."; pause ;;
+            1)  act_install || warn "The installer did not finish."; detect_dir; pause ;;
             2)  act_update || warn "The update did not finish."; pause ;;
             3)  act_status || true; pause ;;
             4)  require_docker && menu_logs ;;
@@ -1334,6 +1448,13 @@ ${C_BOLD}Usage:${C_RESET}
   ${C_CYAN}bash menu.sh${C_RESET}                      open the interactive menu
   ${C_CYAN}bash menu.sh <command> [options]${C_RESET}  run one action and exit
 
+${C_BOLD}Where the project is:${C_RESET}
+  ${C_CYAN}--dir${C_RESET}, the current directory, this script's directory, then
+  ${C_DIM}${HOME:-/root}/wg-guard-bot${C_RESET} — and ${C_DIM}/root/wg-guard-bot${C_RESET} or
+  ${C_DIM}/opt/wg-guard-bot${C_RESET} as a last resort.  The menu can therefore be run from
+  anywhere, including straight from the README's one-liner, and still find the
+  installation it is managing.
+
 ${C_BOLD}Commands:${C_RESET}
   ${C_CYAN}install${C_RESET}                         install or reconfigure (runs install.sh)
   ${C_CYAN}update${C_RESET}                          pull, rebuild, migrate (runs update.sh)
@@ -1349,7 +1470,7 @@ ${C_BOLD}Commands:${C_RESET}
   ${C_CYAN}purge${C_RESET}                           remove the containers AND the data
 
 ${C_BOLD}Options:${C_RESET}
-  ${C_CYAN}--dir PATH${C_RESET}      project directory (default: the directory of this script)
+  ${C_CYAN}--dir PATH${C_RESET}      project directory (default: found automatically, see above)
   ${C_CYAN}--tail N${C_RESET}        lines of log history to load (default: ${LOG_TAIL})
   ${C_CYAN}--no-follow${C_RESET}     print the log once instead of streaming it
   ${C_CYAN}--yes${C_RESET}           answer yes to every confirmation

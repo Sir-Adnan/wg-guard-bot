@@ -27,6 +27,7 @@ from app.core.logging import get_logger
 from app.core.money import format_amount, format_rial
 from app.core.security import random_code
 from app.db.models import (
+    EventLevel,
     Order,
     OrderStatus,
     PaymentKind,
@@ -200,7 +201,7 @@ class ReceiptService:
         if not delivered:
             log.warning("Receipt %s has no reviewer to notify", receipt.code)
             await notifier.record_event(
-                "warning",  # type: ignore[arg-type]
+                EventLevel.WARNING,
                 f"رسید {receipt.code} ثبت شد اما هیچ بررسی‌کننده‌ای فعال نبود.",
                 source="receipts",
                 session=session,

@@ -342,6 +342,21 @@ one IP the form locks for five minutes; look for `Failed web login attempt for
    11   Uninstall                           stop only, or delete everything
 ```
 
+The menu finds the project itself, so it can be started from anywhere:
+
+```bash
+cd /root/wg-guard-bot && bash menu.sh     # from inside the installation
+bash /root/wg-guard-bot/menu.sh           # from any directory
+bash <(curl -fsSL https://raw.githubusercontent.com/Sir-Adnan/wg-guard-bot/main/menu.sh)
+```
+
+It looks in `--dir`, then the current directory, then its own directory, then
+`${HOME}/wg-guard-bot` — the directory `install.sh` uses by default — with
+`/root/wg-guard-bot` and `/opt/wg-guard-bot` as a last resort. The `curl` form
+works even on a server where nothing is installed yet: item 1 fetches the installer
+and runs it. `sudo` is not needed to read it; the menu re-runs itself under `sudo`
+when Docker needs root.
+
 Every action is also a command, so nothing needs the menu:
 
 | Command | What it does |
@@ -359,6 +374,11 @@ Every action is also a command, so nothing needs the menu:
 
 Useful options: `--yes` (no questions), `--dir PATH`, `--tail N`, `--ascii` (ASCII
 glyphs on a terminal without UTF-8). `make menu` opens the same screen.
+
+The menu's start-up paths — where it looks for the project, the `sudo` re-run, and
+running a sibling script when there is no checkout — are covered by
+`bash tools/menu_harness.sh`, which stubs Docker, `curl` and root and needs no
+server.
 
 **Backups.** `backup` writes `./backups/wgguard-<timestamp>.sql` (a plain `psql`
 dump) and a matching `.env` copy — that copy contains `SECRET_KEY`, so treat it as

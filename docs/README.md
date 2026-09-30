@@ -54,8 +54,8 @@ The runtime image deliberately ships no development tooling, so `make test`,
 ```bash
 ruff check .                 # lint (the CI gate)
 ruff format .                # format
-pytest -q -m "not db"        # 87 tests, no database needed
-pytest -q                    # 195 tests, needs PostgreSQL (app + mock suites)
+pytest -q -m "not db"        # 141 tests, no database needed
+pytest -q                    # 418 tests, needs PostgreSQL (app + mock suites)
 alembic upgrade head         # migrations
 ```
 
@@ -63,6 +63,8 @@ Deployment and operations targets (inside the project directory):
 
 ```bash
 bash menu.sh       # control menu: install, update, status, logs, backup, restore, uninstall
+                   # (also runnable from anywhere: bash <(curl -fsSL <repo>/main/menu.sh))
+bash tools/menu_harness.sh   # exercise the menu's start-up paths: discovery, sudo, child scripts
 make up            # start
 make tls           # start with the TLS (Caddy) profile
 make logs          # follow the logs

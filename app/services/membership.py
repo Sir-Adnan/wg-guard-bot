@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache
 from app.core.logging import get_logger
-from app.db.models import Channel
+from app.db.models import Channel, EventLevel
 from app.services.notifications import notifier
 from app.services.settings_store import app_settings
 from app.services.texts import texts
@@ -102,7 +102,7 @@ class MembershipService:
             text = str(exc).lower()
             if "chat not found" in text or "member list is inaccessible" in text:
                 await notifier.record_event(
-                    "warning",
+                    EventLevel.WARNING,
                     f"بررسی عضویت برای {chat_id} ممکن نیست؛ ربات را در کانال ادمین کنید.",
                     source="membership",
                 )

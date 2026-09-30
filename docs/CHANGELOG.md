@@ -11,7 +11,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The whole operator surface inside the bot was unreachable, and the physical
 keyboard crashed on some buttons. Both had one root cause each, and both now have
-a test that runs a real update through the assembled dispatcher.
+a test that runs a real update through the assembled dispatcher. The control menu
+had the same shape of problem — started the way the README suggests, it could not
+find the project it was managing — and the test suite on Linux found a third: the
+call that records a failed bot start-up raised on the way in.
 
 - **Staff buttons answer again: receipts, users, orders, broadcast.**  aiogram
   evaluates a handler's filters *before* it runs the observer's **inner**
@@ -66,6 +69,38 @@ a test that runs a real update through the assembled dispatcher.
   Plan lists honour it, and the new «تعداد دسته‌بندی در هر ردیف»
   (`appearance.category_columns`, 1–4, default 2) lays out category and
   sub-category buttons.
+
+- **The control menu is no longer lost when it is started from outside the
+  project.**  `bash <(curl …/menu.sh)` gives the script no path of its own
+  (`/dev/fd/63`), and the menu used that path as the project directory: on an
+  installed server item 2 answered «This server is not installed yet — no .env in
+  /dev/fd», `sudo` was handed an `/dev/fd` path it cannot read, and item 1 said
+  `install.sh was not found in /dev/fd`.  The menu now resolves the project from
+  `--dir`, the current directory, its own directory, then `~/wg-guard-bot`; it
+  copies itself somewhere readable before re-running under `sudo`; and when a
+  sibling script is missing entirely (`install.sh` on a fresh server) it fetches
+  the released copy and runs it — pointed at the directory it manages.
+
+- **A failed operator action comes back to the menu.**  A child script that exits
+  non-zero ended the whole session silently, because `set -e` was applied to the
+  call.  The child's status is now returned: the menu says what did not finish and
+  redraws, while `bash menu.sh update` still exits non-zero for a script that
+  calls it.
+
+- **Recording a failure can no longer fail.**  `notifier.record_event` demands an
+  `EventLevel` but asked whatever it was given for `.value`, and four call sites
+  passed the string an error path has at hand — `"critical"` from a failed bot
+  start-up, `"warning"` from the bot's error handler, the receipt notifier and the
+  membership check.  The sink now accepts either form (and never raises over an
+  unreadable one), and the call sites pass the enum.  Found by the test suite on
+  the Linux CI runner, where a rejected token actually reaches that branch.
+
+- **`tools/menu_harness.sh` — the control menu is tested, not just parsed.**
+  Seventeen assertions across the ways an operator really starts it: inside a
+  checkout, from another directory, through the README's `curl` pipe, as a normal
+  user, with a failing child, and on a server where nothing is installed.  Docker,
+  `curl` and root are stubbed, so it runs in CI with no daemon and no network —
+  and it fails 12 of those assertions against the release before this change.
 
 Operator-facing text is English everywhere: the installer, updater and uninstaller
 no longer print Persian, which Linux terminals render reversed (the Makefile help,

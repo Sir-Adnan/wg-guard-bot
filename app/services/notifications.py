@@ -16,6 +16,7 @@ buys us four things that would otherwise be duplicated across ~20 handlers:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
@@ -50,6 +51,38 @@ _STYLE_ERROR_HINTS = ("style", "custom emoji", "icon_custom_emoji", "BUTTON_")
 
 #: Set once so an unbound bot warns a single time instead of on every message.
 _UNBOUND_WARNED = False
+
+#: A severity, either as the enum or as the string an error path happens to have
+#: at hand (``"critical"``).
+EventLevelLike = EventLevel | str
+
+#: Severity → the stdlib logging number it is reported at.
+_LOG_LEVELS: dict[EventLevel, int] = {
+    EventLevel.INFO: logging.INFO,
+    EventLevel.WARNING: logging.WARNING,
+    EventLevel.ERROR: logging.ERROR,
+    EventLevel.CRITICAL: logging.CRITICAL,
+}
+
+
+def coerce_event_level(level: EventLevelLike) -> EventLevel:
+    """Resolve a severity, whatever the caller passed, without ever raising.
+
+    Every caller sits on an error path — a failed bot startup, a rejected
+    handler — so a severity spelled as a string must not turn one logged
+    failure into a second one.  An unreadable value is recorded as ``info``
+    rather than dropped.
+    """
+    if isinstance(level, EventLevel):
+        return level
+    text = str(level).strip()
+    for candidate in (text.lower(), text.upper()):
+        try:
+            return EventLevel(candidate)
+        except ValueError:
+            continue
+    log.debug("Unknown event level %r; recorded as info instead", level)
+    return EventLevel.INFO
 
 
 @dataclass(slots=True)
@@ -482,7 +515,7 @@ class Notifier:
     # -- system events -----------------------------------------------------
     async def record_event(
         self,
-        level: EventLevel,
+        level: EventLevelLike,
         message: str,
         *,
         source: str = "app",
@@ -490,7 +523,8 @@ class Notifier:
         session: AsyncSession | None = None,
     ) -> None:
         """Persist an event for the panel, optionally notifying admins."""
-        payload = SystemEvent(level=level, source=source, message=message[:4000], meta=meta or {})
+        resolved = coerce_event_level(level)
+        payload = SystemEvent(level=resolved, source=source, message=message[:4000], meta=meta or {})
         try:
             if session is not None:
                 session.add(payload)
@@ -504,12 +538,7 @@ class Notifier:
             log.debug("Could not record system event: %s", exc)
             return
 
-        log.log(
-            {"info": 20, "warning": 30, "error": 40, "critical": 50}[level.value],
-            "[%s] %s",
-            source,
-            message,
-        )
+        log.log(_LOG_LEVELS[resolved], "[%s] %s", source, message)
 
     async def report_error(self, exc: BaseException, *, source: str, notify: bool = True) -> None:
         """Record an exception and (optionally) alert the operators."""
@@ -548,4 +577,4 @@ def _escape(value: Any) -> str:
 notifier = Notifier()
 
 
-__all__ = ["Media", "Notifier", "notifier"]
+__all__ = ["Media", "Notifier", "coerce_event_level", "notifier"]

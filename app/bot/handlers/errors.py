@@ -18,7 +18,7 @@ from app.bot.menus import default_main_menu
 from app.bot.utils import alert_text, show
 from app.core.errors import AppError
 from app.core.logging import get_logger
-from app.db.models import User
+from app.db.models import EventLevel, User
 from app.services.notifications import notifier
 from app.services.texts import html_escape, texts
 
@@ -34,7 +34,7 @@ async def on_error(event: ErrorEvent) -> bool:
 
     if isinstance(exception, AppError):
         log.warning("Handled AppError: %s", exception.message)
-        await notifier.record_event("warning", exception.message, source="handler")  # type: ignore[arg-type]
+        await notifier.record_event(EventLevel.WARNING, exception.message, source="handler")
     else:
         log.exception("Unhandled exception while processing an update", exc_info=exception)
         await notifier.report_error(exception, source="update")

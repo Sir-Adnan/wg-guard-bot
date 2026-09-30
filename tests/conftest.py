@@ -146,6 +146,14 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+# A module marked ``pytest.mark.anyio`` runs its tests on anyio's own event loop,
+# while the database fixtures below live on pytest-asyncio's session-scoped loop
+# (``asyncio_default_test_loop_scope`` in pyproject.toml).  A database test in
+# such a module passes and then fails in teardown with "Task … attached to a
+# different loop" — on Linux, where asyncpg checks.  Keep the ``anyio`` mark and
+# the ``session`` fixture out of the same module.
+
+
 @pytest.fixture(scope="session")
 def database_schema():
     """Create the schema once per session, drop it at the end.

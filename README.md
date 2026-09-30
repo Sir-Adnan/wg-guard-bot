@@ -13,6 +13,7 @@ Sales, card-to-card payment with multi-admin approval, wallet, trial service, su
 ## Table of contents
 
 - [Quick install](#quick-install)
+- [Control menu](#control-menu)
 - [Features](#features)
 - [Manual install](#manual-install)
 - [Configuration](#configuration)
@@ -39,6 +40,34 @@ The installer asks you these questions on the terminal, in English (bot token, n
 generating the secrets, bringing up the database, running the migrations and starting the bot.
 
 At the end it prints the panel URL, the username and the generated password. **Change the password on first login.**
+
+### Control menu
+
+One screen for the day-to-day jobs — status, live logs, database and `.env`
+backups, restore, domain and certificate, the panel password, maintenance and
+uninstall:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Sir-Adnan/wg-guard-bot/main/menu.sh)
+```
+
+It finds the project on its own (`--dir`, then the current directory, then its own
+directory, then `~/wg-guard-bot`), so it can be started from anywhere — or, if you
+are already inside the installation, with `bash menu.sh`. On a server where nothing
+is installed yet, item 1 fetches the installer and runs it.
+
+Every item is also a command, so nothing is menu-only:
+
+```bash
+bash menu.sh status          # services, panel health, live vs. checked-out revision
+bash menu.sh logs bot        # live log stream (bot, db, redis, caddy, all)
+bash menu.sh backup          # database + .env dump into ./backups
+bash menu.sh restore         # pick a dump and restore it
+bash menu.sh domain          # domain and certificate status
+bash menu.sh password        # reset the panel owner password
+```
+
+Full list: [docs/DEPLOYMENT.md → Control menu](docs/DEPLOYMENT.md#control-menu).
 
 ### Unattended install (script-friendly)
 
@@ -106,6 +135,7 @@ bash update.sh              # update to the latest version
 bash uninstall.sh           # stop and remove the containers (data is kept)
 bash uninstall.sh --purge   # full removal including the data
 bash menu.sh                # control menu: status, logs, backup, restore, uninstall
+bash <(curl -fsSL https://raw.githubusercontent.com/Sir-Adnan/wg-guard-bot/main/menu.sh)   # same menu, from anywhere
 ```
 
 `update.sh` rebuilds the image from the revision it pulled and then checks that the
@@ -452,7 +482,7 @@ pytest -q
 ```
 
 The database-backed tests are marked `db`; without a reachable database they are
-skipped rather than failed (87 pass, 108 skip), and every run prints which database
+skipped rather than failed (141 pass, 277 skip), and every run prints which database
 it probed. `make test-db` starts a throwaway PostgreSQL and `make test` runs the
 whole suite against it. Ports, containers and the exact environment block are in
 [`docs/VERIFICATION.md`](docs/VERIFICATION.md#4-the-environment-the-commands-need).
