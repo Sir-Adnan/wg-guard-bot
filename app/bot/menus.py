@@ -70,6 +70,20 @@ FEATURE_GATED: dict[str, str] = {
 }
 
 
+def _columns(key: str, default: int, *, maximum: int) -> int:
+    """How many buttons share a row on a list screen, from the owner's settings.
+
+    Read from the in-memory settings cache, so it costs nothing per screen — and
+    clamped, so a stored value from an older release (or a hand-edited row)
+    cannot build a keyboard Telegram refuses.
+    """
+    try:
+        value = int(app_settings.get_int(key, default))
+    except (TypeError, ValueError):  # pragma: no cover - a corrupt row
+        return default
+    return max(1, min(maximum, value))
+
+
 async def main_menu(
     session: AsyncSession | None,
     *,
@@ -153,7 +167,7 @@ async def category_list(
     plain :class:`~app.db.models.PlanCategory` rows.  ``back`` is the payload of
     the parent screen (see :mod:`app.bot.nav`) — never a guess.
     """
-    kb = KeyboardBuilder(session=session, columns=2)
+    kb = KeyboardBuilder(session=session, columns=_columns("appearance.category_columns", 2, maximum=4))
     for node in nodes:
         category = getattr(node, "category", node)
         total = getattr(node, "total_plans", None)
@@ -236,7 +250,7 @@ async def plan_list(
     ``back`` is the payload of the screen that opened this list; each plan
     button carries the page so the plan card can offer the same one back.
     """
-    kb = KeyboardBuilder(session=session, columns=1)
+    kb = KeyboardBuilder(session=session, columns=_columns("appearance.plan_columns", 1, maximum=2))
     for plan in plans:
         visual = "shop.test_plan" if plan.is_test else "shop.plan"
         await kb.add(
@@ -303,10 +317,18 @@ async def card_payment_actions(session: AsyncSession | None, order: Order) -> KB
     return kb.build()
 
 
-async def order_actions(session: AsyncSession | None, order: Order) -> KB:
+async def pending_order_actions(session: AsyncSession | None, order: Order, *, back: str | None = None) -> KB:
+    """The two doors out of «you already have an unfinished order».
+
+    Continue it, or start a clean one — both in one tap, because that screen is
+    otherwise a dead end for a customer who simply wants to buy.  «بازگشت» goes
+    to the plan they were looking at, not to the front of the shop.
+    """
     kb = KeyboardBuilder(session=session, columns=1)
-    await kb.add("buy.send_receipt", callback=BuyCB(action="send_receipt", order_id=order.id).pack())
-    await kb.add("menu.cancel", callback=BuyCB(action="cancel", order_id=order.id).pack(), new_row=True)
+    await kb.add("buy.resume_order", callback=BuyCB(action="resume", order_id=order.id).pack())
+    await kb.add("buy.new_order", callback=BuyCB(action="restart", order_id=order.id).pack())
+    kb.row()
+    await kb.add("menu.back", callback=back or nav.shop_home())
     return kb.build()
 
 
@@ -499,9 +521,9 @@ __all__ = [
     "deposit_amounts",
     "device_list",
     "main_menu",
-    "order_actions",
     "pagination",
     "payment_methods",
+    "pending_order_actions",
     "plan_actions",
     "plan_list",
     "receipt_review",

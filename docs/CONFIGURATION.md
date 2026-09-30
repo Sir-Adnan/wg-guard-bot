@@ -163,9 +163,10 @@ Notifications to admins (new order / receipt / ticket / error / user) and notifi
 |---|---|---|
 | Button colours | On | Requires Bot API 9.4+ |
 | Premium emoji | On | Requires a Fragment username for buttons |
-| Plans per row | 1 | Keyboard layout |
+| Plans per row | 1 | 1–2. How the plan buttons of a category or of «همه سرویس‌ها» are laid out |
+| **Categories per row** | 2 | 1–4. How category and sub-category buttons are laid out. A stored value outside the range is clamped, never sent to Telegram |
 | Show price in the list | On | |
-| **Physical keyboard** | Off | Draws the main menu as a Telegram *reply* keyboard under the input field, so it survives scrolling. It carries the same buttons, in the order set on the buttons page, and a press opens the same screen. Customers can hide it with `/keyboard off` and bring it back with `/keyboard` |
+| **Physical keyboard** | Off | Draws the main menu as a Telegram *reply* keyboard under the input field, so it survives scrolling. It carries the same buttons, in the order set on the buttons page, and a press opens the same screen. The buttons carry the same colours and premium emoji as the inline menu (two per row), and customers can hide the keyboard with `/keyboard off` and bring it back with `/keyboard`. A Bot API server that does not know the styling fields gets the plain labels automatically |
 
 ### Group "Advanced" (owner only)
 

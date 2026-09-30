@@ -103,10 +103,18 @@ def create_dispatcher(storage: BaseStorage | None = None) -> Dispatcher:
     membership = MembershipMiddleware()
     throttle = ThrottleMiddleware()
 
+    # ``outer_middleware``, not ``middleware``: aiogram resolves a handler's
+    # filters *before* it runs the observer's inner middlewares, so anything an
+    # inner middleware puts in ``data`` is invisible to a filter.  ``IsStaff()``
+    # and friends read ``data["staff"]``, which made every staff-only screen
+    # unreachable — the callback found no handler and the catch-all answered
+    # «این دکمه دیگر معتبر نیست» while the real handler sat one step away.
+    # Outer middlewares run before filter evaluation, which is where identity
+    # has to exist.  Registration order is execution order.
     for observer in (dispatcher.message, dispatcher.callback_query):
-        observer.middleware(context)
-        observer.middleware(membership)
-        observer.middleware(throttle)
+        observer.outer_middleware(context)
+        observer.outer_middleware(membership)
+        observer.outer_middleware(throttle)
 
     # -- routers -----------------------------------------------------------
     # ``build_root_router`` detaches the module-level routers from any previous

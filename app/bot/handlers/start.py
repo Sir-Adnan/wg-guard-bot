@@ -98,10 +98,10 @@ async def menu_profile(event: Message | CallbackQuery, session: AsyncSession, us
         services=str(stats.services_active),
     )
     kb = KeyboardBuilder(session=session, columns=1)
-    await kb.add("menu.referral", event=MenuCB(action="referral").pack())
-    await kb.add("menu.rules", event=MenuCB(action="rules").pack())
+    await kb.add("menu.referral", callback=MenuCB(action="referral").pack())
+    await kb.add("menu.rules", callback=MenuCB(action="rules").pack())
     kb.row()
-    await kb.add("menu.main", event=NavCB(to="main").pack())
+    await kb.add("menu.main", callback=NavCB(to="main").pack())
     await show(event, body, keyboard=kb.build())
 
 
@@ -153,7 +153,7 @@ async def menu_channels(event: Message | CallbackQuery, session: AsyncSession) -
         if channel.invite_link:
             await kb.add("menu.join", url=channel.invite_link, text=channel.title or None)
     kb.row()
-    await kb.add("menu.main", event=NavCB(to="main").pack())
+    await kb.add("menu.main", callback=NavCB(to="main").pack())
     await show(
         event,
         await texts.get(

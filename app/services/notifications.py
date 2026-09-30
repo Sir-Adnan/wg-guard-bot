@@ -157,7 +157,11 @@ class Notifier:
 
         markup, plain_markup = self._markups(keyboard)
         if reply_keyboard is not None:
-            markup, plain_markup = reply_keyboard, None
+            # One ``reply_markup`` per message, so a reply keyboard replaces the
+            # inline one — and it gets the same plain twin, because Telegram (or
+            # an older Bot API server) may reject ``style`` and
+            # ``icon_custom_emoji_id`` on a reply button too.
+            markup, plain_markup = self._markups(reply_keyboard)
 
         send_kwargs: dict[str, Any] = {"chat_id": chat_id, "reply_markup": markup, **kwargs}
         if media is None:

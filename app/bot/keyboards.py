@@ -46,6 +46,7 @@ class Button:
 
     visual_key: str | None = None
     text: str = ""
+    plain_text: str = ""
     callback_data: str | None = None
     url: str | None = None
     web_app: str | None = None
@@ -57,6 +58,72 @@ class Button:
 
     def merged_style(self) -> str | None:
         return self.style
+
+
+@dataclass(slots=True)
+class Visual:
+    """A resolved label: what it says, and how it is decorated.
+
+    Shared by inline *and* reply keyboards.  A reply keyboard can carry
+    ``style``/``icon_custom_emoji_id`` too (Bot API 9.4+), and the two families
+    must agree on when the Unicode fallback emoji is dropped — otherwise the same
+    button looks different depending on where it was drawn.
+    """
+
+    text: str
+    plain_text: str
+    style: str | None = None
+    icon_custom_emoji_id: str | None = None
+
+
+async def resolve_visual(
+    visual_key: str | None,
+    session=None,
+    *,
+    text: str | None = None,
+    emoji_key: str | None = None,
+    style: str | None = None,
+    icon_custom_emoji_id: str | None = None,
+    styles: bool | None = None,
+    emoji: bool | None = None,
+) -> Visual:
+    """Resolve one button's appearance from the catalog, with optional overrides.
+
+    ``text`` replaces the catalog label (the category tree shows a name plus a
+    count, the plan list a name plus a price).  ``plain_text`` is what the same
+    button says when premium emoji are unavailable, and it is also what a reply
+    keyboard sends back to us when the customer presses it.
+    """
+    styles = button_styles_enabled() if styles is None else styles
+    emoji = premium_emoji_enabled() if emoji is None else emoji
+
+    resolved = await appearance.resolve(visual_key, session) if visual_key else None
+    raw_text = text if text is not None else (resolved.label if resolved else "")
+    resolved_style = style if style is not None else (resolved.style if resolved else None)
+    resolved_icon = (
+        icon_custom_emoji_id
+        if icon_custom_emoji_id is not None
+        else (resolved.icon_custom_emoji_id if resolved else None)
+    )
+    fallback = resolved.emoji_fallback if resolved else ""
+
+    clean, inline_emoji, inline_fallback = _split_label(raw_text, fallback)
+    chosen_emoji = emoji_key or inline_emoji
+    if chosen_emoji:
+        emoji_visual = await appearance.resolve(f"emoji.{chosen_emoji}", session)
+        fallback = emoji_visual.emoji_fallback or inline_fallback
+        if resolved_icon is None or emoji_key:
+            resolved_icon = emoji_visual.icon_custom_emoji_id
+
+    plain_text = _compose_label(clean, fallback, has_custom=False)
+    if not emoji:
+        resolved_icon = None
+    return Visual(
+        text=_compose_label(clean, fallback, has_custom=bool(resolved_icon)),
+        plain_text=plain_text,
+        style=resolved_style if styles else None,
+        icon_custom_emoji_id=resolved_icon,
+    )
 
 
 @dataclass(slots=True)
@@ -114,25 +181,6 @@ def _compose_label(clean: str, fallback: str, *, has_custom: bool) -> str:
     if clean.startswith(fallback):
         return clean
     return f"{fallback} {clean}".strip()
-
-
-async def resolve_reply_label(visual_key: str, session=None) -> str:
-    """The label a *reply* (physical) keyboard button shows.
-
-    A reply keyboard carries no ``icon_custom_emoji_id``: Telegram would render
-    the id as text.  The label is therefore the resolved text with its Unicode
-    emoji, exactly as the inline builder would compose it with styling off — and
-    it doubles as the route, because a press arrives as plain text.
-    """
-    resolved = await appearance.resolve(visual_key, session) if visual_key else None
-    if resolved is None:
-        return visual_key
-    clean, inline_emoji, _fallback = _split_label(resolved.label or visual_key, resolved.emoji_fallback or "")
-    fallback = resolved.emoji_fallback or ""
-    if inline_emoji:
-        emoji_visual = await appearance.resolve(f"emoji.{inline_emoji}", session)
-        fallback = emoji_visual.emoji_fallback or fallback
-    return _compose_label(clean, fallback, has_custom=False)
 
 
 class KeyboardBuilder:
@@ -194,38 +242,28 @@ class KeyboardBuilder:
         if len(self._current) >= self.columns:
             self.row()
 
-        resolved = await appearance.resolve(visual_key, self.session) if visual_key else None
-        raw_text = text if text is not None else (resolved.label if resolved else "")
-        resolved_style = style if style is not None else (resolved.style if resolved else None)
-        resolved_icon = (
-            icon_custom_emoji_id
-            if icon_custom_emoji_id is not None
-            else (resolved.icon_custom_emoji_id if resolved else None)
+        visual = await resolve_visual(
+            visual_key,
+            self.session,
+            text=text,
+            emoji_key=emoji_key,
+            style=style,
+            icon_custom_emoji_id=icon_custom_emoji_id,
+            styles=self.styles,
+            emoji=self.emoji,
         )
-        fallback = resolved.emoji_fallback if resolved else ""
-
-        clean, inline_emoji, inline_fallback = _split_label(raw_text, fallback)
-        chosen_emoji = emoji_key or inline_emoji
-        if chosen_emoji:
-            emoji_visual = await appearance.resolve(f"emoji.{chosen_emoji}", self.session)
-            fallback = emoji_visual.emoji_fallback or inline_fallback
-            if resolved_icon is None or emoji_key:
-                resolved_icon = emoji_visual.icon_custom_emoji_id
-
-        if not self.emoji:
-            resolved_icon = None
-        label = _compose_label(clean, fallback, has_custom=bool(resolved_icon))
 
         button = Button(
             visual_key=visual_key,
-            text=label,
+            text=visual.text,
+            plain_text=visual.plain_text,
             callback_data=callback,
             url=url,
             web_app=web_app,
             switch_inline_query=switch_inline_query,
             copy_text=copy_text,
-            style=resolved_style if self.styles else None,
-            icon_custom_emoji_id=resolved_icon,
+            style=visual.style,
+            icon_custom_emoji_id=visual.icon_custom_emoji_id,
             width=width,
         )
         for _ in range(max(1, width)):
@@ -314,7 +352,7 @@ class KeyboardBuilder:
 
 def _fallback_text(button: Button) -> str:
     """Text used in the unstyled twin — keeps the Unicode emoji, drops ids."""
-    return button.text
+    return button.plain_text or button.text
 
 
 # ---------------------------------------------------------------------------
@@ -378,9 +416,10 @@ __all__ = [
     "KB",
     "Button",
     "KeyboardBuilder",
+    "Visual",
     "back_row",
     "confirm_row",
     "pagination_row",
-    "resolve_reply_label",
+    "resolve_visual",
     "rows_to_specs",
 ]

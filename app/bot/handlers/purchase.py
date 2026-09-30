@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.callbacks import BuyCB, MenuCB, NavCB
-from app.bot.keyboards import KeyboardBuilder
+from app.bot.keyboards import KB, KeyboardBuilder
 from app.bot.menus import card_payment_actions, default_main_menu, payment_methods, service_detail
 from app.bot.states import ShopStates
 from app.bot.utils import answer_callback, show
@@ -17,7 +17,8 @@ from app.core.errors import AppError, InsufficientFunds
 from app.core.jalali import jalali_datetime
 from app.core.logging import get_logger
 from app.core.money import format_amount
-from app.db.models import CardAccount, Order, OrderStatus, PaymentMethod, Service, User
+from app.db.models import CardAccount, Order, OrderStatus, PaymentMethod, Plan, Service, User
+from app.services.catalog import catalog
 from app.services.delivery import delivery
 from app.services.notifications import notifier
 from app.services.orders import order_service
@@ -226,6 +227,128 @@ async def retry_order(callback: CallbackQuery, callback_data: BuyCB, session: As
     await order_service.retry_provisioning(session, order)
     await answer_callback(callback, "در حال تلاش دوباره…")
     await finalize_order(callback, session, order)
+
+
+# ---------------------------------------------------------------------------
+# An unfinished order: continue it, or start a clean one
+# ---------------------------------------------------------------------------
+@router.callback_query(BuyCB.filter(F.action == "resume"))
+async def resume_order(
+    callback: CallbackQuery, callback_data: BuyCB, session: AsyncSession, user: User, state: FSMContext
+) -> None:
+    """Take the customer back to wherever their unfinished order stopped."""
+    order = await _load_order(session, callback_data.order_id, user)
+    if order is None or not order.is_open:
+        await callback.answer(await texts.get("error.expired_action", session), show_alert=True)
+        return
+    await answer_callback(callback)
+    # Whatever half-finished flow was pending (a receipt photo, a discount code)
+    # is not what the customer just asked for.
+    await state.clear()
+    body, keyboard = await order_next_step(session, order)
+    await show(callback, body, keyboard=keyboard)
+
+
+async def order_next_step(session: AsyncSession, order: Order) -> tuple[str, KB]:
+    """What an unfinished order still needs, and the buttons that move it on.
+
+    The screen used to be the same two buttons whatever the status, so a
+    customer whose receipt was already with the reviewers was invited to send it
+    again — and one who had never chosen a payment method was offered a receipt
+    button for an order that had no amount due yet.
+    """
+    if order.status is OrderStatus.AWAITING_REVIEW:
+        return await texts.get("buy.awaiting_review", session, order=order.order_code), await default_main_menu(session)
+    if order.status in (OrderStatus.PAID, OrderStatus.PROVISIONING):
+        return await texts.get("buy.in_progress", session, order=order.order_code), await default_main_menu(session)
+
+    if order.status is OrderStatus.FAILED:
+        kb = KeyboardBuilder(session=session, columns=1)
+        await kb.add("buy.retry", callback=BuyCB(action="retry", order_id=order.id).pack())
+        await kb.add("menu.support", callback=MenuCB(action="support").pack())
+        kb.row()
+        await kb.add("menu.main", callback=NavCB(to="main").pack())
+        body = await texts.get(
+            "buy.failed",
+            session,
+            order=order.order_code,
+            reason=html_escape(order.failure_reason or "—"),
+        )
+        return body, kb.build()
+
+    # Draft or waiting to be paid: the customer still has to pick a method.
+    body = await texts.get(
+        "buy.choose_method",
+        session,
+        plan=html_escape(order.plan_name),
+        price=format_amount(order.payable_rial),
+    )
+    return body, await payment_methods(session, order, card=card_payments_enabled(), wallet=wallet_enabled())
+
+
+@router.callback_query(BuyCB.filter(F.action == "restart"))
+async def restart_order(
+    callback: CallbackQuery, callback_data: BuyCB, session: AsyncSession, user: User, state: FSMContext
+) -> None:
+    """Close the unfinished order and start a clean one for the same plan.
+
+    Only an order that has not been paid for is thrown away.  A card payment
+    lives outside the wallet, so cancelling an order whose receipt is being
+    reviewed would strand the customer's money until a human untangled it — that
+    is a support conversation, not a button.
+    """
+    order = await _load_order(session, callback_data.order_id, user)
+    if order is None:
+        await callback.answer(await texts.get("error.expired_action", session), show_alert=True)
+        return
+
+    if order.status not in (OrderStatus.DRAFT, OrderStatus.PENDING_PAYMENT):
+        await callback.answer(await texts.get("buy.cannot_restart", session), show_alert=True)
+        body, keyboard = await order_next_step(session, order)
+        await show(callback, body, keyboard=keyboard)
+        return
+
+    plan = order.plan
+    await order_service.cancel(session, order, reason="شروع سفارش تازه توسط کاربر")
+    await state.clear()
+
+    if plan is None or not plan.is_active:
+        await answer_callback(callback)
+        await show(callback, await texts.get("error.not_found", session), keyboard=await default_main_menu(session))
+        return
+    if not catalog.is_available(plan):
+        await answer_callback(callback)
+        await show(callback, await texts.get("shop.sold_out", session), keyboard=await default_main_menu(session))
+        return
+
+    await answer_callback(callback)
+    await begin_order(callback, session, user, plan)
+
+
+async def begin_order(event: CallbackQuery | Message, session: AsyncSession, user: User, plan: Plan) -> Order | None:
+    """Create the order and show the next step.
+
+    Shared by the shop's «همین را می‌خواهم» and by «سفارش تازه», so both routes
+    price, create and continue an order the same way.
+    """
+    try:
+        order = await order_service.create(session, user, plan)
+    except AppError as exc:
+        await answer_callback(event, exc.message[:190], alert=True)
+        return None
+
+    if order.payable_rial <= 0:
+        await finalize_order(event, session, order)
+        return order
+
+    await show(
+        event,
+        await texts.get(
+            "buy.choose_method", session, plan=html_escape(plan.name), price=format_amount(order.payable_rial)
+        ),
+        keyboard=await payment_methods(session, order, card=card_payments_enabled(), wallet=wallet_enabled()),
+    )
+    return order
 
 
 # ---------------------------------------------------------------------------

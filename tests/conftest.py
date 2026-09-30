@@ -455,6 +455,9 @@ class RecordingBot:
     exactly which keywords reached which method.
     """
 
+    #: ``Dispatcher``'s FSM middleware keys its storage on ``bot.id``, so a double
+    #: that is fed a real update needs one.
+    id: int = 424_242
     calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
     def _record(self, name: str, kwargs: dict[str, Any]) -> Any:
@@ -495,6 +498,32 @@ class RecordingBot:
     async def forward_message(self, **kwargs: Any) -> Any:
         return self._record("forward_message", kwargs)
 
+    async def answer_callback_query(self, **kwargs: Any) -> Any:
+        return self._record("answer_callback_query", kwargs)
+
+    async def __call__(self, method: Any, **kwargs: Any) -> Any:
+        """``callback.answer()`` and friends reach the API as ``bot(method)``."""
+        fields = method.model_dump(exclude_none=True) if hasattr(method, "model_dump") else {}
+        return self._record(type(method).__name__, fields)
+
+    def texts(self) -> list[str]:
+        """Every piece of text this bot was asked to display, in order."""
+        out: list[str] = []
+        for _name, kwargs in self.calls:
+            for key in ("text", "caption"):
+                value = kwargs.get(key)
+                if isinstance(value, str):
+                    out.append(value)
+        return out
+
+    def alerts(self) -> list[str]:
+        """Texts shown as a callback alert (the stale-button net uses this)."""
+        return [
+            kwargs.get("text") or ""
+            for name, kwargs in self.calls
+            if name in {"answer_callback_query", "AnswerCallbackQuery"}
+        ]
+
     def methods(self) -> list[str]:
         return [name for name, _ in self.calls]
 
@@ -534,3 +563,57 @@ def bound_notifier(recording_bot: RecordingBot):
     notifier.bind(recording_bot)  # type: ignore[arg-type]
     yield notifier
     notifier.unbind()
+
+
+@pytest.fixture
+def feed_update():
+    """Feed one update through the **real** dispatcher.
+
+    Handler-level tests call a function; this calls the bot.  The difference is
+    everything the dispatcher decides: middleware data reaching (or not
+    reaching) a filter, router order, ``CallbackData`` parsing, the fallbacks.
+    Pair it with the ``_clean_dispatcher`` fixture in the test module so the
+    router tree is rebuilt per test.
+    """
+    from datetime import UTC, datetime
+
+    from aiogram.fsm.storage.memory import MemoryStorage
+    from aiogram.types import CallbackQuery, Chat, Message, Update
+    from aiogram.types import User as TelegramUser
+
+    from app.bot.setup import create_dispatcher, reset_dispatcher
+
+    async def _feed(
+        bot,
+        *,
+        callback: str | None = None,
+        text: str | None = None,
+        telegram_id: int = 1,
+        message_id: int = 42,
+    ) -> None:
+        # A fresh tree per feed, so one test can press several buttons in a row.
+        # The module routers are detached from their previous parent first
+        # (``build_root_router``), which is why this is safe to repeat.
+        reset_dispatcher()
+        dispatcher = create_dispatcher(MemoryStorage())
+        sender = TelegramUser(id=telegram_id, is_bot=False, first_name="tester")
+        message = Message(
+            message_id=message_id,
+            date=datetime.now(UTC),
+            chat=Chat(id=telegram_id, type="private"),
+            from_user=sender,
+            text=text,
+        ).as_(bot)
+        if callback is None:
+            await dispatcher.feed_update(bot, Update(update_id=1, message=message))
+            return
+        query = CallbackQuery(
+            id="cb-1",
+            from_user=sender,
+            chat_instance="chat-instance",
+            message=message,
+            data=callback,
+        ).as_(bot)
+        await dispatcher.feed_update(bot, Update(update_id=1, callback_query=query))
+
+    return _feed

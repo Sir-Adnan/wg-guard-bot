@@ -23,8 +23,7 @@ from app.bot.keyboards import KB
 from app.bot.menus import (
     back_to_main,
     category_list,
-    order_actions,
-    payment_methods,
+    pending_order_actions,
     plan_actions,
     plan_list,
 )
@@ -114,7 +113,6 @@ async def render_catalog(
     was unreachable from the bot.
     """
     roots = await categories.roots(session)
-    featured_count = len(await catalog.list_plans(session, featured_only=True))
 
     # -- owner has not built a tree yet: keep the classic flat catalog -----
     if not roots and action in ("home", "open"):
@@ -185,6 +183,12 @@ async def render_catalog(
         except AppError:
             node = None
 
+    # «پیشنهاد ویژه» and «همه سرویس‌ها» are doors out of the shop, so they belong
+    # to the front page only: a customer who has already walked into a category
+    # wanted that category, and offering them the whole catalogue again buried
+    # the sub-categories they came for.
+    featured_count = len(await catalog.list_plans(session, featured_only=True)) if node is None else 0
+
     children = await categories.children(session, node.id if node else None)
     plans: list[Plan] = []
     if node is not None:
@@ -216,15 +220,15 @@ async def render_catalog(
             back=back,
         )
         if children:
-            kb = await _append_categories(session, kb, children, featured_count=featured_count, back=back)
+            kb = await _append_categories(session, kb, children, back=back)
         await show(event, body, keyboard=kb)
         return
 
     kb = await category_list(
         session,
         list(children),
-        show_all=True,
-        show_featured=featured_count > 0,
+        show_all=node is None,
+        show_featured=node is None and featured_count > 0,
         page=page,
         total_pages=1,
         back=back,
@@ -239,8 +243,11 @@ def _parent_of(node: PlanCategory) -> str:
     return nav.shop_home()
 
 
-async def _append_categories(session: AsyncSession, kb: KB, children: Sequence, *, featured_count: int, back: str):
-    """Add this node's sub-categories under its plans, reusing ``category_list``."""
+async def _append_categories(session: AsyncSession, kb: KB, children: Sequence, *, back: str):
+    """Add this node's sub-categories under its plans, reusing ``category_list``.
+
+    No «همه سرویس‌ها»/«پیشنهاد ویژه» here: those belong to the front page.
+    """
     nested = await category_list(
         session,
         list(children),
@@ -364,32 +371,16 @@ async def buy_plan(callback: CallbackQuery, callback_data: PlanCB, session: Asyn
         await show(
             callback,
             await texts.get("buy.duplicate", session, order=same.order_code),
-            keyboard=await order_actions(session, same),
+            keyboard=await pending_order_actions(
+                session, same, back=nav.plan_parent(category_id=plan.category_id, page=callback_data.page)
+            ),
         )
         return
 
-    try:
-        order = await order_service.create(session, user, plan)
-    except AppError as exc:
-        await callback.answer(exc.message[:190], show_alert=True)
-        return
-
     await answer_callback(callback)
+    from app.bot.handlers.purchase import begin_order
 
-    if order.payable_rial <= 0:
-        from app.bot.handlers.purchase import finalize_order
-
-        await finalize_order(callback, session, order)
-        return
-
-    body = await texts.get(
-        "buy.choose_method", session, plan=html_escape(plan.name), price=format_amount(order.payable_rial)
-    )
-    await show(
-        callback,
-        body,
-        keyboard=await payment_methods(session, order, card=card_payments_enabled(), wallet=wallet_enabled()),
-    )
+    await begin_order(callback, session, user, plan)
 
 
 __all__ = ["PLANS_PER_PAGE", "render_catalog", "render_plan", "router"]

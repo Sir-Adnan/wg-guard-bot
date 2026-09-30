@@ -16,6 +16,7 @@ import pytest
 
 from app.bot import reply_menu
 from app.services import menu_layout
+from app.services.appearance import appearance
 from app.services.settings_store import app_settings
 
 pytestmark = pytest.mark.db
@@ -143,12 +144,68 @@ async def test_the_markup_is_a_real_reply_keyboard(session) -> None:
 
     await _enable(session)
     try:
-        markup = await reply_menu.build(session)
+        keyboard = await reply_menu.build(session)
+        assert keyboard is not None
+        markup = keyboard.markup
         assert isinstance(markup, ReplyKeyboardMarkup)
         assert markup.resize_keyboard is True
-        # Two buttons per row, like the inline menu.
+        # Two buttons per row: a phone wraps a reply keyboard by label width.
         assert all(len(row) <= 2 for row in markup.keyboard)
+        assert len(markup.keyboard) >= 1
     finally:
+        await _disable(session)
+
+
+async def test_the_buttons_carry_their_colour_and_premium_emoji(session) -> None:
+    """A reply button can be styled too — it was drawn as plain text before.
+
+    ``style`` and ``icon_custom_emoji_id`` exist on ``KeyboardButton`` in the
+    same Bot API version that added them for inline buttons, so the physical
+    keyboard has no reason to look like a terminal.
+    """
+    await _enable(session)
+    try:
+        # The owner configures premium emoji on the emoji itself; every button
+        # linked to it borrows both the id and the Unicode fallback.
+        await appearance.set_visual(
+            session,
+            "emoji.cart",
+            style=None,
+            icon_custom_emoji_id="5368324170671202286",
+        )
+        keyboard = await reply_menu.build(session)
+        assert keyboard is not None
+
+        buttons = [button for row in keyboard.markup.keyboard for button in row]
+        styled = next(button for button in buttons if "خرید سرویس" in button.text)
+        assert styled.style == "success"
+        assert styled.icon_custom_emoji_id == "5368324170671202286"
+        # With a premium icon the Unicode emoji is dropped, as it is inline …
+        assert not styled.text.startswith("🛒")
+
+        # … and the plain twin keeps it, so an old API server still shows one.
+        plain = keyboard.plain()
+        assert plain is not None
+        plain_buttons = [button for row in plain.keyboard for button in row]
+        assert all(button.icon_custom_emoji_id is None for button in plain_buttons)
+        assert all(button.style is None for button in plain_buttons)
+        assert any(button.text.startswith("🛒") for button in plain_buttons)
+    finally:
+        await appearance.reset(session, ["emoji.cart"])
+        await _disable(session)
+
+
+async def test_both_label_variants_route_to_the_same_action(session) -> None:
+    """A keyboard already on a phone may have been drawn either way."""
+    await _enable(session)
+    try:
+        await appearance.set_visual(session, "emoji.cart", icon_custom_emoji_id="5368324170671202286")
+        spec = next(spec for spec in await reply_menu.buttons(session) if spec.visual_key == "menu.buy")
+        assert spec.routes == ("خرید سرویس", "🛒 خرید سرویس")
+        for label in spec.routes:
+            assert await reply_menu.match(session, label) == "buy"
+    finally:
+        await appearance.reset(session, ["emoji.cart"])
         await _disable(session)
 
 

@@ -9,6 +9,57 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+The whole operator surface inside the bot was unreachable, and the physical
+keyboard crashed on some buttons. Both had one root cause each, and both now have
+a test that runs a real update through the assembled dispatcher.
+
+- **Staff buttons answer again: receipts, users, orders, broadcast.**  aiogram
+  evaluates a handler's filters *before* it runs the observer's **inner**
+  middlewares, and `ContextMiddleware` — which resolves who is talking —
+  was registered as an inner middleware.  So `data["staff"]` did not exist yet
+  when `IsStaff()` asked for it, every staff-only filter answered "no", and the
+  catch-all handed the operator «این دکمه دیگر معتبر نیست» on a receipt they were
+  supposed to approve.  Identity is now resolved by **outer** middlewares, which
+  run before filter evaluation. Nothing else about the middleware order changed.
+
+- **A physical-keyboard press no longer crashes a screen.**  Seven buttons were
+  built with `kb.add(..., event=…)`, a keyword the keyboard builder has never
+  accepted — `TypeError: KeyboardBuilder.add() got an unexpected keyword argument
+  'event'` for the empty-services screen and for the profile and channels
+  screens. Every reply button is now rendered by the test suite.
+
+- **Typing a question gets an answer again.**  The reply-keyboard router matched
+  *every* stateless text message and then ignored the ones that were not a menu
+  label — and a matched handler ends the dispatch, so the fallback never ran and
+  the customer was met with silence. The label check is now a filter
+  (`ReplyButton`), which claims the message only when it really is a button.
+
+- **The physical keyboard has colours and premium emoji.**  `KeyboardButton`
+  carries `style` and `icon_custom_emoji_id` in the same Bot API version that
+  added them for inline buttons, so the reply keyboard can look like the rest of
+  the bot instead of plain text. Both variants are accepted as a route, because a
+  keyboard already on a phone may have been drawn either way — and the notifier
+  falls back to the unstyled twin when a Bot API server rejects the fields.
+
+- **An unfinished order is no longer a dead end.**  «یک سفارش ناتمام برای این پلن
+  دارید» offered a receipt button and a cancel button, which are the wrong two
+  answers for an order that has not reached the receipt step. It now offers
+  «ادامه سفارش» — which lands on the *right* step for that order (payment method,
+  awaiting review, in progress, or retry) — and «سفارش تازه», which closes the
+  unpaid order and starts a clean one. An order that was already paid for is never
+  thrown away by that button: card money is not in the wallet, so cancelling it
+  needs a human.
+
+- **A sub-category shows its own services.**  «پیشنهاد ویژه» and «همه سرویس‌ها»
+  are doors out of the shop; they belong to the front page and no longer follow
+  the customer down into every category, where they buried the sub-categories.
+
+- **`appearance.plan_columns` now does something, and category rows are
+  configurable.**  The setting was declared in the panel and read by nothing.
+  Plan lists honour it, and the new «تعداد دسته‌بندی در هر ردیف»
+  (`appearance.category_columns`, 1–4, default 2) lays out category and
+  sub-category buttons.
+
 Operator-facing text is English everywhere: the installer, updater and uninstaller
 no longer print Persian, which Linux terminals render reversed (the Makefile help,
 `.env.example` and `docker-compose.override.example.yml` comments follow). Bot copy,

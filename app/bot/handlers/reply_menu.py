@@ -13,13 +13,14 @@ registers the same function the inline button calls (see
 
 from __future__ import annotations
 
-from aiogram import F, Router
+from aiogram import Router
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot import reply_menu
+from app.bot.filters import ReplyButton
 from app.bot.handlers import gift as gift_handlers
 from app.bot.handlers import guides as guide_handlers
 from app.bot.handlers import services as service_handlers
@@ -167,21 +168,24 @@ async def command_keyboard(
 # ---------------------------------------------------------------------------
 # A press
 # ---------------------------------------------------------------------------
-@router.message(StateFilter(None), F.text)
-async def reply_button(message: Message, session: AsyncSession, user: User, staff: Staff | None = None) -> None:
-    """Route an exact menu label; anything else belongs to the catch-all.
+@router.message(StateFilter(None), ReplyButton())
+async def reply_button(
+    message: Message, session: AsyncSession, user: User, reply_action: str, staff: Staff | None = None
+) -> None:
+    """Open the screen behind an exact menu label.
+
+    The label check lives in :class:`~app.bot.filters.ReplyButton`, which injects
+    the action it resolved.  Anything that is *not* a label must stay unhandled
+    here — it belongs to the catch-all, and a customer who types a question is
+    owed an answer rather than silence.
 
     Deliberately *not* gated on the setting: a keyboard the owner switched off
     may still be sitting on a customer's phone, and its buttons are exactly the
     inline menu's actions — so pressing one keeps working instead of doing
     nothing at all.  The setting controls whether we *send* the keyboard.
     """
-    action = await reply_menu.match(session, message.text or "", is_staff=staff is not None)
-    if action is None:
-        return
-
-    log.debug("Reply keyboard press %r → %s", message.text, action)
-    await reply_menu.open(action, message, session, user, staff)
+    log.debug("Reply keyboard press %r → %s", message.text, reply_action)
+    await reply_menu.open(reply_action, message, session, user, staff)
 
 
 __all__ = ["router", "send_keyboard"]

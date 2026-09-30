@@ -55,10 +55,10 @@ async def _render_list(event: Message | CallbackQuery, session: AsyncSession, us
     services = await user_service_list(session, user.id)
     if not services:
         kb = KeyboardBuilder(session=session, columns=1)
-        await kb.add("menu.buy", event=MenuCB(action="buy").pack())
-        await kb.add("menu.test", event=MenuCB(action="test").pack())
+        await kb.add("menu.buy", callback=MenuCB(action="buy").pack())
+        await kb.add("menu.test", callback=MenuCB(action="test").pack())
         kb.row()
-        await kb.add("menu.main", event=NavCB(to="main").pack())
+        await kb.add("menu.main", callback=NavCB(to="main").pack())
         await show(event, await texts.get("service.empty", session), keyboard=kb.build())
         return
 

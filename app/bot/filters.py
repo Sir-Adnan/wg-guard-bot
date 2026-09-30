@@ -45,4 +45,28 @@ class HasText(BaseFilter):
         return bool(text and text.strip())
 
 
-__all__ = ["HasText", "IsAdmin", "IsOwner", "IsPrivateChat", "IsStaff"]
+class ReplyButton(BaseFilter):
+    """True when a message is **exactly** one of the physical keyboard's labels.
+
+    A reply-keyboard press arrives as plain text, so the router that serves it
+    has to decide "is this a button?" *before* claiming the message: a handler
+    whose filters match ends the dispatch, and anything it silently ignores never
+    reaches the catch-all.  Answering a question with silence is worse than
+    answering it badly.
+
+    Returns the resolved action as filter data (``reply_action``) so the handler
+    does not have to resolve the label a second time.
+    """
+
+    async def __call__(self, event: TelegramObject, **data: Any) -> bool | dict[str, Any]:
+        from app.bot import reply_menu
+
+        session = data.get("session")
+        text = (getattr(event, "text", None) or "").strip()
+        if session is None or not text:
+            return False
+        action = await reply_menu.match(session, text, is_staff=bool(data.get("is_staff")))
+        return {"reply_action": action} if action else False
+
+
+__all__ = ["HasText", "IsAdmin", "IsOwner", "IsPrivateChat", "IsStaff", "ReplyButton"]

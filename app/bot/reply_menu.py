@@ -21,13 +21,14 @@ Two rules keep it honest:
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from aiogram.types import Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.keyboards import resolve_reply_label
+from app.bot.keyboards import KB, Visual, resolve_visual
 from app.bot.menus import FEATURE_GATED, MENU_ACTIONS
 from app.core.logging import get_logger
 from app.db.models import User
@@ -53,6 +54,36 @@ SCREENS: dict[str, Screen] = {}
 #: Shown when the keyboard is (re)sent, so the customer knows what it is.
 HINT_KEY = "menu.reply_keyboard_hint"
 
+#: How many buttons share a row on the physical keyboard.  Deliberately not the
+#: owner's inline layout: a phone wraps a reply keyboard by label width anyway,
+#: and two per row is what reads well there.
+REPLY_ROW_BUTTONS = 2
+
+
+@dataclass(frozen=True, slots=True)
+class ButtonSpec:
+    """One physical button.
+
+    The label *is* the route — a reply-keyboard press arrives as plain text — so
+    every text this button could send back is a valid way in.  With premium emoji
+    the label drops its Unicode emoji (the icon replaces it), and a keyboard
+    already sitting on a phone may have been drawn either way: :attr:`routes`
+    accepts both, and the action is the same.
+    """
+
+    visual_key: str
+    action: str
+    visual: Visual
+
+    @property
+    def label(self) -> str:
+        return self.visual.text
+
+    @property
+    def routes(self) -> tuple[str, ...]:
+        texts = (self.label, self.visual.plain_text)
+        return tuple(dict.fromkeys(text for text in texts if text))
+
 
 def screen(action: str):
     """Register the function that opens ``action`` for both keyboards."""
@@ -70,8 +101,8 @@ def enabled() -> bool:
     return reply_keyboard_enabled()
 
 
-async def actions(session: AsyncSession | None, *, is_staff: bool = False) -> list[tuple[str, str]]:
-    """``[(label, action)]`` for the buttons the customer should see, in order.
+async def buttons(session: AsyncSession | None, *, is_staff: bool = False) -> list[ButtonSpec]:
+    """The buttons the customer should see, in the owner's order.
 
     The owner's layout decides the rows; the feature switches decide which of
     those buttons are live, exactly as they do for the inline menu.
@@ -82,7 +113,7 @@ async def actions(session: AsyncSession | None, *, is_staff: bool = False) -> li
         "guides": app_settings.get_bool("shop.guides_enabled", True),
         "gift": app_settings.get_bool("shop.gift_enabled", True),
     }
-    out: list[tuple[str, str]] = []
+    out: list[ButtonSpec] = []
     for row in await menu_layout.rows(session):
         for visual_key in row.keys:
             feature = FEATURE_GATED.get(visual_key)
@@ -91,33 +122,58 @@ async def actions(session: AsyncSession | None, *, is_staff: bool = False) -> li
             action = MENU_ACTIONS.get(visual_key)
             if action is None:
                 continue
-            label = await resolve_reply_label(visual_key, session)
-            out.append((label, action[0]))
-    if is_staff and "admin" not in {action for _label, action in out}:
-        out.append((await resolve_reply_label("admin.broadcast", session), "admin"))
+            out.append(ButtonSpec(visual_key, action[0], await resolve_visual(visual_key, session)))
+    if is_staff and "admin" not in {spec.action for spec in out}:
+        out.append(ButtonSpec("admin.broadcast", "admin", await resolve_visual("admin.broadcast", session)))
     return out
+
+
+async def actions(session: AsyncSession | None, *, is_staff: bool = False) -> list[tuple[str, str]]:
+    """``[(label, action)]`` with the Unicode emoji — the label without styling."""
+    return [(spec.visual.plain_text, spec.action) for spec in await buttons(session, is_staff=is_staff)]
 
 
 async def labels(session: AsyncSession | None, *, is_staff: bool = False) -> dict[str, str]:
     """``{label: action}`` — the routing table for an incoming text message."""
-    return dict(await actions(session, is_staff=is_staff))
+    table: dict[str, str] = {}
+    for spec in await buttons(session, is_staff=is_staff):
+        for text in spec.routes:
+            table.setdefault(text, spec.action)
+    return table
 
 
-async def build(session: AsyncSession | None, *, is_staff: bool = False) -> ReplyKeyboardMarkup | None:
-    """The keyboard itself, or ``None`` when the feature is off or empty."""
+async def build(session: AsyncSession | None, *, is_staff: bool = False) -> KB | None:
+    """The keyboard itself, or ``None`` when the feature is off or empty.
+
+    Returns a :class:`~app.bot.keyboards.KB` rather than a bare markup so the
+    notifier can fall back to an unstyled twin: ``style`` and
+    ``icon_custom_emoji_id`` are recent Bot API fields, and a self-hosted API
+    server that does not know them would otherwise refuse the whole message.
+    """
     if not enabled():
         return None
-    buttons = await actions(session, is_staff=is_staff)
-    if not buttons:
+    specs = await buttons(session, is_staff=is_staff)
+    if not specs:
         return None
 
-    builder = ReplyKeyboardBuilder()
-    for label, _action in buttons:
-        builder.button(text=label)
-    # Two per row, like the inline menu; the layout's own row shape is not
-    # reproduced because a phone keyboard wraps by label width anyway.
-    builder.adjust(2)
-    return builder.as_markup(resize_keyboard=True, is_persistent=True)
+    def factory(*, styled: bool) -> ReplyKeyboardMarkup:
+        builder = ReplyKeyboardBuilder()
+        for spec in specs:
+            if styled:
+                builder.button(
+                    text=spec.label,
+                    style=spec.visual.style,
+                    icon_custom_emoji_id=spec.visual.icon_custom_emoji_id,
+                )
+            else:
+                builder.button(text=spec.visual.plain_text)
+        builder.adjust(REPLY_ROW_BUTTONS)
+        return builder.as_markup(resize_keyboard=True, is_persistent=True)
+
+    markup = factory(styled=True)
+    plain = factory(styled=False)
+    same = markup.model_dump(exclude_none=True) == plain.model_dump(exclude_none=True)
+    return KB(markup=markup, _plain_factory=None if same else lambda: plain)  # type: ignore[arg-type]
 
 
 def removal() -> ReplyKeyboardRemove:

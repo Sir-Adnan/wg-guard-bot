@@ -183,6 +183,8 @@ _BUTTON_RAW: tuple[tuple[str, str, str, str | None, str | None], ...] = (
     ("buy.pay_now", "پرداخت", "purchase", "success", "money"),
     ("buy.send_receipt", "ارسال رسید", "purchase", "success", "receipt"),
     ("buy.retry", "تلاش دوباره", "purchase", "primary", "refresh"),
+    ("buy.resume_order", "ادامه سفارش", "purchase", "primary", "hourglass"),
+    ("buy.new_order", "سفارش تازه", "purchase", "success", "refresh"),
     # service
     ("service.renew", "تمدید سرویس", "service", "success", "refresh"),
     ("service.config", "دریافت کانفیگ", "service", "primary", "download"),
