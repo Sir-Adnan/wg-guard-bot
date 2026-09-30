@@ -257,13 +257,16 @@ tier that touches them, with no exceptions:
    Measured, and written up in [`UX-WRITING.md`](UX-WRITING.md) §9.
 5. **The `/panels` admin page has only a render test** — no browser-level check of
    the provider dropdown, the connection test or the delete guard.
-6. **The installer and updater are only syntax-checked.** `bash -n install.sh
-   update.sh` and targeted harnesses (the `same_commit` prefix rules) are what runs;
-   there is no `shellcheck` in CI. The build stamp is verified by hand — build with
+6. **The installer, updater and control menu are only syntax-checked.** CI runs
+   `bash -n` over every script; there is no `shellcheck`, and `menu.sh`'s actions are
+   verified by hand against a throwaway project copy — the status screen, the error
+   paths for a missing Docker daemon, the `.env` rewrite against a Persian fixture
+   (values, custom keys, idempotency) and a pseudo-terminal render of the menu
+   (`script -qec`, with the box widths asserted). No test builds an image: the build
+   stamp was proved manually with
    `--build-arg GIT_COMMIT=deadbee`, then
    `docker run --rm --entrypoint /opt/venv/bin/python <image> -c "import app; print(app.__commit__)"`
-   and `curl -s localhost:<port>/healthz` — because no test builds an image. That
-   manual run is what proved `install.sh`/`update.sh` can rely on the stamp.
+   and `curl -s localhost:<port>/healthz`.
 
 Items 1, 2 and 6 are small test additions, 3 is test infrastructure; each earns its
 own commit.

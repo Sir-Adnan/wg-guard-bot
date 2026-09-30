@@ -21,7 +21,7 @@ document.
 | Touching `app/panels/**`, or adding a VPN backend | [`PROVIDERS.md`](PROVIDERS.md) |
 | Wanting to know why a boundary exists | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
 | Adding or changing a setting or env var | [`CONFIGURATION.md`](CONFIGURATION.md) |
-| Deploying: server, domain, TLS, backups, updates | [`DEPLOYMENT.md`](DEPLOYMENT.md) |
+| Deploying: server, domain, TLS, backups, updates | [`DEPLOYMENT.md`](DEPLOYMENT.md) — including the [control menu](DEPLOYMENT.md#control-menu) |
 | Handling secrets, auth, or reporting a vulnerability | [`SECURITY.md`](SECURITY.md) |
 | Installing the product as an operator | [`../README.md`](../README.md) |
 | Checking what shipped when | [`CHANGELOG.md`](CHANGELOG.md) |
@@ -54,14 +54,15 @@ The runtime image deliberately ships no development tooling, so `make test`,
 ```bash
 ruff check .                 # lint (the CI gate)
 ruff format .                # format
-pytest -q -m "not db"        # 73 tests, no database needed
-pytest -q                    # 172 tests, needs PostgreSQL (app + mock suites)
+pytest -q -m "not db"        # 87 tests, no database needed
+pytest -q                    # 195 tests, needs PostgreSQL (app + mock suites)
 alembic upgrade head         # migrations
 ```
 
 Deployment and operations targets (inside the project directory):
 
 ```bash
+bash menu.sh       # control menu: install, update, status, logs, backup, restore, uninstall
 make up            # start
 make tls           # start with the TLS (Caddy) profile
 make logs          # follow the logs

@@ -8,6 +8,7 @@
 - [Domain and HTTPS](#domain-and-https)
 - [Backup and restore](#backup-and-restore)
 - [Updating](#updating)
+- [Control menu](#control-menu)
 - [Monitoring and logs](#monitoring-and-logs)
 - [Uninstall](#uninstall)
 - [Troubleshooting](#troubleshooting)
@@ -270,6 +271,15 @@ keeps the image it was created from, and `docker compose restart` does not eithe
 Only `docker compose build` (or `up -d --build`) puts new code into the image;
 `--force-recreate` recreates the container from the image the stack points at.
 
+The pre-update dump is written to `./backups/pre-update-<timestamp>.sql`. Older
+versions wrote it into the project root, where git reported it as a local change
+and the update stopped to ask about stashing it. If your project directory still
+has such a file, move it once and updates run unattended again:
+
+```bash
+mkdir -p backups && mv -f pre-update-*.sql backups/ 2>/dev/null || true
+```
+
 ---
 
 ## Reset owner password
@@ -295,6 +305,81 @@ at least 8 characters mixing letters and digits.
 The login is `OWNER_USERNAME` (`admin` by default). After six failed attempts from
 one IP the form locks for five minutes; look for `Failed web login attempt for
 'admin'` and `Panel login ready: 'admin'` in `docker compose logs bot`.
+
+---
+
+## Control menu
+
+`bash menu.sh` opens one screen for everything an operator does by hand:
+
+```
+╭──────────────────────────────────────────────────────────────────╮
+│  ◆  WG-Guard Bot · control menu                                  │
+│  Telegram VPN shop for WG-Guard panels                           │
+│                                                                  │
+│  ● bot    ● database    ● redis    ○ caddy                       │
+│  PANEL     https://bot.example.com                               │
+│  REVISION  6b45b44  (checked out)                                │
+╰──────────────────────────────────────────────────────────────────╯
+
+ Setup ─────────────────────────────────────────────────────────────
+    1   Install / reinstall
+    2   Update to the latest version        pull, rebuild, migrate
+
+ Operations ────────────────────────────────────────────────────────
+    3   Status and health                   services, panel, revision, disk
+    4   Live logs                           bot · database · redis · caddy · all
+    5   Back up the database and .env
+    6   Restore a backup
+
+ Configuration ──────────────────────────────────────────────────────
+    7   Domain and SSL                      status · set · renew · disable
+    8   Panel password                      reset the owner login
+    9   Rewrite .env in English             keeps every value
+   10   Maintenance                         migrate · restart · prune · shell
+
+ Danger ────────────────────────────────────────────────────────────
+   11   Uninstall                           stop only, or delete everything
+```
+
+Every action is also a command, so nothing needs the menu:
+
+| Command | What it does |
+|---|---|
+| `bash menu.sh status` | services, panel health, live vs. checked-out revision, disk, backups |
+| `bash menu.sh logs bot` | live log stream (`bot`, `db`, `redis`, `caddy`, `all`; `--no-follow`, `--tail N`) |
+| `bash menu.sh backup` | `pg_dump` plus a copy of `.env` into `./backups` |
+| `bash menu.sh restore [file]` | list the dumps, then restore one (asks first, and offers a safety dump) |
+| `bash menu.sh install` / `update` | what `install.sh` / `update.sh` do |
+| `bash menu.sh password` | reset the panel owner password |
+| `bash menu.sh domain` | domain and certificate status; `domain set <name>`, `domain renew`, `domain disable` |
+| `bash menu.sh env-english` | rewrite `.env` from the English template, keeping every value |
+| `bash menu.sh maintenance <action>` | `migrate`, `restart`, `rebuild`, `prune`, `images`, `shell`, `psql` |
+| `bash menu.sh uninstall` / `purge` | stop the containers / delete the data too |
+
+Useful options: `--yes` (no questions), `--dir PATH`, `--tail N`, `--ascii` (ASCII
+glyphs on a terminal without UTF-8). `make menu` opens the same screen.
+
+**Backups.** `backup` writes `./backups/wgguard-<timestamp>.sql` (a plain `psql`
+dump) and a matching `.env` copy — that copy contains `SECRET_KEY`, so treat it as
+privately as `.env` itself. The bot's own scheduled dumps live inside the
+container (`/app/backups`), and the restore picker lists those too and copies the
+chosen one out before using it. `update.sh` stores its pre-update dump in
+`./backups` as well.
+
+**Restoring** stops the bot, drops and recreates the `public` schema, loads the
+dump, and starts the bot again (migrations run on startup). Anything that is not
+in the dump is gone — that is why it asks twice and takes a safety backup first.
+
+### `.env` with Persian comments
+
+Installations made before 1.0.0 got a `.env` copied from a Persian `.env.example`;
+a Linux terminal and most editors render those comments backwards. Item 9 rewrites
+the file from the current English template: comments and section headers become
+English, every value is carried across byte for byte, settings that were missing
+are filled in from the template, keys that only exist in your file are appended at
+the end, and the previous file is kept as `.env.bak.<timestamp>`. `APP_NAME` keeps
+its Persian value on purpose — that is the shop name customers read.
 
 ---
 
@@ -433,6 +518,24 @@ curl -s localhost:8080/healthz
 
 `bash update.sh` does all of the above and does not report success while the
 container is still on an older revision.
+
+</details>
+
+<details>
+<summary><b>The <code>.env</code> file reads backwards / shows boxes in the terminal</b></summary>
+
+The comments in that file are Persian, because it was copied from the
+`.env.example` of an older release. Linux terminals have no bidi support, so the
+text is unusable there even though the values are fine.
+
+```bash
+bash menu.sh env-english        # or: choose item 9 in the menu
+```
+
+Comments and headers become English, values are copied across exactly, missing
+settings are filled in from the template, and the old file is kept as
+`.env.bak.<timestamp>`. `APP_NAME` stays Persian — that is the shop name your
+customers see in the bot, not a terminal label.
 
 </details>
 

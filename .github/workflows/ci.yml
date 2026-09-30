@@ -53,7 +53,34 @@ jobs:
         run: ruff format --check .
 
   # =========================================================================
-  #  2) test — real PostgreSQL 16 service, ENV=test, no Redis
+  #  2) shell — the operator scripts must at least parse
+  #
+  #  install.sh / update.sh / menu.sh / uninstall.sh run on a live server, where a
+  #  syntax error costs an outage.  This job is cheap and catches exactly that; the
+  #  behaviour of the scripts is checked by hand (see docs/VERIFICATION.md §7).
+  # =========================================================================
+  shell:
+    name: shell syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: bash -n on every script
+        run: |
+          set -uo pipefail
+          status=0
+          for f in *.sh scripts/*.sh; do
+            if bash -n "$f"; then
+              echo "ok    $f"
+            else
+              echo "::error file=$f::bash -n failed"
+              status=1
+            fi
+          done
+          exit $status
+
+  # =========================================================================
+  #  3) test — real PostgreSQL 16 service, ENV=test, no Redis
   # =========================================================================
   test:
     name: test (pytest, py3.12)
@@ -145,7 +172,7 @@ jobs:
         run: python -m pytest -q tools/mock_wg_panel/test_mock_smoke.py
 
   # =========================================================================
-  #  3) docker — prove the production image builds (build only, never push)
+  #  4) docker — prove the production image builds (build only, never push)
   # =========================================================================
   docker:
     name: docker build

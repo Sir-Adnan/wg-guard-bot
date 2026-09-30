@@ -1186,6 +1186,9 @@ success_box() {
     fi
     printf '     %s%s ps%s               %s→ service status%s\n' "$C_CYAN" "$COMPOSE" "$C_RESET" "$C_DIM" "$C_RESET"
     say ""
+    printf '  %s🎛  Control menu — logs, backups, restore, updates, uninstall:%s\n' "$C_BOLD" "$C_RESET"
+    printf '     %s%s%s\n' "$C_CYAN" "bash menu.sh" "$C_RESET"
+    say ""
     printf '  %s💾 Automatic backups are on (every %s hours) and the files are stored in %s.%s\n' \
         "$C_BOLD" "${BACKUP_HOURS_SHOWN:-24}" "$(printf '%s/backups' "$INSTALL_DIR")" "$C_RESET"
     printf '  %s🔄 To update later: %s%s\n' "$C_BOLD" "bash update.sh" "$C_RESET"

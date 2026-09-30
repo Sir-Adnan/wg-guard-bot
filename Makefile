@@ -22,12 +22,15 @@ TEST_DB_PORT ?= 55432
 TEST_DATABASE_URL ?= postgresql+asyncpg://wgguard:wgguard@127.0.0.1:$(TEST_DB_PORT)/wgguard_test
 
 .DEFAULT_GOAL := help
-.PHONY: help install up tls domain cert down logs restart migrate test test-db lint format dev-venv venv-check backup shell psql version health clean
+.PHONY: help install up tls domain cert down logs restart migrate test test-db lint format dev-venv venv-check backup shell psql version health clean menu
 
 help: ## show this help
 	@printf '\n\033[1mWG-Guard Bot\033[0m — available commands (make <target>):\n\n'
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@printf '\n  examples: make logs    |    make migrate    |    make backup    |    make cert\n\n'
+
+menu: ## open the control menu (install, update, status, logs, backup, restore, uninstall)
+	@bash menu.sh
 
 install: ## first-time setup from scratch (runs install.sh)
 	@bash install.sh

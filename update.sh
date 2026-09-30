@@ -130,19 +130,23 @@ take_backup() {
         warn "The database is not running; skipping this step."
         return 0
     fi
-    local stamp
+    local stamp dump
     stamp="$(date +%Y%m%d-%H%M%S)"
+    # ./backups is git-ignored, so this dump can never look like a local code
+    # change to the next update (writing it to the project root did exactly that).
+    mkdir -p "./backups" 2>/dev/null || true
+    dump="./backups/pre-update-${stamp}.sql"
     if $COMPOSE exec -T db sh -c \
-        'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' > "./pre-update-${stamp}.sql" 2>/dev/null; then
-        if [ -s "./pre-update-${stamp}.sql" ]; then
-            ok "Backup saved: ./pre-update-${stamp}.sql"
+        'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' > "$dump" 2>/dev/null; then
+        if [ -s "$dump" ]; then
+            ok "Backup saved: $dump"
             return 0
         fi
-        rm -f "./pre-update-${stamp}.sql"
+        rm -f "$dump"
         warn "The backup was empty and was deleted."
         return 0
     fi
-    rm -f "./pre-update-${stamp}.sql"
+    rm -f "$dump"
     warn "The backup failed; continuing (the bot's automatic backups are still in place)."
     return 0
 }
@@ -183,7 +187,10 @@ pull_code() {
     fi
 
     local dirty
-    dirty="$(git -C "$INSTALL_DIR" status --porcelain 2>/dev/null | grep -v '^?? \.env' || true)"
+    # Only tracked edits can stand in the way of a fast-forward pull.  Untracked
+    # files (backup dumps, .env) never can, and asking about them stopped updates
+    # for no reason at all.
+    dirty="$(git -C "$INSTALL_DIR" status --porcelain --untracked-files=no 2>/dev/null || true)"
     if [ -n "$dirty" ]; then
         warn "There are local changes in the code:"
         printf '%s\n' "$dirty" | head -n 10 | sed -e 's/^/    /' >&2

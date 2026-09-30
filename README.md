@@ -105,6 +105,7 @@ Prefer your own reverse proxy? Leave the domain empty, set
 bash update.sh              # update to the latest version
 bash uninstall.sh           # stop and remove the containers (data is kept)
 bash uninstall.sh --purge   # full removal including the data
+bash menu.sh                # control menu: status, logs, backup, restore, uninstall
 ```
 
 `update.sh` rebuilds the image from the revision it pulled and then checks that the
@@ -114,6 +115,13 @@ always ask which revision is running:
 ```bash
 curl -s localhost:8080/healthz        # → {"status":"ok",…,"commit":"<revision>"}
 ```
+
+`bash menu.sh` opens one screen for the day-to-day jobs — live logs per service,
+database and `.env` backups, restore, domain and certificate status, the panel
+password, a `.env` rewrite that keeps every value, maintenance and uninstall. Each
+item is also a command (`bash menu.sh logs bot`, `bash menu.sh backup`, …), so
+nothing is menu-only; see
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#control-menu).
 
 If you are inside the project directory:
 

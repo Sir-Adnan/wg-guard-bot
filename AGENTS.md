@@ -181,11 +181,13 @@ examples are in **[`docs/UX-WRITING.md`](docs/UX-WRITING.md)**.
 - One term per concept. The glossary in `docs/UX-WRITING.md` is the reference —
   it is not a place to invent synonyms.
 - **Terminals and editors get English.** The installer, updater, uninstaller,
-  Makefile help and `.env.example` are English on purpose: a Linux terminal has
-  no bidi support and renders Persian reversed, so an operator cannot act on the
-  line. Persian belongs to the bot copy and the panel UI. The only exceptions are
-  product values (the default shop name) and input matchers that still accept
-  «بله».
+  control menu (`menu.sh`), Makefile help and `.env.example` are English on
+  purpose: a Linux terminal has no bidi support and renders Persian reversed, so an
+  operator cannot act on the line. Persian belongs to the bot copy and the panel
+  UI. The only exceptions are product values (the default shop name) and input
+  matchers that still accept «بله». A `.env` written by an older release keeps its
+  Persian comments until `bash menu.sh env-english` rewrites it in place — values
+  included byte for byte.
 
 ## 7. Handoff
 

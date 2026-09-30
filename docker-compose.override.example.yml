@@ -1,79 +1,79 @@
 # ---------------------------------------------------------------------------
-#  WG-Guard Bot — نمونه فایل override
+#  WG-Guard Bot — docker compose override example
 #
-#  این فایل را به docker-compose.override.yml کپی کنید تا docker compose
-#  به‌صورت خودکار آن را روی docker-compose.yml اعمال کند:
+#  Copy this file to `docker-compose.override.yml` and Compose will merge it
+#  automatically over `docker-compose.yml`:
 #
 #      cp docker-compose.override.example.yml docker-compose.override.yml
 #      docker compose up -d
 #
-#  فایل docker-compose.override.yml در .gitignore است؛ یعنی تنظیمات محلی شما
-#  هرگز به مخزن push نمی‌شود.
-# ---------------------------------------------------------------------------
+#  `docker-compose.override.yml` is in .gitignore, so your local settings are
+#  never pushed to the repository.  Every block below is commented out —
+#  uncomment only what you need.
 #
-#  English: copy this file to `docker-compose.override.yml` and Compose will
-#  merge it automatically over `docker-compose.yml`.  Every block below is
-#  commented out — uncomment only what you need.
+#  English on purpose: this file is edited on a server terminal, which has no
+#  bidi support and renders Persian backwards (see AGENTS.md §6).
 # ---------------------------------------------------------------------------
 
 services:
   # =========================================================================
-  #  ۱) باز کردن پورت دیتابیس برای عیب‌یابی
+  #  1) Opening the database port for debugging
   #
-  #  فقط برای کارهای موقت (psql، pgAdmin، مهاجرت دستی). هرگز پورت دیتابیس را
-  #  روی 0.0.0.0 باز نکنید؛ همیشه 127.0.0.1 تا فقط از خود سرور در دسترس باشد.
+  #  For temporary work only (psql, pgAdmin, a manual migration).  Never bind the
+  #  database to 0.0.0.0 — keep it on 127.0.0.1 so only this server can reach it.
   # =========================================================================
   # db:
   #   ports:
   #     - "127.0.0.1:5432:5432"
 
   # =========================================================================
-  #  ۲) اتصال به شبکه‌ی یک پروکسی معکوس موجود (Nginx Proxy Manager، Traefik،
-  #     Caddy و…). شبکه‌ی بیرونی را یک‌بار بسازید:
+  #  2) Joining an existing reverse proxy (Nginx Proxy Manager, Traefik, Caddy…)
   #
-  #       docker network create proxy
+  #  Create the external network once:
   #
-  #  سپس نام شبکه را همان‌جا که نوشته شده «proxy» بگذارید.
+  #      docker network create proxy
+  #
+  #  Then use the same name where "proxy" appears below.
   # =========================================================================
   # bot:
   #   networks:
   #     - default
   #     - proxy
   #
-  #   # پورت روی میزبان لازم نیست وقتی پروکسی معکوس از داخل شبکه وصل می‌شود؛
-  #   # در این حالت خط زیر را باز کنید تا پنل فقط از داخل سرور قابل دسترس باشد.
+  #   # No host port is needed when the reverse proxy connects over the network;
+  #   # uncomment the lines below to keep the panel reachable from this server only.
   #   # ports:
   #   #   - "127.0.0.1:${PANEL_PORT:-8080}:${PANEL_PORT:-8080}"
 
   # =========================================================================
-  #  ۳) فعال کردن حالت «پشت پروکسی معکوس»
+  #  3) Turning on "behind a reverse proxy" mode
   #
-  #  با true شدن این گزینه، برنامه به هدرهای X-Forwarded-For / X-Forwarded-Proto
-  #  اعتماد می‌کند (IP واقعی کاربر و تشخیص HTTPS برای کوکی‌های امن).
-  #  اگر PANEL_BASE_URL شما https:// است، این گزینه را هم true کنید.
+  #  With this set to true the application trusts the X-Forwarded-For /
+  #  X-Forwarded-Proto headers (the real client IP, and HTTPS detection for
+  #  secure cookies).  Set it to true whenever PANEL_BASE_URL is https://.
   # =========================================================================
   # bot:
   #   environment:
   #     PANEL_BEHIND_PROXY: "true"
-  #     # آدرس عمومی واقعی؛ برای ساخت لینک‌های مطلق و ریدایرکت‌ها لازم است
+  #     # The real public address; needed for absolute links and redirects
   #     PANEL_BASE_URL: "https://bot.example.com"
 
   # =========================================================================
-  #  ۴) نمونه‌های تکمیلی (اختیاری)
+  #  4) Extra examples (optional)
   # =========================================================================
   # bot:
-  #   # تگ‌کردن نسخه‌ی ایمیج برای برگشت سریع به نسخه‌ی قبلی
+  #   # Tag the image version so you can roll back quickly
   #   image: wgguard-bot:1.0.0
-  #   # پشتیبان‌گیری روی دیسک میزبان به‌جای volume
+  #   # Keep backups on the host disk instead of in a volume
   #   volumes:
   #     - ./backups:/app/backups
-  #   # محدودیت منابع (برای VPS های کوچک)
+  #   # Resource limits (for small VPS plans)
   #   deploy:
   #     resources:
   #       limits:
   #         memory: 768M
 
-# شبکه‌ی بیرونی مورد استفاده در بخش ۲
+# The external network used in section 2
 # networks:
 #   proxy:
 #     external: true

@@ -10,11 +10,32 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 Operator-facing text is English everywhere: the installer, updater and uninstaller
-no longer print Persian, which Linux terminals render reversed (the Makefile help
-and `.env.example` comments follow). Bot copy, panel labels and customer messages
-stay Persian — that is what customers read.
+no longer print Persian, which Linux terminals render reversed (the Makefile help,
+`.env.example` and `docker-compose.override.example.yml` comments follow). Bot copy,
+panel labels and customer messages stay Persian — that is what customers read.
 
 Also on `main` since 1.0.0:
+
+- **`bash menu.sh` — one control menu for the whole server.**  Install, update,
+  status, live logs per service (`bot` / `db` / `redis` / `caddy` / all, streaming
+  or a snapshot), database + `.env` backups, restore with a safety dump, domain and
+  certificate status, panel-password reset, maintenance (migrate, restart, rebuild,
+  prune, shell, psql) and uninstall — every item is also a command
+  (`bash menu.sh logs bot`), so nothing is menu-only.
+
+- **An old `.env` can be repaired in place.**  Installations from before 1.0.0
+  copied a Persian `.env.example`, and a Linux terminal renders those comments
+  backwards.  Menu item 9 rewrites the file from the current English template:
+  values are carried across byte for byte, missing settings are filled in, extra
+  keys are appended, the old file is kept as `.env.bak.<timestamp>`, and the action
+  is a no-op the second time.  `APP_NAME` keeps its Persian value — that is the
+  shop name customers read.
+
+- **An update can no longer be blocked by its own backup file.**  `update.sh` wrote
+  its pre-update dump into the project root, where the next run saw an untracked
+  file as a local code change, stopped to ask about stashing it, and — if the
+  answer was no — left the checkout on the old revision.  Dumps now go to
+  `./backups/`, and only *tracked* edits count as local changes.
 
 - **The main menu works.**  `KeyboardBuilder(columns=…)` stored the value and never
   read it, and `build()` called `aiogram`'s `adjust()` once per row — where each

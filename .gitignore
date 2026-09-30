@@ -31,6 +31,11 @@ logs/
 *.log
 *.sqlite3
 *.db
+# Database dumps.  update.sh writes them into ./backups (already ignored), but
+# older versions wrote them to the project root — where an untracked dump looked
+# like a local code change and blocked the next update.
+pre-update-*.sql
+wgguard-*.sql
 
 # Editors / OS
 .idea/
