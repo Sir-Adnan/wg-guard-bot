@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,6 +43,9 @@ START_POLICIES: tuple[tuple[str, str], ...] = (
 )
 
 DEFAULT_USERNAME_TEMPLATE = "wg{tg}"
+
+#: Value of ``?category_id=`` that means "plans without a category at all".
+UNCATEGORISED = "none"
 
 
 # ---------------------------------------------------------------------------
@@ -127,23 +130,75 @@ async def _form_context(session: AsyncSession) -> dict[str, Any]:
     }
 
 
+def _category_filter(raw: str) -> tuple[int | None, bool]:
+    """``(category_id, uncategorised)`` read from the ``category_id`` select.
+
+    ``""`` is «همه دسته‌ها», ``none`` is «بدون دسته», and anything else is a
+    category id.  A value that is neither (a hand-edited URL, a deleted
+    category) falls back to "no filter" instead of failing the page.
+    """
+    text = (raw or "").strip()
+    if text == UNCATEGORISED:
+        return None, True
+    if not text.isdigit():
+        return None, False
+    value = int(text)
+    return (value, False) if value > 0 else (None, False)
+
+
+async def _catalogue_page(
+    session: AsyncSession, page: Page, *, category_id: int | None, uncategorised: bool
+) -> tuple[list[Plan], int]:
+    """One page of the catalogue, honouring the category filter.
+
+    The filter is served by :meth:`CatalogService.list_plans`, because only that
+    query knows the two rules the page promises: a parent category includes its
+    descendants (``include_descendants``), and «بدون دسته» is a filter of its
+    own — ``catalog.search`` supports neither, so a filtered view reads the
+    matching plans whole and is sliced here.  The unfiltered view keeps its
+    SQL-level paging, which is the common case.
+    """
+    if category_id is None and not uncategorised:
+        return await catalog.search(session, page.search, limit=page.size, offset=page.offset)
+
+    rows = await catalog.list_plans(
+        session,
+        category_id=category_id,
+        include_descendants=category_id is not None,
+        include_inactive=True,
+        include_test=True,
+    )
+    if uncategorised:
+        rows = [plan for plan in rows if plan.category_id is None]
+    # Same order as ``catalog.search``, so filtering never reshuffles the list.
+    rows.sort(key=lambda plan: (plan.sort_order, plan.id))
+    return rows[page.offset : page.offset + page.size], len(rows)
+
+
 # ---------------------------------------------------------------------------
 # فهرست
 # ---------------------------------------------------------------------------
 @router.get("/plans")
 async def list_plans(
     request: Request,
+    category_id: str = Query("", description="فیلتر دسته‌بندی؛ خالی یعنی همه و none یعنی بدون دسته"),
     page: Page = Depends(pagination),
     staff: Staff = Depends(require_manager()),
     session: AsyncSession = Depends(get_db_session),
 ):
-    rows, total = await catalog.search(session, page.search, limit=page.size, offset=page.offset)
+    selected, uncategorised = _category_filter(category_id)
+    rows, total = await _catalogue_page(session, page, category_id=selected, uncategorised=uncategorised)
     page.total = total
+    selected_value = UNCATEGORISED if uncategorised else str(selected or "")
     context: dict[str, Any] = {
         "page_title": "پلن‌ها",
-        "page_subtitle": f"{fa_digits(total)} پلن در کاتالوگ",
+        "page_subtitle": (
+            f"{fa_digits(total)} پلن با فیلترهای فعلی" if selected_value else f"{fa_digits(total)} پلن در کاتالوگ"
+        ),
         "rows": rows,
         "page": page,
+        "selected_category": selected_value,
+        "extra": f"&category_id={selected_value}" if selected_value else "",
         "base_url": BASE,
     }
     context.update(await _form_context(session))

@@ -116,6 +116,25 @@ def _compose_label(clean: str, fallback: str, *, has_custom: bool) -> str:
     return f"{fallback} {clean}".strip()
 
 
+async def resolve_reply_label(visual_key: str, session=None) -> str:
+    """The label a *reply* (physical) keyboard button shows.
+
+    A reply keyboard carries no ``icon_custom_emoji_id``: Telegram would render
+    the id as text.  The label is therefore the resolved text with its Unicode
+    emoji, exactly as the inline builder would compose it with styling off — and
+    it doubles as the route, because a press arrives as plain text.
+    """
+    resolved = await appearance.resolve(visual_key, session) if visual_key else None
+    if resolved is None:
+        return visual_key
+    clean, inline_emoji, _fallback = _split_label(resolved.label or visual_key, resolved.emoji_fallback or "")
+    fallback = resolved.emoji_fallback or ""
+    if inline_emoji:
+        emoji_visual = await appearance.resolve(f"emoji.{inline_emoji}", session)
+        fallback = emoji_visual.emoji_fallback or fallback
+    return _compose_label(clean, fallback, has_custom=False)
+
+
 class KeyboardBuilder:
     """Async-friendly builder that resolves colours and premium emoji.
 
@@ -362,5 +381,6 @@ __all__ = [
     "back_row",
     "confirm_row",
     "pagination_row",
+    "resolve_reply_label",
     "rows_to_specs",
 ]

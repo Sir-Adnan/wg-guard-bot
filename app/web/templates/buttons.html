@@ -8,6 +8,24 @@
 {% extends "base.html" %}
 {% from "macros.html" import icon, badge, csrf, empty_state with context %}
 
+{#  یک دکمه در ویرایشگر چیدمان: دستگیره‌ی کشیدن، برچسب، و ✕ برای برداشتن از منو.
+    قرارداد ویژگی‌ها در `docs/PANEL-CONTRACT.md` §۶.۲ و ظاهرش در `panel.css`
+    بخش ۱۲ج آمده است.  دکمه‌ای که در «بیرون از منو» است، ✕ ندارد و ورودی‌اش
+    غیرفعال است تا در ارسال بدون جاوااسکریپت هم فرستاده نشود. #}
+{% macro menu_chip(chip) -%}
+<span class="menu-chip{% if chip.palette %} is-palette{% endif %}" data-menu-key="{{ chip.key }}">
+  <span class="drag-handle menu-chip__grip" data-menu-handle tabindex="0" aria-hidden="true"
+        title="{% if chip.palette %}برای افزودن به منو بکشید یا کلیک کنید{% else %}برای جابه‌جایی بکشید{% endif %}">⠿</span>
+  <span class="menu-chip__label">{% if chip.emoji %}{{ chip.emoji }} {% endif %}{{ chip.label }}</span>
+  {% if chip.note %}{{ badge(chip.note, 'warning') }}{% endif %}
+  {% if not chip.palette %}
+  <button class="menu-chip__remove" type="submit" name="remove_key" value="{{ chip.key }}" data-menu-remove
+          title="برداشتن از منو" aria-label="برداشتن «{{ chip.label }}» از منوی اصلی">✕</button>
+  {% endif %}
+  <input type="hidden" name="keys" value="{{ chip.key }}"{% if chip.palette %} disabled{% endif %}>
+</span>
+{%- endmacro %}
+
 {% block title %}دکمه‌ها و ایموجی{% endblock %}
 {% block header %}دکمه‌ها و ایموجی{% endblock %}
 
@@ -244,6 +262,65 @@
     <button class="btn btn--primary" type="submit">{{ icon('check') }} ذخیره تغییرات</button>
   </div>
 </form>
+
+{# ------------------------------------------------------ چیدمان منوی اصلی #}
+{#  کل این کارت بدون جاوااسکریپت هم خوانا و قابل ذخیره است: ردیف‌ها، دکمه‌های
+    بیرون از منو و یک «ذخیره» که همان چیدمان را دوباره می‌فرستد.  اسکریپت
+    (`initMenuBuilder`) بعد از بارگذاری، کشیدن‌و‌رهاکردن و کلیدهای جهت‌دار را
+    روی همین markup سوار می‌کند. #}
+<div class="card mt-3" data-menu-builder
+     data-menu-url="{{ menu_layout_url }}"
+     data-menu-max-rows="{{ menu_max_rows }}"
+     data-menu-max-buttons="{{ menu_max_buttons }}">
+  <div class="card__head">
+    <div class="card__title">{{ icon('menu') }} چیدمان منوی اصلی</div>
+    <div class="card__spacer"></div>
+    <span class="card__sub">{{ menu_rows|length|fa }} ردیف · {{ menu_button_count|fa }} دکمه</span>
+  </div>
+  <div class="card__body">
+    <div class="hint">
+      هر ردیف، یک ردیف دکمه در تلگرام است. دکمه‌ها را از دست‌گیره بکشید یا با
+      <span class="code">Alt</span> و کلیدهای جهت‌دار جابه‌جا کنید؛ دکمه‌ای که از ردیف‌ها بردارید پنهان
+      می‌شود، نه حذف، و در «دکمه‌های بیرون از منو» می‌ماند تا هر وقت خواستید برگردانیدش.
+    </div>
+
+    <form id="menu-layout-form" method="post" action="{{ menu_layout_url }}">
+      {{ csrf(csrf_token) }}
+
+      <div class="menu-board" data-menu-rows>
+        {% for row in menu_rows %}
+        <div class="menu-row" data-menu-row>
+          {% for chip in row.chips %}{{ menu_chip(chip) }}{% endfor %}
+          <input type="hidden" name="row_break" value="1">
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="row row--between mt-3">
+        <span class="strong">دکمه‌های بیرون از منو</span>
+        <span class="dim small">برای افزودن، بکشید یا کلیک کنید</span>
+      </div>
+      <div class="menu-palette" data-menu-palette>
+        {% for chip in menu_palette %}{{ menu_chip(chip) }}{% endfor %}
+        <span class="dim small" data-menu-palette-note{% if menu_palette %} hidden{% endif %}>
+          همه‌ی دکمه‌ها در منو هستند؛ چیزی برای افزودن نمانده.
+        </span>
+      </div>
+
+      <div class="row row--between mt-3">
+        <button class="btn btn--ghost" type="button" data-menu-add-row>{{ icon('plus') }} افزودن ردیف</button>
+        <button class="btn btn--primary" type="submit" data-menu-save>{{ icon('check') }} ذخیره چیدمان</button>
+      </div>
+    </form>
+
+    <form method="post" action="{{ menu_reset_url }}" class="mt-3"
+          data-confirm="چیدمان منوی اصلی به حالت پیش‌فرض برگردد؟ دکمه‌هایی که برداشته‌اید هم برمی‌گردند.">
+      {{ csrf(csrf_token) }}
+      <button class="btn btn--sm btn--danger" type="submit">{{ icon('refresh') }} بازگردانی چیدمان پیش‌فرض</button>
+      <span class="hint">اگر چیدمان را به‌هم ریختید، این دکمه منو را به حالت پیش‌فرض ربات برمی‌گرداند.</span>
+    </form>
+  </div>
+</div>
 
 {# ------------------------------------------------------- پیش‌نمایش منوی اصلی #}
 <div class="card mt-3">

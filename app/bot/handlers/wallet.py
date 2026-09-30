@@ -47,12 +47,12 @@ async def open_wallet_nav(callback: CallbackQuery, session: AsyncSession, user: 
     await _render_wallet(callback, session, user)
 
 
-async def _render_wallet(callback: CallbackQuery, session: AsyncSession, user: User) -> None:
+async def _render_wallet(event: Message | CallbackQuery, session: AsyncSession, user: User) -> None:
     if not app_settings.get_bool("payment.wallet_enabled", True):
-        await show(callback, await texts.get("error.not_found", session))
+        await show(event, await texts.get("error.not_found", session))
         return
     await show(
-        callback,
+        event,
         await texts.get("wallet.title", session, balance=format_amount(user.balance_rial)),
         keyboard=await wallet_menu(session),
     )

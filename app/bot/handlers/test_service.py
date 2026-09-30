@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -82,15 +82,15 @@ def cooldown_remaining(user: User) -> timedelta | None:
 
 # ---------------------------------------------------------------------------
 @router.callback_query(MenuCB.filter(F.action == "test"))
-async def test_intro(callback: CallbackQuery, session: AsyncSession, user: User) -> None:
-    await answer_callback(callback)
-    await _render(callback, session, user)
+async def test_intro(event: Message | CallbackQuery, session: AsyncSession, user: User) -> None:
+    await answer_callback(event)
+    await _render(event, session, user)
 
 
-async def _render(callback: CallbackQuery, session: AsyncSession, user: User) -> None:
+async def _render(event: Message | CallbackQuery, session: AsyncSession, user: User) -> None:
     if not test_service_enabled():
         await show(
-            callback,
+            event,
             await texts.get("test.disabled", session),
             keyboard=await default_main_menu(session),
         )
@@ -103,7 +103,7 @@ async def _render(callback: CallbackQuery, session: AsyncSession, user: User) ->
     body = await texts.get("test.title", session, volume=format_gb(plan.traffic_gb), days=str(plan.duration_days or 1))
     if not available and remaining is not None:
         body += "\n\n" + await texts.get("test.cooldown", session, days=str(max(remaining.days, 1)))
-    await show(callback, body, keyboard=await test_offer(session, available=available))
+    await show(event, body, keyboard=await test_offer(session, available=available))
 
 
 @router.callback_query(TestCB.filter(F.action == "claim"))

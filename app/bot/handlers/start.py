@@ -84,8 +84,8 @@ async def nav_main(
 
 
 @router.callback_query(MenuCB.filter(F.action == "profile"))
-async def menu_profile(callback: CallbackQuery, session: AsyncSession, user: User) -> None:
-    await answer_callback(callback)
+async def menu_profile(event: Message | CallbackQuery, session: AsyncSession, user: User) -> None:
+    await answer_callback(event)
     stats = await user_service.stats(session, user)
     body = await texts.get(
         "profile.title",
@@ -98,18 +98,18 @@ async def menu_profile(callback: CallbackQuery, session: AsyncSession, user: Use
         services=str(stats.services_active),
     )
     kb = KeyboardBuilder(session=session, columns=1)
-    await kb.add("menu.referral", callback=MenuCB(action="referral").pack())
-    await kb.add("menu.rules", callback=MenuCB(action="rules").pack())
+    await kb.add("menu.referral", event=MenuCB(action="referral").pack())
+    await kb.add("menu.rules", event=MenuCB(action="rules").pack())
     kb.row()
-    await kb.add("menu.main", callback=NavCB(to="main").pack())
-    await show(callback, body, keyboard=kb.build())
+    await kb.add("menu.main", event=NavCB(to="main").pack())
+    await show(event, body, keyboard=kb.build())
 
 
 @router.callback_query(MenuCB.filter(F.action == "referral"))
-async def menu_referral(callback: CallbackQuery, session: AsyncSession, user: User) -> None:
-    await answer_callback(callback)
+async def menu_referral(event: Message | CallbackQuery, session: AsyncSession, user: User) -> None:
+    await answer_callback(event)
     if not app_settings.get_bool("shop.referral_enabled", True):
-        await show(callback, await texts.get("error.not_found", session), keyboard=await back_to_main(session))
+        await show(event, await texts.get("error.not_found", session), keyboard=await back_to_main(session))
         return
 
     from app.services.notifications import notifier as _notifier
@@ -119,7 +119,7 @@ async def menu_referral(callback: CallbackQuery, session: AsyncSession, user: Us
         try:
             username = (await _notifier.bot.get_me()).username
         except Exception:  # pragma: no cover - bot not running
-            await show(callback, await texts.get("error.generic", session), keyboard=await back_to_main(session))
+            await show(event, await texts.get("error.generic", session), keyboard=await back_to_main(session))
             return
     link = f"https://t.me/{username}?start=ref{user.referral_code}"
     percent = app_settings.get_float("shop.referral_percent", 0.0)
@@ -132,30 +132,30 @@ async def menu_referral(callback: CallbackQuery, session: AsyncSession, user: Us
         count=str(stats.referrals),
         earnings=format_amount(user.referral_earnings_rial),
     )
-    await show(callback, body, keyboard=await back_to_main(session))
+    await show(event, body, keyboard=await back_to_main(session))
 
 
 @router.callback_query(MenuCB.filter(F.action == "rules"))
-async def menu_rules(callback: CallbackQuery, session: AsyncSession) -> None:
-    await answer_callback(callback)
-    await show(callback, await texts.get("rules.text", session), keyboard=await back_to_main(session))
+async def menu_rules(event: Message | CallbackQuery, session: AsyncSession) -> None:
+    await answer_callback(event)
+    await show(event, await texts.get("rules.text", session), keyboard=await back_to_main(session))
 
 
 @router.callback_query(MenuCB.filter(F.action == "channels"))
-async def menu_channels(callback: CallbackQuery, session: AsyncSession) -> None:
-    await answer_callback(callback)
+async def menu_channels(event: Message | CallbackQuery, session: AsyncSession) -> None:
+    await answer_callback(event)
     channels = await membership.active_channels(session)
     if not channels:
-        await show(callback, await texts.get("error.not_found", session), keyboard=await back_to_main(session))
+        await show(event, await texts.get("error.not_found", session), keyboard=await back_to_main(session))
         return
     kb = KeyboardBuilder(session=session, columns=1)
     for channel in channels:
         if channel.invite_link:
             await kb.add("menu.join", url=channel.invite_link, text=channel.title or None)
     kb.row()
-    await kb.add("menu.main", callback=NavCB(to="main").pack())
+    await kb.add("menu.main", event=NavCB(to="main").pack())
     await show(
-        callback,
+        event,
         await texts.get(
             "start.must_join", session, channels="\n" + "\n".join(f"• {c.title or c.chat_id}" for c in channels) + "\n"
         ),
@@ -207,6 +207,11 @@ async def _send_main(message: Message, session: AsyncSession, user: User, staff=
         await _welcome_text(session, user),
         keyboard=await default_main_menu(session, is_staff=bool(staff)),
     )
+    # The optional physical keyboard rides along with the home screen; Telegram
+    # carries one reply_markup per message, so it is its own short line.
+    from app.bot.handlers.reply_menu import send_keyboard
+
+    await send_keyboard(message, session, is_staff=bool(staff))
 
 
 async def _welcome_text(session: AsyncSession, user: User) -> str:

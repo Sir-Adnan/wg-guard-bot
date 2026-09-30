@@ -89,6 +89,53 @@ def test_byte_helpers() -> None:
     assert "گیگابایت" in format_bytes(2 * 1024**3)
 
 
+def test_the_traffic_basis_can_match_the_vendor_panel() -> None:
+    """A 50 GB plan must not read as 53.7 GB on the node.
+
+    The WG-Guard panel prints decimal gigabytes, so an operator who types 50 in
+    the bot and then opens the node sees a different number under the binary
+    basis.  The switch is a stored setting; this pins both directions of it.
+    """
+    from app.core.money import bytes_to_gb, gb_basis_is_decimal, set_gb_basis
+
+    try:
+        set_gb_basis(decimal=False)
+        assert gb_basis_is_decimal() is False
+        assert gb_to_bytes(50) == 50 * 1024**3
+        assert bytes_to_gb(gb_to_bytes(50)) == 50.0
+        assert "۵۰" in format_gb(50)
+
+        set_gb_basis(decimal=True)
+        assert gb_basis_is_decimal() is True
+        assert gb_to_bytes(50) == 50 * 1000**3
+        assert bytes_to_gb(gb_to_bytes(50)) == 50.0
+        # The byte ladder follows the same basis (50 GB, not 50 KB).
+        assert "گیگابایت" in format_bytes(gb_to_bytes(50))
+    finally:
+        set_gb_basis(decimal=False)
+
+
+@pytest.mark.db
+async def test_the_stored_traffic_unit_drives_the_basis(session) -> None:
+    """``shop.traffic_unit`` is a panel setting, and the process follows it."""
+    from app.core.money import gb_basis_is_decimal, gb_to_bytes, set_gb_basis
+    from app.services.settings_store import app_settings, apply_runtime_settings
+
+    try:
+        await app_settings.load(session, force=True)
+        await app_settings.set_many(session, {"shop.traffic_unit": "gb"})
+        apply_runtime_settings()
+        assert gb_basis_is_decimal() is True
+        assert gb_to_bytes(50) == 50 * 1000**3
+
+        await app_settings.set_many(session, {"shop.traffic_unit": "gib"})
+        apply_runtime_settings()
+        assert gb_basis_is_decimal() is False
+    finally:
+        set_gb_basis(decimal=False)
+        await app_settings.reset(session, "shop.traffic_unit")
+
+
 # ---------------------------------------------------------------------------
 # Security
 # ---------------------------------------------------------------------------

@@ -46,6 +46,11 @@
     <label class="label" for="traffic-{{ p.id if p else 'new' }}">حجم (گیگابایت)</label>
     <input class="input input--num" id="traffic-{{ p.id if p else 'new' }}" name="traffic_gb" type="number" min="0"
            value="{{ p.traffic_gb if p and p.traffic_gb else '' }}" placeholder="خالی = نامحدود">
+    <div class="hint">
+      همین عدد روی نود WG-Guard ساخته می‌شود. اگر آن‌جا چیز دیگری می‌بینید
+      (مثلاً ۵۰ این‌جا و ۵۳.۷ آن‌جا)، واحد حجم را در
+      <a href="{{ panel_prefix }}/settings#group-shop">تنظیمات ← فروشگاه</a> عوض کنید.
+    </div>
   </div>
 
   <div class="field">
@@ -155,6 +160,29 @@
 </div>
 {%- endmacro %}
 
+{# ----------------------------------------------------------- نوار فیلتر #}
+<div class="card">
+  <div class="card__body">
+    <form class="searchbar" method="get" action="{{ base_url }}">
+      <select class="select" name="category_id" data-autosubmit aria-label="فیلتر دسته‌بندی">
+        <option value="">همه دسته‌ها</option>
+        <option value="none" {% if selected_category == 'none' %}selected{% endif %}>بدون دسته</option>
+        {% for depth, category in category_options %}
+        <option value="{{ category.id }}" {% if selected_category == category.id|string %}selected{% endif %}>
+          {{ '—' * depth }} {{ category.name }}
+        </option>
+        {% endfor %}
+      </select>
+      <button class="btn" type="submit">{{ icon('filter') }} اعمال فیلتر</button>
+      {% if selected_category %}<a class="btn btn--ghost" href="{{ base_url }}">پاک کردن</a>{% endif %}
+    </form>
+    <div class="hint mt-2">
+      با انتخاب یک دسته، پلن‌های زیردسته‌های آن هم نمایش داده می‌شوند؛ «بدون دسته» فقط
+      پلن‌هایی را نشان می‌دهد که به هیچ دسته‌ای وصل نیستند.
+    </div>
+  </div>
+</div>
+
 <div class="card">
   <div class="card__head">
     <div class="card__title">{{ icon('box') }} کاتالوگ سرویس‌ها</div>
@@ -172,7 +200,7 @@
               <th>قیمت</th><th>وضعیت</th><th>فروش</th><th></th>
             </tr>
           </thead>
-          <tbody data-drag-list="plans" data-drag-next="{{ base_url }}?page={{ page.number }}&size={{ page.size }}">
+          <tbody data-drag-list="plans" data-drag-next="{{ base_url }}?page={{ page.number }}&size={{ page.size }}{{ extra }}">
             {% for plan in rows %}
             <tr data-drag-id="{{ plan.id }}">
               <td class="drag-cell"><span class="drag-handle" data-drag-handle tabindex="0" title="برای جابه‌جایی بکشید" aria-hidden="true">⠿</span></td>
@@ -234,10 +262,14 @@
         </table>
       </div>
     {% else %}
-      {{ empty_state('هنوز پلنی نساخته‌اید', 'با دکمه «پلن جدید» اولین سرویس فروشگاه را بسازید.', 'box') }}
+      {% if selected_category %}
+        {{ empty_state('با این فیلتر پلنی نیست', 'دستهٔ دیگری را انتخاب کنید یا فیلتر را پاک کنید.', 'filter') }}
+      {% else %}
+        {{ empty_state('هنوز پلنی نساخته‌اید', 'با دکمه «پلن جدید» اولین سرویس فروشگاه را بسازید.', 'box') }}
+      {% endif %}
     {% endif %}
   </div>
-  {{ pagination(page, base_url) }}
+  {{ pagination(page, base_url, extra) }}
 </div>
 
 {# ------------------------------------------------------------- modals #}

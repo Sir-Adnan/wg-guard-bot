@@ -25,7 +25,7 @@ from app.panels.manager import panel_manager
 from app.services.appearance import appearance
 from app.services.bootstrap import seed_panel_owner
 from app.services.notifications import notifier
-from app.services.settings_store import app_settings
+from app.services.settings_store import app_settings, apply_runtime_settings
 from app.services.texts import texts
 from app.workers.scheduler import scheduler
 
@@ -48,6 +48,9 @@ async def _warm_caches() -> None:
         await app_settings.load(session, force=True)
         await texts.load(session, force=True)
         await appearance.load(session, force=True)
+    # The traffic basis is cached inside ``app.core.money``; refresh it from the
+    # stored setting every time the settings are (re)loaded.
+    apply_runtime_settings()
 
 
 @asynccontextmanager

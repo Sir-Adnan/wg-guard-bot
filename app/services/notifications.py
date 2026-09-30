@@ -141,14 +141,23 @@ class Notifier:
         keyboard: KeyboardLike = None,
         media: Media | None = None,
         disable_preview: bool = True,
+        reply_keyboard: Any = None,
         **kwargs: Any,
     ) -> Message | None:
-        """Send one message, retrying without styling when necessary."""
+        """Send one message, retrying without styling when necessary.
+
+        ``reply_keyboard`` carries a :class:`~aiogram.types.ReplyKeyboardMarkup`
+        (or ``ReplyKeyboardRemove``).  Telegram allows one ``reply_markup`` per
+        message, so it *replaces* the inline keyboard — a screen that wants both
+        sends the reply keyboard as its own short message.
+        """
         if self._bot is None:
             self._unbound("send")
             return None
 
         markup, plain_markup = self._markups(keyboard)
+        if reply_keyboard is not None:
+            markup, plain_markup = reply_keyboard, None
 
         send_kwargs: dict[str, Any] = {"chat_id": chat_id, "reply_markup": markup, **kwargs}
         if media is None:

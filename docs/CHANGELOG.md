@@ -117,6 +117,42 @@ Also on `main` since 1.0.0:
   fitted to Telegram's 1024-character limit — an over-long one made the whole
   send fail, which left the reviewer with no receipt at all.
 
+- **The main menu is the owner's, and it can be a physical keyboard too.**  The
+  layout used to be a hard-coded tuple in `app/bot/menus.py`: the order was fixed,
+  a button could not be hidden, and the shipped buttons were the only ones
+  available.  It now lives in the database as *overrides* of that default
+  (`menu_layout`, migration `a1d0c7f4b2e6`) — moved, hidden and added buttons are
+  stored, everything the owner did not touch keeps following the code, and a later
+  release can therefore introduce a menu entry without a migration or an owner
+  action.  The panel's buttons page grew a drag-and-drop editor for it (rows,
+  order, hide, add from a palette of unused buttons, reset).  Because the layout
+  is one source of truth, the same buttons can also be drawn as a Telegram
+  **reply keyboard** («کیبورد فیزیکی», off by default): it sits under the input
+  field, survives scrolling, and a press is routed by its exact label back to the
+  same screen the inline button opens.  Turning the feature off never strands a
+  keyboard that is already on a customer's phone, and a test fails if any button
+  on it has no screen behind it.
+
+- **The main-menu editor saves the whole menu at once.**  The buttons page renders
+  the layout as rows of chips — server-side, so it reads and saves without
+  JavaScript — next to a palette of the buttons that are outside the menu: a
+  removed button is only *hidden*, and waits there to be dragged (or clicked) back
+  into a row.  «افزودن ردیف» adds a row, «بازگردانی چیدمان پیش‌فرض» goes back to the
+  shipped menu.  Dragging and the ✕ edit the page; «ذخیره چیدمان» posts the
+  arrangement to `POST {panel_prefix}/buttons/layout`, and an answer that is not
+  `ok` — a refused key, an expired session — puts back the menu the server still
+  has, so an unsaved arrangement is never left on screen looking saved.
+  `Alt`+arrows move a focused chip and save through that same path, and a plain
+  form post (repeated `keys` fields split by a `row_break` marker, plus a
+  `remove_key` submit) keeps the editor usable with no scripts at all.
+
+- **Volume reads the same in the bot and on the node.**  A plan for "50 GB" was
+  created on WG-Guard as 50 × 1024³ bytes, which the vendor panel prints as
+  **53.7 GB** — the same traffic in a different unit.  `shop.traffic_unit` now
+  chooses the basis (1024³, the historical default, or 1000³ to match the node's
+  own display), the plan form says which one is in force, and a change applies to
+  everything sent to a node afterwards.
+
 - **A node that answers a shape this build does not know can no longer fail a
   sale.**  WG-Guard serialises "not set" as JSON `null`, so a strict `list[str]`
   field rejected the entire read-back; `_safe_get_user` only caught `PanelError`,
@@ -163,6 +199,19 @@ Also on `main` since 1.0.0:
   module that did not happen to import `app.db.models` made the session-scoped
   `create_all` run against empty metadata, and every later `TRUNCATE` failed with
   "relation users does not exist".
+
+- **Plans are chosen for a category from the category page.**  Every row of the
+  tree carries «انتخاب پلن‌ها», which opens the full plan list with the plans of
+  that category already ticked — price, volume and the category each plan sits in
+  today — and saving posts the whole selection: ticked plans are attached,
+  unticked ones are detached to «بدون دسته», and a plan of another category is
+  never touched.  One audit entry records the change, and the flash message says
+  what happened in the operator's words («۳ پلن به دستهٔ «آلمان» وصل شد و ۱ پلن
+  جدا شد.»).  A branch that only holds sub-categories no longer reads «۰ پلن»:
+  the tree shows the whole subtree and names the part it does not hold itself
+  («۵ پلن (۲ در زیردسته‌ها)»).  The plans list also gained a category filter —
+  «همه دسته‌ها», every category (descendants included) and «بدون دسته» — which
+  survives pagination and reordering.
 
 ---
 

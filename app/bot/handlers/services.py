@@ -51,20 +51,20 @@ async def page_services(callback: CallbackQuery, callback_data: ServiceCB, sessi
     await _render_list(callback, session, user, page=callback_data.page or 1)
 
 
-async def _render_list(callback: CallbackQuery, session: AsyncSession, user: User, *, page: int) -> None:
+async def _render_list(event: Message | CallbackQuery, session: AsyncSession, user: User, *, page: int) -> None:
     services = await user_service_list(session, user.id)
     if not services:
         kb = KeyboardBuilder(session=session, columns=1)
-        await kb.add("menu.buy", callback=MenuCB(action="buy").pack())
-        await kb.add("menu.test", callback=MenuCB(action="test").pack())
+        await kb.add("menu.buy", event=MenuCB(action="buy").pack())
+        await kb.add("menu.test", event=MenuCB(action="test").pack())
         kb.row()
-        await kb.add("menu.main", callback=NavCB(to="main").pack())
-        await show(callback, await texts.get("service.empty", session), keyboard=kb.build())
+        await kb.add("menu.main", event=NavCB(to="main").pack())
+        await show(event, await texts.get("service.empty", session), keyboard=kb.build())
         return
 
     slice_, page, total_pages = paginate(services, page, SERVICES_PER_PAGE)
     body = await texts.get("service.list_title", session, count=fa(str(len(services))))
-    await show(callback, body, keyboard=await service_list(session, slice_, page, total_pages))
+    await show(event, body, keyboard=await service_list(session, slice_, page, total_pages))
 
 
 async def user_service_list(session: AsyncSession, user_id: int) -> list[Service]:

@@ -17,9 +17,10 @@ from app.core.errors import AppError, ConflictError, ValidationError
 from app.core.money import fa_digits
 from app.db.models import PlanCategory, Staff
 from app.services.appearance import CATALOG
+from app.services.catalog import catalog
 from app.services.categories import MAX_DEPTH, categories
 from app.services.ordering import next_sort_order
-from app.web.deps import form_bool, form_dict, form_int, form_str
+from app.web.deps import form_bool, form_dict, form_int, form_int_list, form_str
 from app.web.security import get_db_session, require_manager, verify_csrf
 from app.web.templating import redirect, render
 
@@ -108,6 +109,38 @@ async def _move_to_root(session: AsyncSession, node: PlanCategory) -> None:
     await session.flush()
 
 
+def _plan_ids(form: Any) -> list[int]:
+    """The ticked plans of the picker, as integers.
+
+    Every checkbox is its own ``plan_ids`` field, so ``getlist`` carries the
+    whole selection; joining the values into one string lets ``form_int_list``
+    read that shape and a plain ``plan_ids=3,7`` alike.
+    """
+    getlist = getattr(form, "getlist", None)
+    raw = getlist("plan_ids") if getlist is not None else []
+    return form_int_list({"plan_ids": ",".join(str(value) for value in raw)}, "plan_ids")
+
+
+async def _plans_now(session: AsyncSession, category_id: int) -> set[int]:
+    """Ids of the plans attached to this category right now.
+
+    Direct plans only (``include_descendants`` stays off), because that is
+    exactly the set ``categories.set_plans`` moves.  The route reads it to tell
+    «وصل شد» from «جدا شد» in the flash message.
+    """
+    rows = await catalog.list_plans(session, category_id=category_id, include_inactive=True, include_test=True)
+    return {plan.id for plan in rows}
+
+
+def _assignment_message(name: str, *, attached: int, detached: int) -> str:
+    """What the operator's click did, in their own words."""
+    if attached and detached:
+        return f"{fa_digits(attached)} پلن به دستهٔ «{name}» وصل شد و {fa_digits(detached)} پلن جدا شد."
+    if attached:
+        return f"{fa_digits(attached)} پلن به دستهٔ «{name}» وصل شد."
+    return f"{fa_digits(detached)} پلن از دستهٔ «{name}» جدا شد و به «بدون دسته» رفت."
+
+
 # ---------------------------------------------------------------------------
 # نمایش
 # ---------------------------------------------------------------------------
@@ -127,6 +160,7 @@ async def list_categories(
             "page_subtitle": f"{fa_digits(total)} دسته‌بندی در {fa_digits(len(nodes))} شاخه اصلی",
             "nodes": nodes,
             "category_options": await _options(session),
+            "plan_options": await categories.plan_options(session),
             "emoji_choices": EMOJI_CHILDREN,
             "emoji_chars": _emojis(),
             "max_depth": MAX_DEPTH,
@@ -234,6 +268,41 @@ async def delete_category(
 
     tail = f" و {fa_digits(moved)} پلن به «بدون دسته» منتقل شد" if moved else ""
     return redirect(BASE, message=f"دسته‌بندی «{name}» و زیردسته‌هایش حذف شد{tail}.")
+
+
+@router.post("/categories/{category_id}/plans")
+async def set_category_plans(
+    category_id: int,
+    request: Request,
+    staff: Staff = Depends(require_manager()),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Attach the ticked plans to a category, and detach the plans left unticked.
+
+    The picker posts the whole selection, so unticking a plan that already
+    belongs here moves it to «بدون دسته».  One click can only change this
+    category: plans of other categories are never touched.
+    """
+    form = await request.form()
+    verify_csrf(request, form.get("csrf_token"))
+
+    plan_ids = _plan_ids(form)
+    chosen = set(plan_ids)
+
+    try:
+        node = await categories.get(session, category_id)
+        name = node.name
+        before = await _plans_now(session, category_id)
+        changed = await categories.set_plans(session, category_id, plan_ids)
+        await session.commit()
+    except AppError as exc:
+        return redirect(BASE, message=exc.message, level="danger")
+
+    if not changed:
+        return redirect(BASE, message=f"دستهٔ «{name}» بدون تغییر ماند؛ انتخاب‌ها همان وضعیت فعلی بود.")
+
+    message = _assignment_message(name, attached=len(chosen - before), detached=len(before - chosen))
+    return redirect(BASE, message=message)
 
 
 __all__ = ["router"]

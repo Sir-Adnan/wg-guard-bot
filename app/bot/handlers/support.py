@@ -34,9 +34,9 @@ STATUS_LABELS = {
 
 # ---------------------------------------------------------------------------
 @router.callback_query(MenuCB.filter(F.action == "support"))
-async def open_support(callback: CallbackQuery, session: AsyncSession) -> None:
-    await answer_callback(callback)
-    await show(callback, await texts.get("support.title", session), keyboard=await support_menu(session))
+async def open_support(event: Message | CallbackQuery, session: AsyncSession) -> None:
+    await answer_callback(event)
+    await show(event, await texts.get("support.title", session), keyboard=await support_menu(session))
 
 
 @router.callback_query(SupportCB.filter(F.action == "menu"))

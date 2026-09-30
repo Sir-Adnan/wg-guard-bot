@@ -99,7 +99,7 @@
       <div>
         <span class="tree__name">{{ category.name }}</span>
         <span class="tree__count">
-          · {{ node.plan_count|fa }} پلن
+          · {{ node.total_plans|fa }} پلن{% if node.total_plans != node.plan_count %} ({{ (node.total_plans - node.plan_count)|fa }} در زیردسته‌ها){% endif %}
           {% if node.children %}· {{ node.children|length|fa }} زیردسته{% endif %}
         </span>
       </div>
@@ -107,6 +107,11 @@
       {% if not category.is_visible %}{{ badge('مخفی', 'warning') }}{% endif %}
 
       <div class="tree__actions">
+        <button class="btn btn--sm btn--ghost" type="button"
+                data-modal-open="category-plans-{{ category.id }}"
+                data-title="انتخاب پلن‌های «{{ category.name }}»"
+                title="انتخاب پلن‌های این دسته">{{ icon('package') }} انتخاب پلن‌ها</button>
+
         <button class="btn btn--sm btn--ghost" type="button"
                 data-modal-open="category-{{ category.id }}" data-title="ویرایش «{{ category.name }}»">{{ icon('edit') }}</button>
 
@@ -141,6 +146,50 @@
   {{ drag_list(scope, base_url) }}
   {% for node in nodes %}{{ render_node(node, 0) }}{% endfor %}
   </div>
+{%- endmacro %}
+
+{#
+  انتخاب پلن‌های یک دسته: فهرست کامل پلن‌ها با تیک. هر تیک یک فیلد ``plan_ids``
+  است (سرویس همه را یک‌جا می‌خواند)، پس هر پلنی که تیک نخورد از این دسته جدا
+  می‌شود. کادر جست‌وجو از فیلترِ سمت کلاینتِ ``panel.js`` استفاده می‌کند.
+#}
+{% macro plan_picker(category) -%}
+<input class="input" type="search" data-filter-target="cat-plans-table-{{ category.id }}"
+       placeholder="جست‌وجو در نام پلن…" aria-label="جست‌وجوی پلن">
+{% if plan_options %}
+  <div class="table-wrap mt-2">
+    <table class="table" id="cat-plans-table-{{ category.id }}">
+      <thead>
+        <tr><th></th><th>پلن</th><th>قیمت</th><th>حجم</th><th>دستهٔ فعلی</th></tr>
+      </thead>
+      <tbody>
+        {% for plan, current_category in plan_options %}
+        <tr>
+          <td>
+            <label class="checkbox">
+              <input type="checkbox" name="plan_ids" value="{{ plan.id }}"
+                     {% if plan.category_id == category.id %}checked{% endif %}>
+            </label>
+          </td>
+          <td>
+            <div class="strong">{{ plan.name }}</div>
+            {% if not plan.is_active %}<span class="badge badge--danger">غیرفعال</span>{% endif %}
+          </td>
+          <td class="num">{{ plan.price_rial|money }}</td>
+          <td class="num">{{ plan.traffic_gb|gb }}</td>
+          <td class="small muted">
+            {% if plan.category_id == category.id %}همین دسته
+            {% elif current_category %}{{ current_category }}
+            {% else %}<span class="dim">بدون دسته</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  {{ empty_state('هنوز پلنی نساخته‌اید', 'اول از صفحهٔ «پلن‌ها» یک سرویس بسازید، بعد آن را به این دسته وصل کنید.', 'box') }}
+{% endif %}
 {%- endmacro %}
 
 <div class="card">
@@ -196,6 +245,32 @@
       <div class="modal__foot">
         <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
         <button class="btn btn--primary" type="submit">{{ icon('check') }} ذخیره</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+
+{% for depth, category in category_options %}
+<div class="modal" id="category-plans-{{ category.id }}" hidden>
+  <div class="modal__panel">
+    <form method="post" action="{{ base_url }}/{{ category.id }}/plans">
+      {{ csrf(csrf_token) }}
+      <div class="modal__head">
+        <div class="modal__title" data-modal-title>انتخاب پلن‌های «{{ category.name }}»</div>
+        <div class="card__spacer"></div>
+        <button class="btn btn--icon btn--ghost" type="button" data-modal-close>{{ icon('x') }}</button>
+      </div>
+      <div class="modal__body">
+        <div class="hint mb-2">
+          پلن‌هایی را تیک بزنید که باید در این دسته دیده شوند. هر پلنی که تیک نخورد از این دسته
+          جدا می‌شود و به «بدون دسته» برمی‌گردد؛ پلن‌های دسته‌های دیگر دست‌نخورده می‌مانند.
+        </div>
+        {{ plan_picker(category) }}
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--ghost" type="button" data-modal-close>انصراف</button>
+        <button class="btn btn--primary" type="submit">{{ icon('check') }} ذخیرهٔ انتخاب‌ها</button>
       </div>
     </form>
   </div>

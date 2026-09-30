@@ -174,7 +174,9 @@ Components: `btn` (`--primary --success --warning --danger --ghost --sm --icon
 `tree`, `tree__row`, `tree__name`, `tree__actions`, `stat`, `stat__icon`,
 `stat__label`, `stat__value`, `stat__hint`, `preview-phone`, `preview-bubble`,
 `preview-btn` (`--primary --success --danger --link --default`), `emoji-grid`,
-`emoji-cell`, `swatch--primary|success|danger|link|default`, `searchbar`.
+`emoji-cell`, `swatch--primary|success|danger|link|default`, `searchbar`,
+`menu-board`, `menu-row`, `menu-palette`, `menu-chip` (`is-palette`,
+`is-dragging`), `menu-chip__grip`, `menu-chip__label`, `menu-chip__remove`.
 
 Utilities: `muted`, `dim`, `small`, `strong`, `mono`, `num`, `truncate`,
 `text-success|danger|warning|info`, `text-center`, `mt-1|2|3`, `mb-2`, `w-100`,
@@ -193,6 +195,77 @@ Icons: `{{ icon('name') }}` — see `templates/partials/icons.html`.
 | `data-filter-target="tableId"` | live client-side row filter for the input |
 | `data-autosubmit` | submit the form on change/select |
 | `data-nav-toggle`, `data-theme-toggle` | handled by the layout |
+
+Two behaviours have a contract of their own because a template and a script have
+to agree on the exact attribute names. Both are **opt-in**: a page that renders
+none of these attributes keeps working untouched.
+
+### 6.1 Reordering a list — the drag-and-drop contract
+
+Rendered by `plans.html`, `categories.html`, `channels.html`, `cards.html`,
+`guides.html` and `panels.html`; handled by `initDragLists` in `panel.js`.
+
+| attribute | meaning |
+|---|---|
+| `data-drag-list="<entity>"` | the container whose **direct children** are the rows; the value is the registry key in `app/services/ordering.py` |
+| `data-drag-id` | one row of that list |
+| `data-drag-handle` | the visible, focusable grip — a drag starts here and nowhere else |
+| `data-drag-scope` | optional partition (a category's `parent_id`) |
+| `data-drag-next` | optional return URL for the no-JavaScript path |
+
+* A drop posts `entity`, `ids` (comma-separated, in the new order), `scope`,
+  `next` and `csrf_token` to `POST {panel_prefix}/reorder` with
+  `X-Requested-With: fetch`, and expects `{"ok", "changed", "message"}`
+  (200 on success, 400 on a refused order, 403 on a bad token).
+* The DOM is moved **before** the request goes out; a request that does not come
+  back `ok` restores the markup captured before the move and toasts the server's
+  sentence, so a failed move is never left on screen looking saved.
+* `Alt`+`↑`/`↓` on the focused handle moves the row and posts through the same
+  function.
+* The no-JavaScript path is the same fields as an ordinary form post: 303 + flash.
+
+### 6.2 The main-menu layout builder — the second drag contract
+
+Rendered by `buttons.html`; handled by `initMenuBuilder` in `panel.js`.
+
+| attribute | meaning |
+|---|---|
+| `data-menu-builder` | the card that owns the editor |
+| `data-menu-url` | where a save goes (`POST {panel_prefix}/buttons/layout`) |
+| `data-menu-max-rows`, `data-menu-max-buttons` | the caps, taken from `app/services/menu_layout.py` — never re-typed in the template |
+| `data-menu-rows` | the container of the row containers |
+| `data-menu-row` | one row of the menu |
+| `data-menu-palette` | where the buttons that are **not** in the menu live |
+| `data-menu-palette-note` | the "nothing left to add" line, shown when the palette is empty |
+| `data-menu-key="<appearance key>"` | one chip (one menu button) |
+| `data-menu-handle` | the focusable grip inside the chip |
+| `data-menu-remove` | the ✕ inside a chip that is in a row |
+| `data-menu-add-row` | appends an empty row (a drop zone) |
+| `data-menu-save` | posts the whole arrangement |
+
+Payload and answer:
+
+* **With JavaScript** — `panel.js` posts `csrf_token` and `layout` (a JSON array
+  of rows, each an array of keys) with `X-Requested-With: fetch` and reads
+  `{"ok", "changed", "message"}`: 200 on success, 400 when the service refuses
+  the arrangement (an unknown key, an empty menu), 403 on a bad CSRF token.
+* **Without JavaScript** — the card renders each chip with a hidden
+  `name="keys"` input and closes every row with `name="row_break"`; a plain form
+  post therefore carries the whole arrangement in document order, and the answer
+  is the usual 303 + flash. The ✕ is a real submit button
+  (`name="remove_key"`), so a browser without scripts can still take one button
+  out of the menu and save the rest in a single click. A chip that sits in the
+  palette renders its input `disabled`, which is what keeps it out of that post.
+* The rows *are* the model: a chip is only ever moved, so its label, emoji and
+  hidden field travel with it. A drag or a click only edits the page — this
+  editor saves the whole menu at once through the save button. `Alt`+`←`/`→`
+  moves a focused chip along its row, `Alt`+`↑`/`↓` to the neighbouring row, and
+  saves through that same function; a chip in the palette joins the last row
+  first.
+* A save that does not come back `ok` — a refusal, or an expired session, which
+  answers with the login page instead of JSON — puts back the arrangement the
+  server still has and toasts the message, so the page never shows an unsaved
+  menu as if it were saved. On success the toast carries the server's sentence.
 
 ## 7. Formatting filters
 

@@ -32,13 +32,13 @@ def enabled() -> bool:
 
 
 @router.callback_query(MenuCB.filter(F.action == "gift"))
-async def open_gift(callback: CallbackQuery, session: AsyncSession, user: User) -> None:
-    await answer_callback(callback)
+async def open_gift(event: Message | CallbackQuery, session: AsyncSession, user: User) -> None:
+    await answer_callback(event)
     if not enabled():
-        await show(callback, await texts.get("gift.disabled", session))
+        await show(event, await texts.get("gift.disabled", session))
         return
     await show(
-        callback,
+        event,
         await texts.get("gift.title", session),
         keyboard=await gift_menu(session, available=True),
     )

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.callbacks import GuideCB, MenuCB
@@ -90,13 +90,13 @@ async def read_guide(callback: CallbackQuery, callback_data: GuideCB, session: A
         await notifier.to_user(user, "🔽 ادامه مطالب:", keyboard=kb.build())
 
 
-async def _render_sections(callback: CallbackQuery, session: AsyncSession) -> None:
+async def _render_sections(event: Message | CallbackQuery, session: AsyncSession) -> None:
     counts = await guides.sections(session)
     if not counts:
-        await show(callback, await texts.get("guides.empty", session))
+        await show(event, await texts.get("guides.empty", session))
         return
     await show(
-        callback,
+        event,
         await texts.get("guides.title", session),
         keyboard=await guide_sections(session, counts),
     )

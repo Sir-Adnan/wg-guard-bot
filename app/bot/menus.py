@@ -28,23 +28,37 @@ from app.bot.callbacks import (
     WalletCB,
 )
 from app.bot.keyboards import KB, KeyboardBuilder
+from app.core.logging import get_logger
 from app.core.money import fa_digits
 from app.db.models import Order, Plan, Service, ServiceStatus
+from app.services import menu_layout
 from app.services.settings_store import app_settings
 
+log = get_logger(__name__)
+
 # -- main menu --------------------------------------------------------------
-MAIN_MENU_LAYOUT: tuple[tuple[str, tuple[str, str]], ...] = (
-    # (visual key, (callback action, callback arg))
-    ("menu.buy", ("buy", "")),
-    ("menu.my_services", ("services", "")),
-    ("menu.wallet", ("wallet", "")),
-    ("menu.test", ("test", "")),
-    ("menu.support", ("support", "")),
-    ("menu.guides", ("guides", "")),
-    ("menu.profile", ("profile", "")),
-    ("menu.referral", ("referral", "")),
-    ("menu.gift", ("gift", "")),
-    ("menu.rules", ("rules", "")),
+#: What each main-menu button *does*.  The layout — which buttons, in which row,
+#: in which order — belongs to the owner and lives in the database
+#: (:mod:`app.services.menu_layout`); this mapping is the part only the bot can
+#: know, and it doubles as the list of buttons the editor may offer.
+MENU_ACTIONS: dict[str, tuple[str, str]] = {
+    "menu.buy": ("buy", ""),
+    "menu.my_services": ("services", ""),
+    "menu.wallet": ("wallet", ""),
+    "menu.test": ("test", ""),
+    "menu.support": ("support", ""),
+    "menu.guides": ("guides", ""),
+    "menu.profile": ("profile", ""),
+    "menu.referral": ("referral", ""),
+    "menu.gift": ("gift", ""),
+    "menu.rules": ("rules", ""),
+    "menu.channels": ("channels", ""),
+}
+
+#: The shipped layout as ``(key, (action, arg))`` pairs, for callers that only
+#: need to know which buttons exist.
+MAIN_MENU_LAYOUT: tuple[tuple[str, tuple[str, str]], ...] = tuple(
+    (key, MENU_ACTIONS[key]) for row in menu_layout.DEFAULT_ROWS for key in row
 )
 
 #: Buttons hidden when their feature is switched off in the panel.
@@ -66,6 +80,14 @@ async def main_menu(
     show_wallet: bool = True,
     columns: int = 2,
 ) -> KB:
+    """The customer's home screen, in the owner's layout.
+
+    Rows come from :func:`app.services.menu_layout.rows` — the shipped layout
+    merged with whatever the owner saved — and are filtered twice: a feature
+    switched off in the panel removes its button even if the layout still lists
+    it, and a key this build has no action for is dropped instead of being drawn
+    as a dead button.
+    """
     enabled = {
         "test": show_test,
         "wallet": show_wallet,
@@ -73,13 +95,20 @@ async def main_menu(
         "gift": show_gift,
     }
     kb = KeyboardBuilder(session=session, columns=columns)
-    for visual_key, (action, arg) in MAIN_MENU_LAYOUT:
-        feature = FEATURE_GATED.get(visual_key)
-        if feature and not enabled.get(feature, True):
-            continue
-        await kb.add(visual_key, callback=MenuCB(action=action, arg=arg).pack())
-    kb.row()
-    await kb.add("menu.channels", callback=MenuCB(action="channels").pack())
+    for row in await menu_layout.rows(session):
+        drawn = 0
+        for visual_key in row.keys:
+            feature = FEATURE_GATED.get(visual_key)
+            if feature and not enabled.get(feature, True):
+                continue
+            action = MENU_ACTIONS.get(visual_key)
+            if action is None:
+                log.warning("Menu key %r has no action in this build — skipped", visual_key)
+                continue
+            await kb.add(visual_key, callback=MenuCB(action=action[0], arg=action[1]).pack())
+            drawn += 1
+        if drawn:
+            kb.row()
     if is_staff:
         # Straight to the broadcast flow: pointing this at the admin menu made
         # the button look broken.
@@ -460,7 +489,9 @@ async def pagination(session: AsyncSession | None, *, section: str, page: int, h
 
 __all__ = [
     "DEPOSIT_PRESETS_RIAL",
+    "FEATURE_GATED",
     "MAIN_MENU_LAYOUT",
+    "MENU_ACTIONS",
     "STATUS_DOT",
     "admin_menu",
     "back_to_main",

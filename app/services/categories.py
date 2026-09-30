@@ -10,6 +10,7 @@ uniqueness, cascade delete) live in exactly one place.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from sqlalchemy import delete, func, select
@@ -17,11 +18,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
+from app.core.money import fa_digits
 from app.db.models import Plan, PlanCategory
+from app.services.audit import audit
 
 log = get_logger(__name__)
 
 MAX_DEPTH = 5
+
+#: ``audit_logs`` action written when a category's plan selection changes.
+AUDIT_ACTION = "category.plans"
+
+#: ``audit_logs.entity`` for those entries.
+AUDIT_ENTITY = "plan_category"
 
 
 @dataclass(slots=True)
@@ -114,6 +123,22 @@ class CategoryService:
             parent = nodes.get(category.parent_id) if category.parent_id else None
             (parent.children if parent else roots).append(node)
         return roots
+
+    async def plan_options(self, session: AsyncSession) -> list[tuple[Plan, str | None]]:
+        """Every plan with the name of the category it sits in right now.
+
+        The panel's plan picker needs one row per plan — including the inactive
+        and test ones, which never reach the shop — so the operator can see what
+        a tick would move.  The name is joined explicitly instead of read through
+        ``plan.category_node`` so a plan whose category vanished still appears,
+        as «بدون دسته».
+        """
+        stmt = (
+            select(Plan, PlanCategory.name)
+            .outerjoin(PlanCategory, Plan.category_id == PlanCategory.id)
+            .order_by(Plan.sort_order.asc(), Plan.id.asc())
+        )
+        return [(plan, name) for plan, name in (await session.execute(stmt)).all()]
 
     async def flatten(self, session: AsyncSession, *, active_only: bool = True) -> list[tuple[int, PlanCategory]]:
         """``[(depth, category)]`` in display order — handy for ``<select>`` boxes."""
@@ -262,6 +287,63 @@ class CategoryService:
         await session.flush()
         return node
 
+    async def set_plans(self, session: AsyncSession, category_id: int, plan_ids: Sequence[int]) -> int:
+        """Make ``plan_ids`` exactly the plans of one category.
+
+        The panel's picker submits its **whole** selection, so a plan that is in
+        the category today and is missing from ``plan_ids`` is detached
+        (``category_id`` becomes ``None`` = «بدون دسته»); an empty selection
+        therefore clears the category.  Plans in other categories are never
+        touched, so one click can only ever change the membership of this one
+        node — the tree keeps its "a plan belongs to at most one category" rule.
+
+        Returns how many rows changed, and ``0`` for a submission that matches
+        what is already stored (which writes no audit entry either).  An unknown
+        plan id raises :class:`~app.core.errors.ValidationError` before anything
+        is written.  The caller owns the transaction: ``await session.commit()``
+        afterwards, or roll back and nothing happened.
+        """
+        node = await self.get(session, category_id)
+        wanted = list(dict.fromkeys(plan_ids))
+
+        if wanted:
+            known = set((await session.execute(select(Plan.id).where(Plan.id.in_(wanted)))).scalars())
+            if len(known) != len(wanted):
+                raise ValidationError("یکی از پلن‌های انتخابی پیدا نشد؛ صفحه را دوباره باز کنید.")
+
+        chosen = set(wanted)
+        attached = detached = 0
+
+        current = list((await session.execute(select(Plan).where(Plan.category_id == category_id))).scalars())
+        for plan in current:
+            if plan.id not in chosen:
+                plan.category_id = None
+                detached += 1
+
+        if wanted:
+            rows = list((await session.execute(select(Plan).where(Plan.id.in_(wanted)))).scalars())
+            for plan in rows:
+                if plan.category_id != category_id:
+                    plan.category_id = category_id
+                    attached += 1
+
+        changed = attached + detached
+        if not changed:
+            return 0
+
+        await session.flush()
+        description = f"پلن‌های «{node.name}»: {fa_digits(attached)} وصل و {fa_digits(detached)} جدا شد."
+        await audit.record(
+            session,
+            AUDIT_ACTION,
+            entity=AUDIT_ENTITY,
+            entity_id=category_id,
+            description=description,
+            meta={"category_id": category_id, "attached": attached, "detached": detached, "plans": sorted(chosen)},
+        )
+        log.info("Category %s plans set: %d attached, %d detached", node.name, attached, detached)
+        return changed
+
     # -- helpers -----------------------------------------------------------
     async def _assert_unique_name(
         self, session: AsyncSession, parent_id: int | None, name: str, *, exclude_id: int | None = None
@@ -325,4 +407,4 @@ class CategoryService:
 categories = CategoryService()
 
 
-__all__ = ["MAX_DEPTH", "CategoryNode", "CategoryService", "categories"]
+__all__ = ["AUDIT_ACTION", "AUDIT_ENTITY", "MAX_DEPTH", "CategoryNode", "CategoryService", "categories"]

@@ -34,9 +34,9 @@ async def admin_command(message: Message, session: AsyncSession, staff: Staff) -
 
 
 @router.callback_query(AdminCB.filter(F.action == "menu"), IsStaff())
-async def admin_menu_cb(callback: CallbackQuery, session: AsyncSession, staff: Staff) -> None:
-    await answer_callback(callback)
-    await _render_menu(callback, session, staff)
+async def admin_menu_cb(event: Message | CallbackQuery, session: AsyncSession, staff: Staff) -> None:
+    await answer_callback(event)
+    await _render_menu(event, session, staff)
 
 
 async def _render_menu(event, session: AsyncSession, staff: Staff) -> None:

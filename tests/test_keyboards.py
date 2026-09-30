@@ -54,12 +54,27 @@ async def test_an_explicit_row_break_is_still_honoured():
 
 
 async def test_the_main_menu_fits_on_a_fresh_installation():
-    """The exact screen that broke: ten buttons with every feature enabled."""
+    """The exact screen that broke: every shipped button, every feature enabled."""
     kb = await main_menu(None, show_test=True, show_wallet=True, show_guides=True, show_gift=True)
 
     widths = _widths(kb.markup)
     assert all(width <= MAX_ROW_BUTTONS for width in widths)
-    assert sum(widths) == len(MAIN_MENU_LAYOUT) + 1  # the channel-membership button
+    # The shipped layout is the guide's channel button included; with no session
+    # the owner's layout does not apply, so every key must be drawn.
+    assert sum(widths) == len(MAIN_MENU_LAYOUT)
+
+
+async def test_the_rows_follow_the_shipped_layout():
+    from app.bot.menus import MENU_ACTIONS
+    from app.services.menu_layout import DEFAULT_ROWS
+
+    kb = await main_menu(None)
+
+    widths = _widths(kb.markup)
+    assert widths == [len(row) for row in DEFAULT_ROWS]
+    assert set(MENU_ACTIONS) == {key for row in DEFAULT_ROWS for key in row}, (
+        "every laid-out button needs an action, and every action a place in the default layout"
+    )
 
 
 async def test_the_gated_main_menu_also_fits():

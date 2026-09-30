@@ -121,6 +121,7 @@ These values are stored in the database and take effect immediately.
 | Connection guide | On | Shows the button in the menu |
 | Special offer | On | Shows the special-plan button |
 | Show categories | On | |
+| **Traffic unit** | `1024³` (binary) | How many bytes one "GB" in a plan means. The WG-Guard panel prints decimal gigabytes, so under the default a 50 GB plan shows up there as 53.7 GB — the same traffic, two units. Switching to `1000³` makes both read 50; it applies to every plan pushed to a node afterwards |
 
 ### Group "Payment"
 
@@ -164,6 +165,7 @@ Notifications to admins (new order / receipt / ticket / error / user) and notifi
 | Premium emoji | On | Requires a Fragment username for buttons |
 | Plans per row | 1 | Keyboard layout |
 | Show price in the list | On | |
+| **Physical keyboard** | Off | Draws the main menu as a Telegram *reply* keyboard under the input field, so it survives scrolling. It carries the same buttons, in the order set on the buttons page, and a press opens the same screen. Customers can hide it with `/keyboard off` and bring it back with `/keyboard` |
 
 ### Group "Advanced" (owner only)
 

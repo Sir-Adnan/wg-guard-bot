@@ -20,6 +20,7 @@ from app.services.settings_store import (
     GROUP_LABELS,
     SettingSpec,
     app_settings,
+    apply_runtime_settings,
     spec_groups,
 )
 from app.web.deps import form_bool, form_dict, form_float, form_int, form_money, form_str
@@ -168,6 +169,8 @@ async def save_settings(
         changed = await app_settings.set_many(session, payload)
         # ربات باید بلافاصله مقدار تازه را ببیند (کش درون‌فرآیندی).
         await app_settings.load(session, force=True)
+        # و آنچه در حافظه‌ی فرآیند کش شده (مثل واحد حجم) هم تازه شود.
+        apply_runtime_settings()
         await session.commit()
     except AppError as exc:
         return redirect(BASE, message=exc.message, level="danger")
@@ -198,6 +201,7 @@ async def reset_group(
         for spec in grouped[group]:
             await app_settings.reset(session, spec.key)
         await app_settings.load(session, force=True)
+        apply_runtime_settings()
         await session.commit()
     except AppError as exc:
         return redirect(BASE, message=exc.message, level="danger")

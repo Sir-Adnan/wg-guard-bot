@@ -454,6 +454,373 @@
     });
   }
 
+  /* -- main-menu layout builder -----------------------------------------
+     Opt-in contract, also documented in `docs/PANEL-CONTRACT.md` §6.2:
+
+       [data-menu-builder]       the card; it also carries the endpoint + caps
+       [data-menu-url]           where a fetch save goes (POST, JSON in `layout`)
+       [data-menu-max-rows]      row cap, straight from the service
+       [data-menu-max-buttons]   buttons per row, straight from the service
+       [data-menu-rows]          the container of the row containers
+       [data-menu-row]           one row of the menu
+       [data-menu-palette]       where the buttons outside the menu live
+       [data-menu-palette-note]  the "nothing left to add" line
+       [data-menu-key]           one chip (one menu button)
+       [data-menu-handle]        the focusable grip inside the chip
+       [data-menu-remove]        the ✕ inside a chip that is in a row
+       [data-menu-add-row]       appends an empty row
+       [data-menu-save]          posts the whole arrangement
+
+     A drag or a click only edits the page: this editor saves the whole menu at
+     once, and a save that fails puts back the arrangement the server still has,
+     so the screen never shows an unsaved menu as if it were saved.  The
+     keyboard path (Alt+arrow) moves the chip and then saves through that very
+     same function, which is what makes the editor usable without a mouse.
+  --------------------------------------------------------------------- */
+  var MENU_BUILDER_SELECTOR = "[data-menu-builder]";
+  var MENU_ROWS_SELECTOR = "[data-menu-rows]";
+  var MENU_ROW_SELECTOR = "[data-menu-row]";
+  var MENU_CHIP_SELECTOR = "[data-menu-key]";
+  var MENU_HANDLE_SELECTOR = "[data-menu-handle]";
+  var MENU_REMOVE_SELECTOR = "[data-menu-remove]";
+  var MENU_FAILED = "چیدمان ذخیره نشد؛ صفحه را دوباره باز کنید و دوباره تلاش کنید.";
+
+  /* Which way each arrow moves a chip.  The panel is RTL, so "left" is later in
+     the row and "right" is earlier — the same order the bot will draw. */
+  var MENU_STEPS = {
+    ArrowLeft: { axis: "row", delta: 1 },
+    ArrowRight: { axis: "row", delta: -1 },
+    ArrowUp: { axis: "rows", delta: -1 },
+    ArrowDown: { axis: "rows", delta: 1 }
+  };
+
+  function menuState() {
+    if (!window.__panelMenu) window.__panelMenu = { chip: null, busy: false };
+    return window.__panelMenu;
+  }
+
+  function initMenuBuilder() {
+    var root = $(MENU_BUILDER_SELECTOR);
+    var rowsBox = root && $(MENU_ROWS_SELECTOR, root);
+    var palette = root && $("[data-menu-palette]", root);
+    var url = root && root.getAttribute("data-menu-url");
+    if (!root || !rowsBox || !palette || !url) return;
+
+    var maxRows = parseInt(root.getAttribute("data-menu-max-rows"), 10) || 12;
+    var maxButtons = parseInt(root.getAttribute("data-menu-max-buttons"), 10) || 8;
+    var note = $("[data-menu-palette-note]", root);
+
+    /* Every chip in the card, in the order the page rendered it.  The DOM *is*
+       the model: a chip is only ever moved, never rebuilt, so its label, emoji
+       and hidden form field travel with it. */
+    var chips = {};
+    var order = [];
+    $$(MENU_CHIP_SELECTOR, root).forEach(function (chip) {
+      var key = chip.getAttribute("data-menu-key");
+      if (!key || chips[key]) return;
+      chips[key] = chip;
+      order.push(key);
+      chip.setAttribute("draggable", "true");
+    });
+
+    function rowElements() { return $$(MENU_ROW_SELECTOR, rowsBox); }
+
+    function keysOf(row) {
+      return $$(MENU_CHIP_SELECTOR, row).map(function (chip) { return chip.getAttribute("data-menu-key"); });
+    }
+
+    function rowsModel() { return rowElements().map(keysOf); }
+
+    /* An empty row stays until the next save — the service drops it, and until
+       then it is a perfectly good drop target. */
+    function makeRow() {
+      var row = doc.createElement("div");
+      row.className = "menu-row";
+      row.setAttribute("data-menu-row", "");
+      var marker = doc.createElement("input");
+      marker.type = "hidden";
+      marker.name = "row_break";
+      marker.value = "1";
+      row.appendChild(marker);
+      rowsBox.appendChild(row);
+      return row;
+    }
+
+    /* Redraw the page from `target` (a list of lists of keys): every chip the
+       arrangement does not mention goes back to the palette. */
+    function paint(target) {
+      var rowEls = rowElements();
+      while (rowEls.length < target.length) rowEls.push(makeRow());
+      while (rowEls.length > target.length) rowEls.pop().remove();
+
+      var placed = {};
+      target.forEach(function (keys, index) {
+        var row = rowEls[index];
+        var marker = row.querySelector('input[name="row_break"]');
+        keys.forEach(function (key) {
+          var chip = chips[key];
+          if (!chip || placed[key]) return;
+          placed[key] = true;
+          row.insertBefore(chip, marker);
+        });
+      });
+
+      order.forEach(function (key) {
+        var chip = chips[key];
+        var inMenu = !!placed[key];
+        if (!inMenu) palette.appendChild(chip);
+        chip.classList.toggle("is-palette", !inMenu);
+        /* A chip outside the menu must not submit its key on the no-JS path. */
+        var field = chip.querySelector('input[name="keys"]');
+        if (field) field.disabled = !inMenu;
+      });
+      if (note) note.hidden = !!palette.querySelector(MENU_CHIP_SELECTOR);
+    }
+
+    /* The arrangement the server last confirmed: the page as rendered, then the
+       last save that answered ok.  Every failed save goes back to it. */
+    var saved = rowsModel();
+
+    function removeKey(key) {
+      paint(
+        rowsModel().map(function (row) {
+          return row.filter(function (item) { return item !== key; });
+        })
+      );
+    }
+
+    /* Where a chip from the palette joins the menu: the last row, or a new one
+       when that row is full.  Returns null when the menu cannot take it. */
+    function claim(key) {
+      var target = rowsModel();
+      if (!target.length) target.push([]);
+      var last = target.length - 1;
+      if (target[last].length >= maxButtons) {
+        if (target.length >= maxRows) {
+          toast("ردیف‌های منو پر شده‌اند؛ برای افزودن دکمه‌ی تازه یکی از ردیف‌ها را خالی کنید.", "error");
+          return null;
+        }
+        target.push([]);
+        last = target.length - 1;
+      }
+      target[last].push(key);
+      return target;
+    }
+
+    /* The one save path: the button, the keyboard and anything else that has to
+       persist the arrangement all end up here. */
+    async function save() {
+      var state = menuState();
+      if (state.busy) return;
+      state.busy = true;
+      var saveBtn = $("[data-menu-save]", root);
+      if (saveBtn) saveBtn.classList.add("is-disabled");
+
+      var body = new FormData();
+      body.append("csrf_token", csrfToken());
+      body.append("layout", JSON.stringify(rowsModel()));
+
+      try {
+        var response = await fetch(url, {
+          method: "POST",
+          headers: { "X-Requested-With": "fetch", Accept: "application/json" },
+          body: body,
+          credentials: "same-origin"
+        });
+        var payload = null;
+        try { payload = await response.json(); } catch (err) { payload = null; }
+        /* An expired session redirects to the login page, which answers with
+           HTML: an unreadable body means "not saved", so put back the menu the
+           server still has instead of leaving the edit on screen. */
+        if (!payload || payload.ok !== true) {
+          paint(saved);
+          toast((payload && payload.message) || MENU_FAILED, "error");
+          return;
+        }
+        /* The service drops empty rows, so the confirmed arrangement is this one
+           without them: what the screen shows and what the bot draws stay the
+           same menu. */
+        saved = rowsModel().filter(function (row) { return row.length; });
+        paint(saved);
+        toast(payload.message || "چیدمان منوی اصلی ذخیره شد.");
+      } catch (err) {
+        paint(saved);
+        toast(MENU_FAILED, "error");
+      } finally {
+        state.busy = false;
+        if (saveBtn) saveBtn.classList.remove("is-disabled");
+      }
+    }
+
+    /* The chip the pointer is over, but only one of *this* card's chips. */
+    function chipFromEvent(event) {
+      var node = event.target;
+      var chip = node && node.closest ? node.closest(MENU_CHIP_SELECTOR) : null;
+      return chip && chips[chip.getAttribute("data-menu-key")] === chip ? chip : null;
+    }
+
+    function rowFromEvent(event) {
+      var node = event.target;
+      return node && node.closest ? node.closest(MENU_ROW_SELECTOR) : null;
+    }
+
+    /* Which side of `over` the pointer is on.  Direction matters: in this RTL
+       panel "after" means the pointer went past the midpoint towards the left. */
+    function pastMidpoint(over, event) {
+      var box = over.getBoundingClientRect();
+      if (box.width <= 0) return false;
+      var ratio = (event.clientX - box.left) / box.width;
+      var rtl = window.getComputedStyle(over.parentNode).direction === "rtl";
+      return rtl ? ratio < 0.5 : ratio > 0.5;
+    }
+
+    function clearMenuDrag() {
+      var state = menuState();
+      if (state.chip) state.chip.classList.remove("is-dragging");
+      state.chip = null;
+      rowsBox.classList.remove("drop-target");
+      palette.classList.remove("drop-target");
+    }
+
+    root.addEventListener("dragstart", function (event) {
+      var state = menuState();
+      var chip = chipFromEvent(event);
+      /* Only the grip starts a drag, exactly like the ordering lists — a chip
+         carries its ✕ right next to its label. */
+      var handle = event.target.closest ? event.target.closest(MENU_HANDLE_SELECTOR) : null;
+      if (!chip || !handle || state.busy) {
+        event.preventDefault();
+        return;
+      }
+      state.chip = chip;
+      chip.classList.add("is-dragging");
+      rowsBox.classList.add("drop-target");
+      palette.classList.add("drop-target");
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        /* Firefox refuses to start a drag with an empty payload. */
+        event.dataTransfer.setData("text/plain", chip.getAttribute("data-menu-key") || "");
+      }
+    });
+
+    /* The chip follows the pointer live; the save button persists the result. */
+    rowsBox.addEventListener("dragover", function (event) {
+      var state = menuState();
+      if (!state.chip) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      var row = rowFromEvent(event) || rowElements()[rowElements().length - 1];
+      if (!row) row = makeRow();
+      var over = chipFromEvent(event);
+      if (over === state.chip) return;
+      if (over && over.parentNode === row) {
+        row.insertBefore(state.chip, pastMidpoint(over, event) ? over.nextElementSibling : over);
+      } else if (!over) {
+        row.insertBefore(state.chip, row.querySelector('input[name="row_break"]'));
+      }
+    });
+
+    rowsBox.addEventListener("drop", function (event) {
+      if (!menuState().chip) return;
+      event.preventDefault();
+      clearMenuDrag();
+    });
+
+    /* Dropping a chip on the palette takes it out of the menu — the dragging
+       counterpart of the ✕. */
+    palette.addEventListener("dragover", function (event) {
+      if (!menuState().chip) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    });
+
+    palette.addEventListener("drop", function (event) {
+      var state = menuState();
+      if (!state.chip) return;
+      event.preventDefault();
+      var chip = state.chip;
+      clearMenuDrag();
+      removeKey(chip.getAttribute("data-menu-key"));
+    });
+
+    root.addEventListener("dragend", clearMenuDrag);
+
+    root.addEventListener("click", function (event) {
+      var node = event.target;
+      if (!node || !node.closest) return;
+
+      if (node.closest(MENU_REMOVE_SELECTOR)) {
+        /* Without JavaScript this is a real submit that removes and saves. */
+        event.preventDefault();
+        var chip = chipFromEvent(event);
+        if (chip) removeKey(chip.getAttribute("data-menu-key"));
+        return;
+      }
+
+      if (node.closest("[data-menu-add-row]")) {
+        event.preventDefault();
+        if (rowElements().length >= maxRows) {
+          toast("ردیف‌های منو پر شده‌اند؛ برای افزودن ردیف تازه یکی از ردیف‌ها را خالی کنید.", "error");
+          return;
+        }
+        makeRow();
+        return;
+      }
+
+      var paletteChip = chipFromEvent(event);
+      if (paletteChip && paletteChip.classList.contains("is-palette")) {
+        var claimed = claim(paletteChip.getAttribute("data-menu-key"));
+        if (claimed) paint(claimed);
+      }
+    });
+
+    /* Keyboard path: the grip owns focus, Alt+arrow moves the chip and saves it
+       through the same function the save button uses.  Without a mouse the
+       editor is still completable, and a palette chip joins the menu first. */
+    doc.addEventListener("keydown", function (event) {
+      if (!event.altKey) return;
+      var step = MENU_STEPS[event.key];
+      if (!step) return;
+      var chip = chipFromEvent(event);
+      if (!chip || !chip.querySelector(MENU_HANDLE_SELECTOR)) return;
+      if (menuState().busy) return;
+
+      var key = chip.getAttribute("data-menu-key");
+      var model = rowsModel();
+      var from = -1;
+      var at = -1;
+      model.forEach(function (row, index) {
+        var position = row.indexOf(key);
+        if (position !== -1) { from = index; at = position; }
+      });
+
+      event.preventDefault();
+
+      if (from === -1) {
+        var claimed = claim(key);
+        if (claimed) { paint(claimed); save(); }
+        return;
+      }
+
+      var target = model.map(function (row) { return row.slice(); });
+      target[from].splice(at, 1);
+      if (step.axis === "row") {
+        var slot = step.delta > 0 ? Math.min(at + 1, target[from].length) : at - 1;
+        if (slot < 0 || slot === at) return;
+        target[from].splice(slot, 0, key);
+      } else {
+        var neighbour = from + step.delta;
+        if (neighbour < 0 || neighbour >= target.length) return;
+        target[neighbour].splice(Math.min(at, target[neighbour].length), 0, key);
+      }
+
+      paint(target);
+      var handle = chip.querySelector(MENU_HANDLE_SELECTOR);
+      if (handle) handle.focus();
+      save();
+    });
+  }
+
   /* -- boot ------------------------------------------------------------- */
   function boot() {
     initNav();
@@ -466,6 +833,7 @@
     initCharts();
     initShortcuts();
     initDragLists();
+    initMenuBuilder();
     var flash = $("#server-flash");
     if (flash) toast(flash.getAttribute("data-message"), flash.getAttribute("data-level"));
   }

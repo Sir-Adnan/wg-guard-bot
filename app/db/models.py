@@ -934,6 +934,30 @@ class ButtonStyleConfig(Base, TimestampMixin):
         return f"<ButtonStyleConfig {self.key} {self.style}>"
 
 
+class MenuLayoutEntry(Base):
+    """Where the owner put one main-menu button.
+
+    The layout is *sparse*: a row exists only for a button the operator moved,
+    hid or added, and anything absent falls back to the code default in
+    :mod:`app.services.menu_layout`.  A release can therefore add a menu entry
+    without a migration and without the owner touching the editor, and
+    ``reset`` is a delete rather than a reconstruction.
+    """
+
+    __tablename__ = "menu_layout"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    #: Which row of the main menu the button sits in (0 = first).
+    row_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    #: Position inside that row.
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    #: A hidden button keeps its place in the layout but is not sent.
+    is_visible: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<MenuLayoutEntry {self.key} row={self.row_index} pos={self.position}>"
+
+
 class AuditLog(Base):
     """Who did what, from where."""
 

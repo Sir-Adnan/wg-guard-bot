@@ -1,4 +1,4 @@
-"""Money helpers.
+"""Money and traffic helpers.
 
 Project rule (non-negotiable): **the stored unit is always Rial**.
 Every ``*_rial`` column, every API payload and every internal calculation uses
@@ -6,6 +6,13 @@ Rial as an integer.  Toman is a *display* concern only, and ``CURRENCY_DISPLAY``
 decides which unit the customer sees.
 
 1 Toman == 10 Rial.
+
+Traffic is the other unit that has two spellings.  A plan says "50 GB"; the node
+stores bytes.  Whether that is 50 × 1024³ or 50 × 1000³ is a product decision —
+WG-Guard's own panel prints decimal gigabytes, so the operator who types 50 in
+the bot and then opens the node sees 53.7 GB under the binary basis.  The basis
+lives here, defaults to the binary one this project has always used, and is moved
+by :func:`set_gb_basis` from the stored setting (see ``shop.traffic_unit``).
 """
 
 from __future__ import annotations
@@ -15,6 +22,13 @@ from decimal import ROUND_HALF_UP, Decimal
 from app.core.config import settings
 
 RIAL_PER_TOMAN = 10
+
+#: Bytes in one "GB".  ``1024**3`` is what a Linux tool calls a gigabyte; the
+#: vendor panel prints decimal, hence the alternative.
+GB_BINARY = 1024**3
+GB_DECIMAL = 1000**3
+
+_gb_bytes: int = GB_BINARY
 
 #: Persian (Extended Arabic-Indic) digits, written with explicit escapes so no
 #: editor or copy/paste can silently swap them for Arabic-Indic ones.
@@ -36,6 +50,33 @@ _TO_ASCII = str.maketrans(
 def to_toman(rial: int) -> int:
     """Convert Rial to whole Toman (rounded half-up)."""
     return int((Decimal(int(rial)) / RIAL_PER_TOMAN).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+# ---------------------------------------------------------------------------
+# Traffic unit basis
+# ---------------------------------------------------------------------------
+def _gb_basis() -> int:
+    return _gb_bytes
+
+
+def _mb_per_gb() -> int:
+    """How many "MB" fit in one of this shop's GB (1024 or 1000)."""
+    return 1024 if _gb_bytes == GB_BINARY else 1000
+
+
+def set_gb_basis(*, decimal: bool) -> None:
+    """Choose what an operator's "GB" means, in bytes.
+
+    Called once per process from the stored setting, and again whenever the
+    operator changes it — the value is read by the provisioning path, so a
+    process that never calls this keeps the historical binary basis.
+    """
+    global _gb_bytes
+    _gb_bytes = GB_DECIMAL if decimal else GB_BINARY
+
+
+def gb_basis_is_decimal() -> bool:
+    return _gb_bytes == GB_DECIMAL
 
 
 def to_rial(toman: int | float | Decimal) -> int:
@@ -102,7 +143,7 @@ def format_gb(gb: float | int | None) -> str:
     if value <= 0:
         return "نامحدود"
     if value < 1:
-        return f"{_num(value * 1024, 0)} مگابایت".translate(_TO_PERSIAN)
+        return f"{_num(value * _mb_per_gb(), 0)} مگابایت".translate(_TO_PERSIAN)
     if value == int(value):
         return f"{int(value)} گیگابایت".translate(_TO_PERSIAN)
     return f"{value:g} گیگابایت".translate(_TO_PERSIAN)
@@ -112,11 +153,13 @@ def format_bytes(num_bytes: int | None) -> str:
     """Format a byte count using Persian units (بایت/کیلوبایت/...)."""
     if num_bytes is None:
         return "نامحدود"
+    # The ladder steps by KB/MB/GB — 1024 for a binary basis, 1000 for decimal.
+    step = float(_mb_per_gb())
     size = float(num_bytes)
     for unit in ("بایت", "کیلوبایت", "مگابایت", "گیگابایت", "ترابایت"):
-        if size < 1024 or unit == "ترابایت":
+        if size < step or unit == "ترابایت":
             return f"{_num(size, 0 if unit == 'بایت' else 2)} {unit}".translate(_TO_PERSIAN)
-        size /= 1024
+        size /= step
     return f"{size:.2f} ترابایت".translate(_TO_PERSIAN)
 
 
@@ -127,13 +170,13 @@ def gb_to_bytes(gb: float | int | None) -> int | None:
     value = float(gb)
     if value <= 0:
         return None
-    return int(Decimal(str(value)) * 1024**3)
+    return int(Decimal(str(value)) * _gb_basis())
 
 
 def bytes_to_gb(num_bytes: int | None) -> float | None:
     if num_bytes is None:
         return None
-    return round(num_bytes / 1024**3, 3)
+    return round(num_bytes / _gb_basis(), 3)
 
 
 def days_to_seconds(days: int | None) -> int | None:

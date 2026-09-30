@@ -66,6 +66,17 @@ def _specs() -> dict[str, SettingSpec]:
         ),
         SettingSpec("shop.support_hours", "ساعات پاسخ‌گویی", "shop", "str", "هر روز ۹ تا ۲۳"),
         SettingSpec(
+            "shop.traffic_unit",
+            "واحد حجم",
+            "shop",
+            "choice",
+            "gib",
+            "یک گیگابایت چند بایت باشد؟ پنل خود WG-Guard حجم را بر پایه ۱۰۰۰ نشان می‌دهد، "
+            "پس اگر پلن ۵۰ گیگی در ربات آن‌جا ۵۳.۷ گیگابایت دیده می‌شود، گزینه «۱۰۰۰» را انتخاب کنید. "
+            "تغییر این گزینه فقط روی پلن‌هایی اثر دارد که بعد از آن به نود فرستاده شوند.",
+            choices=(("gib", "۱۰۲۴ (گیبی‌بایت — پیش‌فرض)"), ("gb", "۱۰۰۰ (گیگابایت اعشاری، مثل پنل)")),
+        ),
+        SettingSpec(
             "shop.maintenance",
             "حالت تعمیر",
             "shop",
@@ -413,6 +424,24 @@ def reply_keyboard_enabled() -> bool:
     return app_settings.get_bool("appearance.reply_keyboard", False)
 
 
+def traffic_basis_is_decimal() -> bool:
+    """Does one "GB" in this shop mean 1000³ bytes (like the WG-Guard panel)?"""
+    return app_settings.get_str("shop.traffic_unit", "gib").strip().lower() == "gb"
+
+
+def apply_runtime_settings() -> None:
+    """Push the stored settings that live in process memory.
+
+    Most settings are read on demand, but the traffic basis is consulted by
+    :mod:`app.core.money` on every conversion (including inside the provisioning
+    path), so it is cached in a module variable and refreshed here — at startup
+    and again whenever the operator saves the settings page.
+    """
+    from app.core.money import set_gb_basis
+
+    set_gb_basis(decimal=traffic_basis_is_decimal())
+
+
 __all__ = [
     "GROUP_LABELS",
     "SETTING_KEYS",
@@ -420,6 +449,7 @@ __all__ = [
     "SettingSpec",
     "SettingsStore",
     "app_settings",
+    "apply_runtime_settings",
     "button_styles_enabled",
     "card_payments_enabled",
     "maintenance_mode",
@@ -428,5 +458,6 @@ __all__ = [
     "shop_name",
     "spec_groups",
     "test_service_enabled",
+    "traffic_basis_is_decimal",
     "wallet_enabled",
 ]

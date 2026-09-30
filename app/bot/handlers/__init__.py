@@ -14,7 +14,8 @@ change in a predictable place:
 9. ``wallet``    — balance and top-ups
 10. ``test``     — free trial
 11. ``support``  — tickets
-12. ``errors``   — global handler + catch-all
+12. ``reply``    — the optional physical keyboard (exact labels only)
+13. ``errors``   — global handler + catch-all
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from app.bot.handlers import (
     guides,
     purchase,
     receipts_user,
+    reply_menu,
     services,
     shop,
     start,
@@ -49,6 +51,9 @@ ROUTER_ORDER = (
     wallet,
     test_service,
     support,
+    # Last of the real routers: its text handler must only see a message that
+    # nothing else wanted, and it still sits ahead of the catch-all.
+    reply_menu,
 )
 
 
