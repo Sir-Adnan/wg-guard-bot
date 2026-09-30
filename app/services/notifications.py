@@ -543,7 +543,9 @@ class Notifier:
     async def report_error(self, exc: BaseException, *, source: str, notify: bool = True) -> None:
         """Record an exception and (optionally) alert the operators."""
         level = EventLevel.ERROR
-        text = f"{type(exc).__name__}: {exc}"
+        # Validation/transport exceptions can embed credentials or entire input
+        # payloads. Persist the type and source, never arbitrary exception text.
+        text = type(exc).__name__
         if isinstance(exc, AppError):
             text = exc.message
             meta = {"code": exc.code, **exc.details}

@@ -7,6 +7,7 @@ rules are trivially unit-testable.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import ROUND_HALF_EVEN
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ValidationError
 from app.core.jalali import now_utc
 from app.core.logging import get_logger
-from app.core.money import format_amount
+from app.core.money import format_amount, percent_of_rial
 from app.db.models import DiscountCode, DiscountKind, DiscountRedemption, PaymentMethod, User
 
 log = get_logger(__name__)
@@ -82,7 +83,7 @@ class DiscountService:
     def compute(row: DiscountCode, amount_rial: int) -> int:
         """Discount amount in Rial, never exceeding the base amount."""
         if row.kind == DiscountKind.PERCENT:
-            value = round(amount_rial * min(max(row.value, 0), 100) / 100)
+            value = percent_of_rial(amount_rial, min(max(row.value, 0), 100), rounding=ROUND_HALF_EVEN)
         else:
             value = int(row.value)
         if row.max_discount_rial:

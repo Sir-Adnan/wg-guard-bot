@@ -6,6 +6,11 @@ the layout, the auth model or each other.
 
 ## 1. Where things live
 
+The current Atelier experience is documented in [PANEL-DESIGN.md](PANEL-DESIGN.md).
+Use the shared shell and semantic tokens for every page; presentation does not
+change business services or permission requirements. The default is ivory/light
+with a supported dark mode. Shared navigation and workspace dialogs are partials.
+
 ```
 app/web/
   app.py            # FastAPI factory: mounts every router under PANEL_PREFIX
@@ -195,6 +200,12 @@ Icons: `{{ icon('name') }}` — see `templates/partials/icons.html`.
 | `data-filter-target="tableId"` | live client-side row filter for the input |
 | `data-autosubmit` | submit the form on change/select |
 | `data-nav-toggle`, `data-theme-toggle` | handled by the layout |
+| `data-nav-close` | closes the mobile navigation drawer |
+| `data-command-open` | opens allowlisted section navigation search |
+
+Modals retain focus and restore their opener. `data-confirm` uses the shared
+confirmation dialog with native-browser fallback; cancellation sends no POST.
+Form submission keeps the original submitter's name/value and CSRF token.
 
 Two behaviours have a contract of their own because a template and a script have
 to agree on the exact attribute names. Both are **opt-in**: a page that renders

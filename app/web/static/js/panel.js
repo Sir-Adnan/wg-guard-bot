@@ -36,93 +36,172 @@
   /* -- sidebar ---------------------------------------------------------- */
   function initNav() {
     var burger = $("[data-nav-toggle]");
-    if (!burger) return;
-    var scrim = doc.createElement("div");
+    var sidebar = $("#sidebar");
+    if (!burger || !sidebar) return;
+    var scrim = doc.createElement("button");
     scrim.className = "scrim";
+    scrim.type = "button";
+    scrim.setAttribute("aria-label", doc.body.dataset.uiClose || "Close");
     scrim.hidden = true;
     doc.body.appendChild(scrim);
-
-    function close() { doc.body.classList.remove("nav-open"); scrim.hidden = true; }
+    var mobile = window.matchMedia("(max-width: 860px)");
+    function close() {
+      doc.body.classList.remove("nav-open"); scrim.hidden = true;
+      burger.setAttribute("aria-expanded", "false");
+      if (mobile.matches) sidebar.inert = true;
+    }
+    function sync() {
+      close(); sidebar.inert = mobile.matches;
+      if (!mobile.matches) burger.setAttribute("aria-expanded", doc.documentElement.dataset.navCompact !== "1" ? "true" : "false");
+    }
     burger.addEventListener("click", function () {
-      var open = doc.body.classList.toggle("nav-open");
-      scrim.hidden = !open;
+      if (!mobile.matches) {
+        var compact = doc.documentElement.dataset.navCompact === "1" ? "0" : "1";
+        doc.documentElement.dataset.navCompact = compact;
+        burger.setAttribute("aria-expanded", compact === "0" ? "true" : "false");
+        try { localStorage.setItem("wggb-nav-compact", compact); } catch (error) { /* local preference only */ }
+        return;
+      }
+      if (doc.body.classList.contains("nav-open")) { close(); return; }
+      sidebar.inert = false; doc.body.classList.add("nav-open"); scrim.hidden = false;
+      burger.setAttribute("aria-expanded", "true");
+      var first = sidebar.querySelector("a"); if (first) first.focus();
     });
-    scrim.addEventListener("click", close);
-    doc.addEventListener("keydown", function (e) { if (e.key === "Escape") close(); });
+    scrim.addEventListener("click", function () { close(); burger.focus(); });
+    $$("[data-nav-close]").forEach(function (button) { button.addEventListener("click", function () { close(); burger.focus(); }); });
+    doc.addEventListener("keydown", function (event) {
+      if (!doc.body.classList.contains("nav-open")) return;
+      if (event.key === "Escape") { close(); burger.focus(); }
+      if (event.key === "Tab") trapFocus(event, sidebar);
+    });
+    mobile.addEventListener("change", sync); sync();
   }
 
-  /* -- modals ----------------------------------------------------------- */
+  function trapFocus(event, root) {
+    var nodes = $$("a[href], button:not(:disabled), input:not(:disabled):not([type=hidden]), select, textarea, [tabindex='0']", root).filter(function (node) { return node.getClientRects().length > 0; });
+    if (!nodes.length) { event.preventDefault(); root.focus(); return; }
+    var first = nodes[0], last = nodes[nodes.length - 1];
+    if (event.shiftKey && doc.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && doc.activeElement === last) { event.preventDefault(); first.focus(); }
+  }
+
+  /* Existing data-modal-* contract, with focus containment and return. */
+  var modalFocus = new WeakMap();
   function openModal(id) {
     var modal = doc.getElementById(id);
     if (!modal) return;
-    modal.hidden = false;
-    var focusable = modal.querySelector("input, select, textarea, button");
-    if (focusable) setTimeout(function () { focusable.focus(); }, 60);
+    modalFocus.set(modal, doc.activeElement);
+    if (modal.parentElement !== doc.body) doc.body.appendChild(modal);
+    var title = modal.querySelector("[data-modal-title], .modal__title");
+    if (title) { if (!title.id) title.id = id + "-title"; modal.setAttribute("aria-labelledby", title.id); }
+    modal.setAttribute("role", "dialog"); modal.setAttribute("aria-modal", "true");
+    modal.hidden = false; doc.body.classList.add("modal-open");
+    var shell = $(".shell"); if (shell) shell.inert = true;
+    var focusable = modal.querySelector("input:not(:disabled):not([type=hidden]), select:not(:disabled), textarea:not(:disabled)") || modal.querySelector("button");
+    if (focusable) focusable.focus();
   }
-  function closeModal(modal) { if (modal) modal.hidden = true; }
-
+  function closeModal(modal) {
+    if (!modal) return;
+    modal.hidden = true;
+    if (!$$(".modal").some(function (node) { return !node.hidden; })) {
+      doc.body.classList.remove("modal-open"); var shell = $(".shell"); if (shell) shell.inert = false;
+    }
+    var opener = modalFocus.get(modal); if (opener && opener.isConnected) opener.focus();
+  }
   function initModals() {
-    doc.addEventListener("click", function (e) {
-      var opener = e.target.closest("[data-modal-open]");
-      if (opener) {
-        e.preventDefault();
-        var id = opener.getAttribute("data-modal-open");
-        var modal = doc.getElementById(id);
-        // Allow the opener to prefill fields: data-set-field="value"
-        if (modal) {
-          $$("[data-prefill]", opener).forEach(function () {});
-          Array.prototype.forEach.call(opener.attributes, function (attr) {
-            var match = /^data-set-(.+)$/.exec(attr.name);
-            if (!match) return;
-            var field = modal.querySelector('[name="' + match[1] + '"]');
-            if (field) {
-              if (field.type === "checkbox") field.checked = attr.value === "1";
-              else field.value = attr.value;
-            }
-          });
-          var titleTarget = modal.querySelector("[data-modal-title]");
-          var customTitle = opener.getAttribute("data-title");
-          if (titleTarget && customTitle) titleTarget.textContent = customTitle;
-        }
-        openModal(id);
-        return;
-      }
-      var closer = e.target.closest("[data-modal-close]");
-      if (closer) {
-        e.preventDefault();
-        closeModal(closer.closest(".modal"));
-        return;
-      }
-      if (e.target.classList && e.target.classList.contains("modal")) closeModal(e.target);
+    $$("[data-modal-close]").forEach(function (button) {
+      if (!button.textContent.trim() && !button.hasAttribute("aria-label")) button.setAttribute("aria-label", doc.body.dataset.uiClose || "Close");
     });
-    doc.addEventListener("keydown", function (e) {
-      if (e.key !== "Escape") return;
-      $$(".modal").forEach(function (m) { if (!m.hidden) closeModal(m); });
+    doc.addEventListener("click", function (event) {
+      var opener = event.target.closest("[data-modal-open]");
+      if (opener) {
+        event.preventDefault(); var id = opener.getAttribute("data-modal-open"); var modal = doc.getElementById(id);
+        if (modal) {
+          Array.prototype.forEach.call(opener.attributes, function (attr) {
+            var match = /^data-set-(.+)$/.exec(attr.name); if (!match) return;
+            var field = modal.querySelector('[name="' + match[1] + '"]');
+            if (field) { if (field.type === "checkbox") field.checked = attr.value === "1"; else field.value = attr.value; }
+          });
+          var title = modal.querySelector("[data-modal-title]"); var custom = opener.getAttribute("data-title");
+          if (title && custom) title.textContent = custom;
+        }
+        openModal(id); return;
+      }
+      var closer = event.target.closest("[data-modal-close]");
+      if (closer) { event.preventDefault(); closeModal(closer.closest(".modal")); return; }
+      if (event.target.classList && event.target.classList.contains("modal")) closeModal(event.target);
+    });
+    doc.addEventListener("keydown", function (event) {
+      if ($(".workspace-dialog[open]")) return;
+      var open = $$(".modal").filter(function (modal) { return !modal.hidden; });
+      var current = open[open.length - 1]; if (!current) return;
+      if (event.key === "Escape") closeModal(current);
+      if (event.key === "Tab") trapFocus(event, current);
     });
   }
   window.panelOpenModal = openModal;
 
   /* -- confirmations ---------------------------------------------------- */
+  function confirmAction(message) {
+    var dialog = $("#confirm-dialog");
+    if (!dialog || typeof dialog.showModal !== "function") return Promise.resolve(window.confirm(message));
+    if (dialog.open) return Promise.resolve(false);
+    $("#confirm-message", dialog).textContent = message;
+    dialog.returnValue = ""; dialog.showModal();
+    return new Promise(function (resolve) {
+      dialog.addEventListener("close", function () { resolve(dialog.returnValue === "confirm"); }, { once: true });
+    });
+  }
   function initConfirm() {
-    doc.addEventListener("submit", function (e) {
-      var form = e.target;
+    doc.addEventListener("submit", function (event) {
+      var form = event.target;
+      if (form.method === "dialog") return;
+      if (form.dataset.submitting === "1") { event.preventDefault(); return; }
       var message = form.getAttribute("data-confirm");
-      if (message && !window.confirm(message)) { e.preventDefault(); return; }
-      var btn = form.querySelector("[type=submit]");
-      if (btn && form.getAttribute("data-busy") !== "false") {
-        btn.classList.add("is-disabled");
-        btn.dataset.originalText = btn.textContent;
-        btn.textContent = "در حال انجام…";
-        setTimeout(function () {
-          btn.classList.remove("is-disabled");
-          if (btn.dataset.originalText) btn.textContent = btn.dataset.originalText;
-        }, 8000);
+      if (message && form.dataset.confirmApproved !== "1") {
+        event.preventDefault(); var submitter = event.submitter;
+        confirmAction(message).then(function (approved) {
+          if (!approved) return; form.dataset.confirmApproved = "1";
+          if (submitter && submitter.isConnected) form.requestSubmit(submitter); else form.requestSubmit();
+        }); return;
       }
+      delete form.dataset.confirmApproved;
+      if (form.getAttribute("data-busy") === "false") return;
+      form.dataset.submitting = "1";
+      var button = event.submitter || form.querySelector("[type=submit]");
+      if (button) button.setAttribute("aria-busy", "true");
+      setTimeout(function () { delete form.dataset.submitting; if (button) button.removeAttribute("aria-busy"); }, 10000);
     });
-    doc.addEventListener("click", function (e) {
-      var link = e.target.closest("a[data-confirm]");
-      if (link && !window.confirm(link.getAttribute("data-confirm"))) e.preventDefault();
+    doc.addEventListener("click", function (event) {
+      var link = event.target.closest("a[data-confirm]"); if (!link) return;
+      event.preventDefault(); confirmAction(link.dataset.confirm).then(function (approved) { if (approved) window.location.assign(link.href); });
     });
+    window.addEventListener("pageshow", function () {
+      $$("form[data-submitting]").forEach(function (form) { delete form.dataset.submitting; });
+      $$("[aria-busy]").forEach(function (button) { button.removeAttribute("aria-busy"); });
+    });
+  }
+
+  function initCommand() {
+    var dialog = $("#command-dialog"); if (!dialog || typeof dialog.showModal !== "function") return;
+    var input = $("#command-input", dialog), results = $(".command-results", dialog), empty = $(".command-empty", dialog);
+    $$("[data-nav-link]").forEach(function (link) {
+      var item = link.cloneNode(true); item.removeAttribute("aria-current"); item.className = "command-item";
+      var badge = $(".nav__badge", item); if (badge) badge.remove();
+      results.appendChild(item);
+    });
+    function search() {
+      var needle = input.value.normalize("NFKC").replace(/ي/g, "ی").replace(/ك/g, "ک").toLowerCase(); var count = 0;
+      $$("a", results).forEach(function (link) { var match = link.textContent.normalize("NFKC").replace(/ي/g, "ی").replace(/ك/g, "ک").toLowerCase().includes(needle); link.hidden = !match; if (match) count++; });
+      empty.hidden = count !== 0;
+    }
+    function open() { if (!dialog.open) { input.value = ""; search(); dialog.showModal(); input.focus(); } }
+    $$("[data-command-open]").forEach(function (button) { button.addEventListener("click", open); });
+    $("[data-dialog-close]", dialog).addEventListener("click", function () { dialog.close(); });
+    input.addEventListener("input", search);
+    input.addEventListener("keydown", function (event) { var first = $("a:not([hidden])", results); if (event.key === "ArrowDown" && first) { event.preventDefault(); first.focus(); } if (event.key === "Enter" && first) { event.preventDefault(); first.click(); } });
+    doc.addEventListener("keydown", function (event) { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); open(); } });
+    dialog.addEventListener("click", function (event) { if (event.target === dialog) dialog.close(); });
   }
 
   /* -- copy to clipboard ------------------------------------------------ */
@@ -178,7 +257,7 @@
     var root = doc.documentElement;
     var saved = null;
     try { saved = localStorage.getItem("wggb-theme"); } catch (err) { saved = null; }
-    if (saved) root.setAttribute("data-theme", saved);
+    if (saved === "light" || saved === "dark") root.setAttribute("data-theme", saved);
     $$("[data-theme-toggle]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var next = root.getAttribute("data-theme") === "light" ? "dark" : "light";
@@ -828,10 +907,12 @@
     initConfirm();
     initCopy();
     initFilters();
+    $$(".table-wrap").forEach(function (region) { region.tabIndex = 0; region.setAttribute("role", "region"); var card = region.closest(".card"); var title = card ? $(".card__title", card) : $("#page-heading"); if (title) region.setAttribute("aria-label", title.textContent); });
     initAutoSubmit();
     initTheme();
     initCharts();
     initShortcuts();
+    initCommand();
     initDragLists();
     initMenuBuilder();
     var flash = $("#server-flash");

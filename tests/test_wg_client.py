@@ -94,7 +94,7 @@ async def test_operation_result_lookup(wg_client: WGGuardClient) -> None:
 async def test_users_pagination_and_filters(wg_client: WGGuardClient) -> None:
     plan = await wg_client.create_plan(PlanPatch(name="P", duration_seconds=86400))
     for index in range(5):
-        await wg_client.create_user({"username": f"user{index:02d}", "plan_id": plan.id, "duration_seconds": 86400})
+        await wg_client.create_user({"username": f"user{index:02d}", "template_id": plan.id, "duration_seconds": 86400})
 
     page = await wg_client.list_users(limit=2)
     assert len(page.items) == 2
@@ -225,4 +225,7 @@ def test_an_unknown_vendor_status_is_mapped_not_rejected() -> None:
     user = User.model_validate({"id": "u1", "status": "brand_new_state", "start_policy": "whenever"})
 
     assert user.status == "brand_new_state"
-    assert normalise_status(user.status) == "active"  # the canonical mapping decides
+    assert normalise_status(user.status) == "disabled"  # unknown access cannot be assumed
+    from app.panels.providers.wgguard import to_remote_user
+
+    assert not to_remote_user(user).is_usable

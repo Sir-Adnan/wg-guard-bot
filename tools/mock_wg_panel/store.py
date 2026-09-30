@@ -3,7 +3,7 @@
 Every mutable collection lives here behind a single :class:`asyncio.Lock`; the
 FastAPI layer (``app.py``) only orchestrates locking, validation and
 serialisation.  Field names follow the upstream OpenAPI 3.2.1 document in
-``docs/upstream-api/openapi-wg-guard.json`` exactly.
+``docs/upstream-api/wg-guard-openapi.json`` exactly.
 """
 
 from __future__ import annotations
@@ -37,8 +37,8 @@ ALL_SCOPES: frozenset[str] = frozenset(
         "configs.read",
         "traffic.read",
         "traffic.update",
-        "plans.read",
-        "plans.write",
+        "templates.read",
+        "templates.write",
         "interfaces.read",
         "interfaces.write",
         "webhooks.read",
@@ -61,7 +61,7 @@ READ_ONLY_SCOPES: frozenset[str] = frozenset(
         "devices.read",
         "configs.read",
         "traffic.read",
-        "plans.read",
+        "templates.read",
         "interfaces.read",
         "webhooks.read",
         "operations.read",
@@ -93,7 +93,7 @@ USER_FIELDS: tuple[str, ...] = (
     "speed_limit_down_kbps",
     "speed_limit_up_kbps",
     "device_limit",
-    "plan_id",
+    "template_id",
     "interface_id",
     "start_policy",
     "duration_seconds",
@@ -442,11 +442,13 @@ def serialize_device(device: dict[str, Any]) -> dict[str, Any]:
     return {name: device.get(name) for name in DEVICE_FIELDS}
 
 
-def build_plan(payload: dict[str, Any], *, plan_id: str | None = None, now: datetime | None = None) -> dict[str, Any]:
+def build_plan(
+    payload: dict[str, Any], *, template_id: str | None = None, now: datetime | None = None
+) -> dict[str, Any]:
     """Build a complete plan document from a partial payload."""
     stamp = iso(now or utc_now())
     return {
-        "id": plan_id or payload.get("id") or new_id("plan"),
+        "id": template_id or payload.get("id") or new_id("plan"),
         "name": payload.get("name") or "unnamed",
         "traffic_limit_bytes": payload.get("traffic_limit_bytes"),
         "duration_seconds": payload.get("duration_seconds", 30 * 24 * 3600),
@@ -509,6 +511,8 @@ class MockStore:
         self.webhook_secrets: dict[str, str] = {}
         self.deliveries: dict[str, list[dict[str, Any]]] = {}
         self.operations: dict[str, dict[str, Any]] = {}
+        self.next_plans: dict[str, dict[str, Any]] = {}
+        self.activations: dict[str, list[dict[str, Any]]] = {}
         self.idempotency: dict[str, IdempotencyRecord] = {}
         self.settings: dict[str, Any] = {}
         self.requests: list[dict[str, Any]] = []
@@ -541,6 +545,8 @@ class MockStore:
         self.webhook_secrets.clear()
         self.deliveries.clear()
         self.operations.clear()
+        self.next_plans.clear()
+        self.activations.clear()
         self.idempotency.clear()
         self.requests.clear()
         self.failures.clear()

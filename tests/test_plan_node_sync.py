@@ -75,7 +75,7 @@ async def test_syncing_creates_the_node_plan_and_remembers_it(
 async def test_the_node_stores_the_terms_the_operator_typed(
     signed_in_client: httpx.AsyncClient, session, owner, panel_row, wg_client: WGGuardClient
 ) -> None:
-    """50 GB under the default basis is 50 GiB — which the node prints as 53.7 GB."""
+    """50 GB under the default decimal basis is exactly 50 GB on the node."""
     plan = await _plan(session)
     await session.commit()
 
@@ -83,7 +83,7 @@ async def test_the_node_stores_the_terms_the_operator_typed(
     await session.refresh(plan)
 
     remote = await wg_client.get_plan(plan.wg_plan_id or "")
-    assert remote.traffic_limit_bytes == 50 * GB_BINARY
+    assert remote.traffic_limit_bytes == 50 * GB_DECIMAL
     assert remote.duration_seconds == 30 * 86400
 
 
@@ -113,7 +113,7 @@ async def test_switching_the_traffic_unit_changes_what_the_node_stores(
         assert plan.wg_plan_id == same_ref
         assert (await wg_client.get_plan(same_ref or "")).traffic_limit_bytes == 50 * GB_BINARY
     finally:
-        set_gb_basis(decimal=False)
+        set_gb_basis(decimal=True)
         await app_settings.reset(session, "shop.traffic_unit")
 
 
@@ -169,16 +169,16 @@ async def test_the_list_labels_the_node_plan(signed_in_client: httpx.AsyncClient
 
 async def test_the_form_names_the_unit_in_force(signed_in_client: httpx.AsyncClient, owner, session) -> None:
     page = await signed_in_client.get("/panel/plans")
-    assert "۱۰۲۴" in page.text  # the binary basis is the default
+    assert "۱۰۰۰" in page.text  # decimal GB matches the official API
 
     await app_settings.load(session, force=True)
-    await app_settings.set_many(session, {"shop.traffic_unit": "gb"})
+    await app_settings.set_many(session, {"shop.traffic_unit": "gib"})
     apply_runtime_settings()
     try:
         page = await signed_in_client.get("/panel/plans")
-        assert "۱۰۰۰" in page.text
+        assert "۱۰۲۴" in page.text
     finally:
-        set_gb_basis(decimal=False)
+        set_gb_basis(decimal=True)
         await app_settings.reset(session, "shop.traffic_unit")
 
 

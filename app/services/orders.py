@@ -19,13 +19,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.errors import ConflictError, NotFoundError, PermissionDenied, ValidationError
 from app.core.jalali import now_utc
+from app.core.locales import default_text
 from app.core.logging import get_logger
-from app.core.money import days_to_seconds, gb_to_bytes
+from app.core.money import GB_BINARY, GB_DECIMAL, days_to_seconds, gb_basis_is_decimal, gb_to_bytes
 from app.core.security import random_code
 from app.db.models import (
     Order,
@@ -179,7 +180,76 @@ class OrderService:
         free: bool = False,
         staff_id: int | None = None,
     ) -> Order:
+        """Create atomically even when a handler catches a validation failure."""
+        async with session.begin_nested():
+            return await self._create(
+                session,
+                user,
+                plan,
+                kind=kind,
+                service=service,
+                payment_method=payment_method,
+                discount_code=discount_code,
+                use_wallet=use_wallet,
+                free=free,
+                staff_id=staff_id,
+            )
+
+    async def _create(
+        self,
+        session: AsyncSession,
+        user: User,
+        plan: Plan,
+        *,
+        kind: OrderKind = OrderKind.NEW,
+        service: Service | None = None,
+        payment_method: PaymentMethod | None = None,
+        discount_code: str | None = None,
+        use_wallet: bool = False,
+        free: bool = False,
+        staff_id: int | None = None,
+    ) -> Order:
         """Create an order in ``PENDING_PAYMENT`` (or ``PAID`` when nothing is owed)."""
+        if service is not None and service.user_id != user.id:
+            raise PermissionDenied(default_text("error.node_not_found"))
+        if kind in (OrderKind.RENEW, OrderKind.EXTRA_TRAFFIC, OrderKind.EXTRA_DEVICE) and service is None:
+            raise ValidationError(default_text("error.node_not_found"))
+        if kind == OrderKind.EXTRA_DEVICE:
+            raise ValidationError(default_text("service.extra_device_unavailable"))
+        if kind == OrderKind.EXTRA_TRAFFIC and (
+            service.traffic_limit_bytes is None or gb_to_bytes(plan.traffic_gb) is None
+        ):
+            raise ValidationError(default_text("service.topup_unavailable"))
+        if use_wallet and payment_method == PaymentMethod.CARD:
+            raise ConflictError(default_text("error.card_wallet"))
+        if kind == OrderKind.RENEW and service is not None:
+            await session.flush()
+            service = await session.scalar(
+                select(Service)
+                .where(Service.id == service.id)
+                .with_for_update(of=Service)
+                .execution_options(populate_existing=True)
+            )
+            existing = await session.scalar(
+                select(Order.id)
+                .where(
+                    Order.service_id == service.id,
+                    Order.kind == OrderKind.RENEW,
+                    Order.status.in_((*OPEN_STATUSES, OrderStatus.FAILED)),
+                )
+                .limit(1)
+            )
+            if (service.meta or {}).get("paid_next_plan") or existing:
+                raise ConflictError(default_text("service.renew_pending"))
+        await session.flush()
+        plan = await session.scalar(
+            select(Plan).where(Plan.id == plan.id).with_for_update(of=Plan).execution_options(populate_existing=True)
+        )
+        reserved_stock = not plan.is_unlimited_stock
+        if reserved_stock:
+            if not plan.stock or plan.stock <= 0:
+                raise ValidationError(default_text("error.stock_unavailable"))
+            plan.stock -= 1
         if not plan.is_active and not free:
             raise ValidationError("این پلن در حال حاضر قابل خریداری نیست.")
         if plan.is_test and not free and kind != OrderKind.TEST:
@@ -228,7 +298,15 @@ class OrderService:
             idempotency_key=self._new_idempotency_key(),
             status=OrderStatus.PENDING_PAYMENT,
             payment_deadline=now_utc() + timedelta(minutes=app_settings.get_int("shop.receipt_expire_minutes", 90)),
-            meta={"start_policy": plan.start_policy, "interface_id": plan.interface_id},
+            meta={
+                "start_policy": plan.start_policy,
+                "interface_id": plan.interface_id,
+                "traffic_basis_bytes": GB_DECIMAL if gb_basis_is_decimal() else GB_BINARY,
+                "stock_reserved": reserved_stock,
+                "reward_policy": 1,
+                "cashback_percent": str(app_settings.get_float("shop.cashback_percent", 0.0)),
+                "referral_percent": str(app_settings.get_float("shop.referral_percent", 0.0)),
+            },
         )
         session.add(order)
         await session.flush()
@@ -357,16 +435,22 @@ class OrderService:
         reference: str | None = None,
         staff_id: int | None = None,
     ) -> Order:
+        await session.flush()
+        order = await session.scalar(
+            select(Order)
+            .where(Order.id == order.id)
+            .with_for_update(of=Order)
+            .execution_options(populate_existing=True)
+        )
         if order.status in (OrderStatus.COMPLETED, OrderStatus.PAID, OrderStatus.PROVISIONING):
             return order
-        if order.status in (OrderStatus.CANCELED, OrderStatus.REFUNDED):
-            raise ConflictError("این سفارش لغو شده است و قابل پرداخت نیست.")
+        if order.status == OrderStatus.FAILED and order.paid_at is not None:
+            return order
+        if order.status in (OrderStatus.CANCELED, OrderStatus.REFUNDED, OrderStatus.EXPIRED, OrderStatus.FAILED):
+            raise ConflictError(default_text("error.order_payment_state"))
 
-        order.status = OrderStatus.PAID
-        order.payment_method = method
-        order.payment_reference = reference
-        order.paid_at = now_utc()
-        await session.flush()
+        if method == PaymentMethod.CARD and order.wallet_used_rial:
+            raise ConflictError(default_text("error.card_wallet"))
 
         # The wallet ledger only records money that actually moves through the
         # wallet.  A card-to-card transfer arrives from the customer's bank, so
@@ -380,33 +464,22 @@ class OrderService:
             buyer = await session.get(User, order.user_id)
             if buyer is None:
                 raise NotFoundError("کاربر این سفارش پیدا نشد.")
-            if method is not PaymentMethod.WALLET or buyer.balance_rial >= order.payable_rial:
-                await user_service.debit(
-                    session,
-                    buyer,
-                    order.payable_rial,
-                    kind=PaymentKind.PURCHASE,
-                    method=method,
-                    order_id=order.id,
-                    description=f"پرداخت سفارش {order.order_code}",
-                    reference=reference,
-                    staff_id=staff_id,
-                )
-            else:
-                # Wallet payment with an unexpected shortfall: fall back to the
-                # reserved amount only, so the order still completes.
-                await user_service.debit(
-                    session,
-                    buyer,
-                    buyer.balance_rial,
-                    kind=PaymentKind.PURCHASE,
-                    method=method,
-                    order_id=order.id,
-                    description=f"پرداخت سفارش {order.order_code}",
-                    reference=reference,
-                    staff_id=staff_id,
-                    allow_partial=True,
-                )
+            await user_service.debit(
+                session,
+                buyer,
+                order.payable_rial,
+                kind=PaymentKind.PURCHASE,
+                method=method,
+                order_id=order.id,
+                description=f"پرداخت سفارش {order.order_code}",
+                reference=reference,
+                staff_id=staff_id,
+            )
+        order.status = OrderStatus.PAID
+        order.payment_method = method
+        order.payment_reference = reference
+        order.paid_at = now_utc()
+        await session.flush()
 
         await audit.record(
             session,
@@ -462,11 +535,25 @@ class OrderService:
         refund_wallet: bool = True,
         staff_id: int | None = None,
     ) -> Order:
+        await session.flush()
+        order = await session.scalar(
+            select(Order)
+            .where(Order.id == order.id)
+            .with_for_update(of=Order)
+            .execution_options(populate_existing=True)
+        )
         if order.status in (OrderStatus.COMPLETED, OrderStatus.REFUNDED):
             raise ConflictError("سفارش تکمیل‌شده را نمی‌توان لغو کرد.")
-        if order.status == OrderStatus.CANCELED:
+        if order.status in (OrderStatus.CANCELED, OrderStatus.EXPIRED):
             return order
+        if order.status in (OrderStatus.PAID, OrderStatus.PROVISIONING, OrderStatus.FAILED):
+            raise ConflictError(default_text("error.order_paid_cancel"))
 
+        if (order.meta or {}).get("stock_reserved") and order.plan_id:
+            await session.execute(
+                update(Plan).where(Plan.id == order.plan_id).values(stock=func.coalesce(Plan.stock, 0) + 1)
+            )
+            order.meta = {**order.meta, "stock_reserved": False}
         order.status = OrderStatus.CANCELED
         order.cancel_reason = reason
         await session.flush()
@@ -506,10 +593,26 @@ class OrderService:
         staff_id: int | None = None,
     ) -> Order:
         """Return money to the customer (wallet by default)."""
+        await session.flush()
+        order = await session.scalar(
+            select(Order)
+            .where(Order.id == order.id)
+            .with_for_update(of=Order)
+            .execution_options(populate_existing=True)
+        )
         if order.status == OrderStatus.REFUNDED:
             raise ConflictError("این سفارش قبلاً بازگشت داده شده است.")
-
-        total = int(amount_rial if amount_rial is not None else order.payable_rial)
+        paid_total = int(order.payable_rial) + int(order.wallet_used_rial)
+        if order.paid_at is None or order.status not in (
+            OrderStatus.PAID,
+            OrderStatus.PROVISIONING,
+            OrderStatus.FAILED,
+            OrderStatus.COMPLETED,
+        ):
+            raise ValidationError(default_text("error.order_refund"))
+        total = int(amount_rial if amount_rial is not None else paid_total)
+        if total > paid_total:
+            raise ValidationError(default_text("error.order_refund"))
         if total <= 0:
             raise ValidationError("مبلغ قابل بازگشت صفر است.")
         if not to_wallet:
@@ -570,30 +673,20 @@ class OrderService:
                 await session.execute(
                     select(Order)
                     .where(
-                        Order.status.in_((OrderStatus.PENDING_PAYMENT, OrderStatus.AWAITING_REVIEW)),
+                        Order.status == OrderStatus.PENDING_PAYMENT,
                         Order.payment_deadline.is_not(None),
                         Order.payment_deadline < now,
                     )
+                    .with_for_update(of=Order, skip_locked=True)
                     .limit(limit)
                 )
             ).scalars()
         )
         expired: list[Order] = []
         for order in rows:
+            await self.cancel(session, order, reason="payment deadline expired")
             order.status = OrderStatus.EXPIRED
             await session.flush()
-            if order.wallet_used_rial > 0:
-                user = await session.get(User, order.user_id)
-                if user is not None:
-                    await user_service.credit(
-                        session,
-                        user,
-                        order.wallet_used_rial,
-                        kind=PaymentKind.REFUND,
-                        method=PaymentMethod.WALLET,
-                        order_id=order.id,
-                        description=f"بازگشت وجه سفارش منقضی {order.order_code}",
-                    )
             expired.append(order)
         if expired:
             log.info("Expired %d stale orders", len(expired))
@@ -672,7 +765,9 @@ order_service = OrderService()
 def order_snapshot_terms(order: Order) -> dict[str, object]:
     """Terms to apply on the node, taken from the immutable order snapshot."""
     return {
-        "traffic_limit_bytes": gb_to_bytes(order.traffic_gb),
+        "traffic_limit_bytes": gb_to_bytes(
+            order.traffic_gb, basis=(order.meta or {}).get("traffic_basis_bytes", GB_BINARY)
+        ),
         "duration_seconds": days_to_seconds(order.duration_days),
         "device_limit": order.device_limit,
         "speed_limit_down_kbps": order.speed_limit_down_kbps,

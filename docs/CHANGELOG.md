@@ -9,6 +9,32 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Redesign the entire admin surface with the ivory/navy Atelier experience,
+  local Persian typography, role-aware navigation, responsive drawer/icon rail,
+  section search, shared page headings and consistent cards/forms/tables/states.
+  Preserve ordering and menu-builder contracts, improve modal keyboard behavior
+  and confirmation feedback, and protect logout with CSRF. See [PANEL-DESIGN.md](PANEL-DESIGN.md).
+- Follow the October WG-Guard contract: honor 64-byte UTF-8 template names,
+  recreate a template when duration must become unlimited, verify patch results,
+  and preserve all device IDs/configs during atomic purchase recovery. Initial
+  allocation stays separate from the device cap. Align the mock's duration,
+  metadata and statistics behavior with the official API.
+
+- Align WG-Guard integration with technical templates and current units. Freeze
+  paid-order terms and request identity; preserve uncertainty during recovery;
+  serialize provisioning across durable checkpoints and node capacity checks.
+- Queue paid successors for renewal; route automatic-renew callbacks through
+  checkout. Use recoverable atomic quota top-ups and an explicit volume checkout.
+  Block unrecoverable paid device orders and retries beyond result retention.
+- Keep wallet/ledger mutations atomic, reject underpaid/expired payments and
+  invalid refunds, reserve catalog stock transactionally, and refund expired
+  reservations once. Preserve orders awaiting receipt review.
+- Apply exact, idempotent order rewards across payment flows. Correct decimal
+  speed/volume display and tri-state limits. Reconcile unordered signed webhooks,
+  deduplicate transactionally and avoid persisting raw credential-bearing errors.
+- Add contract, concurrency, recovery, payment, stock and webhook regression
+  coverage. See [the integration audit](WG-GUARD-AUDIT.md) for operating notes.
+
 The whole operator surface inside the bot was unreachable, and the physical
 keyboard crashed on some buttons. Both had one root cause each, and both now have
 a test that runs a real update through the assembled dispatcher. The control menu
@@ -344,7 +370,7 @@ panel — self-hosted, Docker-only, Persian-first.
 ### Added — Provisioning
 
 - Typed async REST client for the WG-Guard `/api/v1` surface, mirroring
-  `docs/upstream-api/openapi-wg-guard.json` including the error envelope and
+  `docs/upstream-api/wg-guard-openapi.json` including the error envelope and
   cursor pagination.
 - Multi-node support with automatic node selection (least loaded, priority
   ordered, capacity aware) and per-plan pinning.

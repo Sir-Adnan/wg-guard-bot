@@ -25,9 +25,11 @@ from typing import ClassVar
 
 from app.panels.models import (
     NodeInfo,
+    PlanActivation,
     PlanSpec,
     ProviderHealth,
     PurchaseResult,
+    QueuedPlan,
     RemoteDevice,
     RemoteUser,
     SubscriptionLink,
@@ -44,6 +46,7 @@ CAP_PLAN_SYNC = "plan_sync"
 #: idempotent under a client-supplied key.  When absent, provisioning composes
 #: the steps itself and the caller must tolerate partial failure.
 CAP_ATOMIC_PURCHASE = "atomic_purchase"
+CAP_MULTI_DEVICE_PURCHASE = "multi_device_purchase"
 
 #: A committed purchase can be looked up again by its idempotency key.
 CAP_PURCHASE_RECOVERY = "purchase_recovery"
@@ -60,6 +63,7 @@ CAP_SUBSCRIPTION_ROTATE = "subscription_rotate"
 
 #: Traffic can be set to an absolute value / topped up.
 CAP_TRAFFIC_WRITE = "traffic_write"
+CAP_QUOTA_TOP_UP = "quota_top_up"
 
 #: The node can push signed lifecycle events to us.
 CAP_WEBHOOKS = "webhooks"
@@ -165,8 +169,12 @@ class PanelProvider(ABC):
         username: str,
         device_name: str,
         idempotency_key: str,
+        device_count: int = 1,
     ) -> PurchaseResult:
-        """Provision a customer + first device + subscription link.
+        """Provision a customer, ready devices and subscription link.
+
+        ``device_count`` is explicit allocation, distinct from a plan's cap.
+        Multiple devices require CAP_MULTI_DEVICE_PURCHASE; the default is one.
 
         The adapter must be **exactly-once** for a given ``idempotency_key``:
         retrying with the same key returns the original result rather than
@@ -176,10 +184,10 @@ class PanelProvider(ABC):
     async def recover_purchase(self, idempotency_key: str) -> PurchaseResult | None:
         """Look up a purchase that may have committed before a failure.
 
-        Adapters without :data:`CAP_PURCHASE_RECOVERY` return ``None``, which
-        tells the caller "not committed, safe to retry".
+        ``None`` proves absence. Unsupported recovery or an uncertain read must
+        raise, so a caller cannot mistake uncertainty for a missing purchase.
         """
-        return None
+        raise UnsupportedCapability(CAP_PURCHASE_RECOVERY, self.kind)
 
     # -- users -------------------------------------------------------------
     @abstractmethod
@@ -207,6 +215,10 @@ class PanelProvider(ABC):
     @abstractmethod
     async def reset_traffic(self, user_ref: str) -> RemoteUser:
         """Zero the usage counters."""
+
+    async def top_up_quota(self, user_ref: str, num_bytes: int, *, idempotency_key: str) -> RemoteUser:
+        """Exactly-once addition of allowance; never changes charged traffic."""
+        raise UnsupportedCapability(CAP_QUOTA_TOP_UP, self.kind)
 
     @abstractmethod
     async def set_enabled(self, user_ref: str, enabled: bool) -> RemoteUser:
@@ -256,10 +268,23 @@ class PanelProvider(ABC):
         raise UnsupportedCapability(CAP_SUBSCRIPTION_ROTATE, self.kind)
 
     # -- optional: automatic renewal ---------------------------------------
-    async def queue_next_plan(self, user_ref: str, plan_ref: str, *, carry_unused_traffic: bool = False) -> bool:
+    async def queue_next_plan(
+        self,
+        user_ref: str,
+        plan_ref: str,
+        *,
+        carry_unused_traffic: bool = False,
+        idempotency_key: str | None = None,
+    ) -> bool:
         """Queue a successor plan for automatic activation."""
         self.require(CAP_NEXT_PLAN)
         return False
+
+    async def next_plan(self, user_ref: str) -> QueuedPlan | None:
+        raise UnsupportedCapability(CAP_NEXT_PLAN, self.kind)
+
+    async def plan_activations(self, user_ref: str) -> list[PlanActivation]:
+        raise UnsupportedCapability(CAP_NEXT_PLAN, self.kind)
 
     async def clear_next_plan(self, user_ref: str) -> bool:
         """Cancel a queued successor plan."""
@@ -270,10 +295,12 @@ class PanelProvider(ABC):
 __all__ = [
     "CAP_ATOMIC_PURCHASE",
     "CAP_INTERFACES",
+    "CAP_MULTI_DEVICE_PURCHASE",
     "CAP_NEXT_PLAN",
     "CAP_NODE_QR",
     "CAP_PLAN_SYNC",
     "CAP_PURCHASE_RECOVERY",
+    "CAP_QUOTA_TOP_UP",
     "CAP_SUBSCRIPTION_ROTATE",
     "CAP_TRAFFIC_SERIES",
     "CAP_TRAFFIC_WRITE",

@@ -116,6 +116,19 @@ payment. The inbound WG-Guard webhook verifies
 timestamps outside a five-minute window; deliveries are deduplicated by
 `payload.id`.
 
+The receiver requires a dedicated encrypted webhook signing secret; the API
+token is never a substitute. Deduplication is scoped to the configured panel,
+inserted transactionally, and committed only after reconciliation. Delayed or
+unordered events trigger authoritative resource reads; a failed read rolls back
+the event and returns 503 so WG-Guard can retry. Stored event payloads retain
+non-secret identifiers only. Telegram webhook requests require the configured
+secret-token header, and registration logs never print the secret path.
+
+Panel error responses and generic exception reports never persist arbitrary
+vendor bodies or validation inputs, which can contain credentials. Reviewed
+domain errors retain their customer explanation; generic reports retain their
+type and source for operator correlation.
+
 ### Rate limiting
 
 - Bot: 20 callbacks / 12 messages per 10 seconds per user. Staff are exempt;

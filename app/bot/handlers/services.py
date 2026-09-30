@@ -274,6 +274,44 @@ async def renew_service(callback: CallbackQuery, callback_data: ServiceCB, sessi
     if service is None:
         await callback.answer("این سرویس پیدا نشد.", show_alert=True)
         return
+    if (service.meta or {}).get("paid_next_plan"):
+        try:
+            await provisioning.sync_service(session, service)
+        except AppError:
+            await callback.answer(alert_text(await texts.get("service.renew_review", session)), show_alert=True)
+            return
+    if (service.meta or {}).get("paid_next_plan"):
+        key = (
+            "service.renew_review"
+            if service.meta["paid_next_plan"].get("state") == "needs_review"
+            else "service.renew_pending"
+        )
+        await callback.answer(alert_text(await texts.get(key, session)), show_alert=True)
+        return
+    if service.auto_renew:
+        await callback.answer(alert_text(await texts.get("service.renew_review", session)), show_alert=True)
+        return
+    from app.panels.base import CAP_NEXT_PLAN
+    from app.panels.manager import panel_manager
+
+    try:
+        _, _panel, provider = await panel_manager.find_service(session, service.id)
+        if not provider.supports(CAP_NEXT_PLAN):
+            await callback.answer(
+                alert_text(await texts.get("service.autorenew_unsupported", session)), show_alert=True
+            )
+            return
+        remote = await provider.get_user(service.wg_user_id)
+        provisioning.apply_remote_state(service, remote)
+        if remote.traffic_limit_bytes is None and remote.duration_seconds is None and remote.expires_at is None:
+            await callback.answer(alert_text(await texts.get("service.renew_unavailable", session)), show_alert=True)
+            return
+        if await provider.next_plan(service.wg_user_id) is not None:
+            await callback.answer(alert_text(await texts.get("service.renew_review", session)), show_alert=True)
+            return
+    except AppError as exc:
+        await callback.answer(alert_text(exc.message), show_alert=True)
+        return
     if service.plan_id is None:
         await callback.answer("پلن این سرویس در دسترس نیست.", show_alert=True)
         return
@@ -301,24 +339,59 @@ async def renew_service(callback: CallbackQuery, callback_data: ServiceCB, sessi
 
     await show(
         callback,
-        await texts.get("buy.choose_method", session, plan=plan.name, price=format_balance(order.payable_rial))
-        + f"\n\n<b>سرویس:</b> <code>{html_escape(service.wg_username)}</code>",
+        await texts.get(
+            "service.renew_choose",
+            session,
+            plan=html_escape(plan.name),
+            price=format_balance(order.payable_rial),
+            service=html_escape(service.wg_username),
+        ),
         keyboard=await payment_methods(session, order, card=card_payments_enabled(), wallet=wallet_enabled()),
     )
 
 
 @router.callback_query(ServiceCB.filter(F.action == "extra"))
 async def extra_traffic(callback: CallbackQuery, callback_data: ServiceCB, session: AsyncSession, user: User) -> None:
-    """Offer the cheapest non-test plan as a traffic top-up."""
+    """Sell the current product's volume as an explicitly priced quota add-on."""
     service = await _load(session, callback_data.service_id, user)
-    if service is None:
-        await callback.answer("این سرویس پیدا نشد.", show_alert=True)
+    plan = await session.get(Plan, service.plan_id) if service and service.plan_id else None
+    if service is None or plan is None:
+        await callback.answer(alert_text(await texts.get("service.topup_unavailable", session)), show_alert=True)
+        return
+    try:
+        from app.panels.base import CAP_QUOTA_TOP_UP
+        from app.panels.manager import panel_manager
+
+        _, _panel, provider = await panel_manager.find_service(session, service.id)
+        if not provider.supports(CAP_QUOTA_TOP_UP):
+            await callback.answer(alert_text(await texts.get("service.topup_unavailable", session)), show_alert=True)
+            return
+        remote = await provider.get_user(service.wg_user_id)
+        provisioning.apply_remote_state(service, remote)
+        order = await order_service.create(session, user, plan, kind=OrderKind.EXTRA_TRAFFIC, service=service)
+    except AppError as exc:
+        await callback.answer(alert_text(exc.message), show_alert=True)
         return
     await answer_callback(callback)
+    if order.payable_rial <= 0:
+        from app.bot.handlers.purchase import finalize_order
+
+        await finalize_order(callback, session, order)
+        return
+    from app.bot.menus import payment_methods
+    from app.core.money import format_gb
+    from app.services.settings_store import card_payments_enabled, wallet_enabled
+
     await show(
         callback,
-        "📶 برای خرید حجم اضافه، یک پلن مناسب انتخاب کنید و آن را به همین سرویس اضافه می‌کنیم.\n"
-        "کافی است از فروشگاه، پلن مورد نظر را بخرید و سپس با پشتیبانی هماهنگ کنید.",
+        await texts.get(
+            "service.topup_choose",
+            session,
+            volume=format_gb(order.traffic_gb),
+            price=format_balance(order.payable_rial),
+            service=html_escape(service.wg_username),
+        ),
+        keyboard=await payment_methods(session, order, card=card_payments_enabled(), wallet=wallet_enabled()),
     )
 
 
@@ -329,46 +402,8 @@ async def extra_traffic(callback: CallbackQuery, callback_data: ServiceCB, sessi
 async def toggle_autorenew(
     callback: CallbackQuery, callback_data: ServiceCB, session: AsyncSession, user: User
 ) -> None:
-    """Queue (or cancel) the successor plan so the node renews automatically."""
-    service = await _load(session, callback_data.service_id, user)
-    if service is None:
-        await callback.answer("این سرویس پیدا نشد.", show_alert=True)
-        return
-    if service.plan_id is None:
-        await callback.answer("پلن این سرویس مشخص نیست.", show_alert=True)
-        return
-
-    plan = await session.get(Plan, service.plan_id)
-    if plan is None:
-        await callback.answer("پلن این سرویس حذف شده است.", show_alert=True)
-        return
-    if not plan.wg_plan_id:
-        await callback.answer(alert_text(await texts.get("service.autorenew_unsupported", session)), show_alert=True)
-        return
-
-    from app.panels.base import UnsupportedCapability
-    from app.panels.manager import panel_manager
-
-    try:
-        _, _panel, provider = await panel_manager.find_service(session, service.id)
-        if service.auto_renew:
-            await provider.clear_next_plan(service.wg_user_id)
-            service.auto_renew = False
-            message = await texts.get("service.autorenew_off", session, name=service.wg_username)
-        else:
-            await provider.queue_next_plan(service.wg_user_id, plan.wg_plan_id, carry_unused_traffic=True)
-            service.auto_renew = True
-            message = await texts.get("service.autorenew_on", session, name=service.wg_username)
-        await session.flush()
-    except UnsupportedCapability:
-        await callback.answer(alert_text(await texts.get("service.autorenew_unsupported", session)), show_alert=True)
-        return
-    except AppError as exc:
-        await callback.answer(alert_text(exc.message), show_alert=True)
-        return
-
-    await answer_callback(callback, "انجام شد ✅")
-    await show(callback, message, keyboard=await service_detail(session, service, page=callback_data.page or 1))
+    """A successor is a paid order, never a free toggle or silent cancellation."""
+    await renew_service(callback, callback_data, session, user)
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +413,7 @@ async def _load(session: AsyncSession, service_id: int, user: User) -> Service |
     if not service_id:
         return None
     service = await session.get(Service, service_id)
-    if service is None or service.user_id != user.id:
+    if service is None or service.user_id != user.id or service.status == ServiceStatus.DELETED:
         return None
     return service
 

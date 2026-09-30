@@ -12,23 +12,20 @@ Rendering pipeline for every outgoing message::
 
 from __future__ import annotations
 
-import json
 import re
-from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache
+from app.core.locales import LOCALES_DIR, load_catalog, set_runtime_text_overrides
 from app.core.logging import get_logger
 from app.db.models import BotText
 from app.services.appearance import appearance
 
 log = get_logger(__name__)
 
-LOCALES_DIR = Path(__file__).resolve().parent.parent / "locales"
 DEFAULT_LOCALE = "fa"
 _CACHE_KEY = "texts:overrides"
 
@@ -50,21 +47,6 @@ GROUP_LABELS: dict[str, str] = {
 }
 
 _RTL_MARK = "\u200f"
-
-
-@lru_cache(maxsize=4)
-def load_catalog(locale: str = DEFAULT_LOCALE) -> dict[str, str]:
-    """Read the shipped catalog for ``locale`` (cached, never raises)."""
-    path = LOCALES_DIR / f"{locale}.json"
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        log.error("Locale file missing: %s", path)
-        return {}
-    except json.JSONDecodeError as exc:
-        log.error("Locale file %s is not valid JSON: %s", path, exc)
-        return {}
-    return {str(k): str(v) for k, v in raw.items()}
 
 
 def group_of(key: str) -> str:
@@ -96,6 +78,7 @@ class TextStore:
     def invalidate(self) -> None:
         self._loaded = False
         self._overrides = {}
+        set_runtime_text_overrides({})
         cache.texts_cache.invalidate(_CACHE_KEY)
 
     async def load(self, session: AsyncSession, *, force: bool = False) -> dict[str, str]:
@@ -105,10 +88,12 @@ class TextStore:
             cached = await cache.texts_cache.get(_CACHE_KEY)
             if cached is not None:
                 self._overrides = cached
+                set_runtime_text_overrides(self._overrides)
                 self._loaded = True
                 return cached
         rows = list((await session.execute(select(BotText).where(BotText.is_custom.is_(True)))).scalars())
         self._overrides = {row.key: row.value for row in rows}
+        set_runtime_text_overrides(self._overrides)
         self._loaded = True
         await cache.texts_cache.set(_CACHE_KEY, self._overrides, ttl=120)
         return self._overrides
@@ -128,9 +113,9 @@ class TextStore:
 
     async def get(self, key: str, session: AsyncSession | None = None, **context: Any) -> str:
         """Fully rendered text: premium emoji + placeholders."""
-        text = self.raw(key)
         if session is not None and not self._loaded:
             await self.load(session)
+        text = self.raw(key)
         text = await appearance.render_text(text, session)
         return self.format(text, **context)
 
@@ -179,6 +164,7 @@ class TextStore:
             self._overrides[key] = value
         else:
             self._overrides.pop(key, None)
+        set_runtime_text_overrides(self._overrides)
         cache.texts_cache.invalidate(_CACHE_KEY)
 
     async def set_many(self, session: AsyncSession, values: dict[str, str]) -> int:
@@ -194,6 +180,7 @@ class TextStore:
             await session.delete(row)
             await session.flush()
         self._overrides.pop(key, None)
+        set_runtime_text_overrides(self._overrides)
         cache.texts_cache.invalidate(_CACHE_KEY)
         return self.catalog.get(key, "")
 

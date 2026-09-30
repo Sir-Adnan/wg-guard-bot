@@ -2,7 +2,7 @@
 
 An **in-memory mock of the WG-Guard panel REST API** for automated integration tests.
 It is a faithful test double of the contract in
-[`docs/upstream-api/openapi-wg-guard.json`](../../docs/upstream-api/openapi-wg-guard.json)
+[`docs/upstream-api/wg-guard-openapi.json`](../../docs/upstream-api/wg-guard-openapi.json)
 (paths, scopes, request/response shapes and the single error envelope) — it is **not** the real panel:
 no VPN, no database, no network egress. All state lives in one process and disappears on restart.
 
@@ -63,7 +63,7 @@ Every error uses the documented envelope:
 ```
 
 Codes emitted by the mock: `UNAUTHORIZED`, `FORBIDDEN`, `INVALID_REQUEST`, `CONFLICT`, `USER_NOT_FOUND`,
-`DEVICE_NOT_FOUND`, `PLAN_NOT_FOUND`, `INTERFACE_NOT_FOUND`, `WEBHOOK_NOT_FOUND`, `DELIVERY_NOT_FOUND`,
+`DEVICE_NOT_FOUND`, `TEMPLATE_NOT_FOUND`, `INTERFACE_NOT_FOUND`, `WEBHOOK_NOT_FOUND`, `DELIVERY_NOT_FOUND`,
 `OPERATION_NOT_FOUND`, `USERNAME_EXISTS`, `DEVICE_LIMIT_REACHED`, `NODE_UNAVAILABLE`, `INTERNAL_ERROR`
 (plus `NOT_FOUND`/`METHOD_NOT_ALLOWED` for framework-level misses). Any other documented code
 (`TRAFFIC_EXCEEDED`, `RATE_LIMITED`, …) can be injected verbatim through `POST /__mock__/fail`.
@@ -76,9 +76,10 @@ logging emits method/path/status only (never bodies or secrets).
 * **Node** — `GET /api/v1/node`, `/node/stats`, `/node/telemetry` (`points` clamped to 1…180).
 * **Purchases / operations** — `POST /api/v1/purchases` (atomic user + first device + subscription link,
   `Idempotency-Key` required, identical replay → same 201 + `Idempotency-Replayed: true`, different body → 409),
-  `GET /api/v1/operations/result`.
+  `GET /api/v1/operations/result`; atomic `/users/{id}/quota/add` with before/after snapshots.
+* **Successors** — `GET|PUT|DELETE /users/{id}/next-plan`, plus activation history. Terms are copied at queue time; reads simulate due time/quota activation and manual pause.
 * **Users** — `POST /api/v1/users` (idempotent), `GET /api/v1/users` (cursor pagination `limit` ≤ 500,
-  `sort`/`order`/`username`/`status`/`enabled`/`plan_id`/`interface_id`/`traffic_exceeded`/`*_before`/`*_after`),
+  `sort`/`order`/`username`/`status`/`enabled`/`template_id`/`interface_id`/`traffic_exceeded`/`*_before`/`*_after`),
   `GET|PATCH|DELETE /api/v1/users/{id}`, `…/enable`, `…/disable`, `…/renew`,
   `…/traffic` (GET), `…/traffic/add|set|reset`.
 * **Subscription** — `GET /api/v1/users/{id}/subscription`, `POST /api/v1/users/{id}/subscription/rotate`.
@@ -88,12 +89,13 @@ logging emits method/path/status only (never bodies or secrets).
   `[Interface]`/`PrivateKey`/`Address`/`DNS`/`MTU`/`Jc`/`Jmin`/`Jmax`/`S1`/`S2`/`H1`–`H4` and `[Peer]`;
   `?format=json` → `{"config": "<same text>"}`), `GET /api/v1/devices/{id}/qr` (`image/png`).
 * **Stats** — `GET /api/v1/stats`, `GET /api/v1/users/{id}/stats`, `GET /api/v1/devices/{id}/stats`.
-* **Plans / interfaces** — full CRUD on `/api/v1/plans`, `/api/v1/interfaces` (delete refused while in use → 409).
+* **Templates / interfaces** — full CRUD on `/api/v1/templates`, `/api/v1/interfaces` (delete refused while in use → 409).
 * **Settings** — `GET /api/v1/settings`, `PATCH /api/v1/settings`.
 * **Webhooks** — CRUD on `/api/v1/webhooks` plus `/redeliver` (202) and `/deliveries`, `/deliveries/{id}`.
 
-Not implemented (out of scope for this mock): `/api/v1/users/bulk`, `/api/v1/users/bulk-action`,
-`/api/v1/users/{id}/next-plan*`.
+Not implemented (out of scope for this mock): `/api/v1/users/bulk`, `/api/v1/users/bulk-action`.
+The mock does not prove real tunnel enforcement, scheduler timing, reseller ownership,
+or replay isolation across API principals/token rotation. Those require upstream integration tests.
 
 ## Test affordances (`/__mock__/*`, **not** part of the WG-Guard contract, no auth required)
 
@@ -112,8 +114,9 @@ calls themselves are journaled too — filter them out by path prefix when asser
 ## Notes / deliberate deviations
 
 * `GET /api/v1/users` sorts `created_at` **descending** by default (other keys ascending); pass `order` explicitly.
-* `PATCH /api/v1/plans/{id}` accepts a partial body (the document reuses the `PlanPatch` schema, which requires
-  `name`); `POST` still requires `name`.
+* Template PATCH preserves omitted fields and clears explicit null limits; POST requires a name.
+* Ordinary mutations replay for 24 hours. Purchases and quota top-ups retain results for 90 days.
+* `plans` remains the internal seed-collection name for fixture compatibility; wire fields/scopes use templates.
 * `PATCH /api/v1/settings` accepts unknown keys but type-checks keys that already exist in the registry.
 * The client config always emits the AmneziaWG obfuscation lines (falling back to the document's example
   values) so the text endpoint is usable even for `plain` profiles.

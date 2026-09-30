@@ -147,8 +147,9 @@ Read on trigger, not by default.
 | Writing or rewording anything the customer reads | §6 below, then [`docs/UX-WRITING.md`](docs/UX-WRITING.md) |
 | Checking what shipped when | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) |
 
-The upstream contract is [`docs/upstream-api/openapi-wg-guard.json`](docs/upstream-api/openapi-wg-guard.json);
-it is additive-only — tolerate unknown fields, never assume one is absent.
+The upstream contract is [`docs/upstream-api/wg-guard-openapi.json`](docs/upstream-api/wg-guard-openapi.json);
+responses tolerate additive fields; requests follow its strict current field names.
+WG-Guard now uses technical `templates`/`template_id`, while the bot owns its shop plans.
 
 ## 6. Text the customer reads
 

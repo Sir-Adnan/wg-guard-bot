@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import io
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
@@ -21,10 +22,10 @@ from app.core.jalali import humanize_delta, jalali_date
 from app.core.logging import get_logger
 from app.core.money import format_bytes
 from app.core.security import decrypt_secret
-from app.db.models import Service, ServiceDevice, User
+from app.db.models import Order, OrderKind, Service, ServiceDevice, User
 from app.services.notifications import notifier
 from app.services.settings_store import app_settings
-from app.services.texts import texts
+from app.services.texts import html_escape, texts
 
 log = get_logger(__name__)
 
@@ -140,7 +141,7 @@ class DeliveryService:
         intro: str | None = None,
         include_summary: bool = True,
     ) -> bool:
-        """Send the welcome message, the config, the QR and the subscription link."""
+        """Send all ready configs, the primary QR and the subscription link."""
         owner = user or service.user
         delivered = False
 
@@ -148,11 +149,11 @@ class DeliveryService:
             summary = intro or await self.service_summary(session, service)
             delivered = await notifier.to_user(owner, summary) is not None
 
-        device = self.primary_device(service)
-        if device is not None:
+        for index, device in enumerate(sorted(service.devices, key=lambda item: item.id)):
             if await self.send_config(session, service, device, user=owner):
                 delivered = True
-            await self.send_qr(session, service, device, user=owner)
+            if index == 0:
+                await self.send_qr(session, service, device, user=owner)
 
         if await self.send_subscription(session, service, user=owner):
             delivered = True
@@ -181,14 +182,14 @@ class DeliveryService:
         }.get(service.status.value, "service.status_active")
         status = await texts.get(status_key, session)
 
-        limit = format_bytes(service.traffic_limit_bytes) if service.traffic_limit_bytes else None
+        limit = format_bytes(service.traffic_limit_bytes) if service.traffic_limit_bytes is not None else None
         unlimited = await texts.get("common.unlimited", session)
         expires = jalali_date(service.expires_at) if service.expires_at else unlimited
 
-        return await texts.get(
+        body = await texts.get(
             "service.detail",
             session,
-            name=service.wg_username,
+            name=html_escape(service.wg_username),
             status=status,
             volume=limit or unlimited,
             used=format_bytes(service.traffic_used_bytes),
@@ -197,17 +198,40 @@ class DeliveryService:
             expires=expires,
             days=humanize_delta(service.expires_at),
             devices=str(service.device_limit),
-            panel=service.panel.name if service.panel else "—",
+            panel=html_escape(service.panel.name) if service.panel else "—",
         )
+        pending = (service.meta or {}).get("paid_next_plan")
+        if pending:
+            key = "service.renew_review" if pending.get("state") == "needs_review" else "service.renew_pending"
+            body += "\n\n" + await texts.get(key, session)
+        return body
 
     async def purchase_success_text(self, session: AsyncSession, service: Service, order_code: str) -> str:
+        order = await session.scalar(select(Order).where(Order.order_code == order_code))
+        if order is not None and order.kind == OrderKind.RENEW:
+            return await texts.get(
+                "service.renew_queued",
+                session,
+                order=html_escape(order_code),
+                service=html_escape(service.wg_username),
+            )
+        if order is not None and order.kind == OrderKind.EXTRA_TRAFFIC:
+            from app.services.orders import order_snapshot_terms
+
+            return await texts.get(
+                "service.topup_success",
+                session,
+                order=html_escape(order_code),
+                service=html_escape(service.wg_username),
+                volume=format_bytes(order_snapshot_terms(order)["traffic_limit_bytes"]),
+            )
         return await texts.get(
             "buy.success",
             session,
             order=order_code,
-            service=service.wg_username,
+            service=html_escape(service.wg_username),
             volume=format_bytes(service.traffic_limit_bytes)
-            if service.traffic_limit_bytes
+            if service.traffic_limit_bytes is not None
             else await texts.get("common.unlimited", session),
             expires=jalali_date(service.expires_at) if service.expires_at else "—",
             devices=str(service.device_limit),

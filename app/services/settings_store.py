@@ -70,11 +70,11 @@ def _specs() -> dict[str, SettingSpec]:
             "واحد حجم",
             "shop",
             "choice",
-            "gib",
+            "gb",
             "یک گیگابایت چند بایت باشد؟ پنل خود WG-Guard حجم را بر پایه ۱۰۰۰ نشان می‌دهد، "
             "پس اگر پلن ۵۰ گیگی در ربات آن‌جا ۵۳.۷ گیگابایت دیده می‌شود، گزینه «۱۰۰۰» را انتخاب کنید. "
             "تغییر این گزینه فقط روی پلن‌هایی اثر دارد که بعد از آن به نود فرستاده شوند.",
-            choices=(("gib", "۱۰۲۴ (گیبی‌بایت — پیش‌فرض)"), ("gb", "۱۰۰۰ (گیگابایت اعشاری، مثل پنل)")),
+            choices=(("gb", "۱۰۰۰ (گیگابایت اعشاری، پیش‌فرض)"), ("gib", "۱۰۲۴ (گیبی‌بایت، سازگاری با پلن قدیمی)")),
         ),
         SettingSpec(
             "shop.maintenance",
@@ -445,7 +445,7 @@ def reply_keyboard_enabled() -> bool:
 
 def traffic_basis_is_decimal() -> bool:
     """Does one "GB" in this shop mean 1000³ bytes (like the WG-Guard panel)?"""
-    return app_settings.get_str("shop.traffic_unit", "gib").strip().lower() == "gb"
+    return app_settings.get_str("shop.traffic_unit", "gb").strip().lower() == "gb"
 
 
 def apply_runtime_settings() -> None:

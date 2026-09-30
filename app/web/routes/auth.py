@@ -19,6 +19,7 @@ from app.web.security import (
     get_db_session,
     issue_session,
     read_session,
+    verify_csrf,
 )
 from app.web.templating import flash, render
 
@@ -106,6 +107,8 @@ async def login_submit(
 
 @router.post("/logout")
 async def logout(request: Request) -> Response:
+    form = await form_dict(request)
+    verify_csrf(request, form.get("csrf_token"))
     response = RedirectResponse(f"{settings.panel_prefix}/login", status_code=303)
     response.delete_cookie(SESSION_COOKIE, path="/")
     return response
@@ -130,6 +133,7 @@ async def profile_page(
             "page_title": "حساب کاربری من",
             "page_subtitle": staff.login or staff.name,
             "staff_row": staff,
+            "staff": staff,
             "last_login": jalali_datetime(staff.last_login_at),
             "error": None,
         },
@@ -165,6 +169,7 @@ async def change_own_password(
                 "page_title": "حساب کاربری من",
                 "page_subtitle": staff.login or staff.name,
                 "staff_row": staff,
+                "staff": staff,
                 "last_login": jalali_datetime(staff.last_login_at),
                 "error": message,
             },

@@ -1,24 +1,34 @@
 {# Login screen — standalone (does not extend base.html: no sidebar pre-auth). #}
 <!DOCTYPE html>
-<html lang="fa" dir="rtl" data-theme="dark">
+<html lang="fa" dir="rtl" data-theme="light" data-style="atelier">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
   <title>ورود به پنل · {{ app_name }}</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%237c5cff'/><path d='M50 20 L76 32 V52 C76 68 64 78 50 82 C36 78 24 68 24 52 V32 Z' fill='white' opacity='.92'/></svg>">
-  <link rel="stylesheet" href="{{ panel_prefix }}/static/css/panel.css?v=1">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%231b3b50'/><path d='M50 20 L76 32 V52 C76 68 64 78 50 82 C36 78 24 68 24 52 V32 Z' fill='white' opacity='.92'/></svg>">
+  <script src="{{ panel_prefix }}/static/js/theme.js?v=2"></script>
+  <link rel="preload" href="{{ panel_prefix }}/static/fonts/Vazirmatn-Variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="{{ panel_prefix }}/static/css/panel.css?v=2">
 </head>
 <body>
 {% include "partials/icons.html" %}
-<div class="login-wrap">
+<div class="login-layout">
+  <aside class="login-story">
+    <div class="login-story__brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><use href="#i-shield"></use></svg><span>{{ app_name }}</span></div>
+    <div class="login-story__content"><div class="eyebrow">{{ ui_text('panel.login_kicker') }}</div><h1>{{ ui_text('panel.login_title') }}</h1><p>{{ ui_text('panel.login_description') }}</p>
+      <div class="login-orbit" aria-hidden="true"><span></span><span></span><span></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width=".8"><use href="#i-shield"></use></svg></div>
+    </div>
+    <div class="login-story__footer">WG-GUARD <span> / </span> {{ ui_text('panel.saved_workspace') }}</div>
+  </aside>
+  <div class="login-wrap">
   <div class="login-card">
-    <div class="login-logo">
-      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <div class="login-logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <use href="#i-shield"></use>
       </svg>
     </div>
-    <h1 class="login-title">{{ app_name }}</h1>
+    <div class="eyebrow">{{ app_name }}</div><h2 class="login-title">{{ ui_text('panel.login_access') }}</h2>
     <p class="login-sub">برای مدیریت فروشگاه وارد شوید</p>
 
     {% if error %}
@@ -42,12 +52,14 @@
       </div>
       <button class="btn btn--primary btn--block mt-2" type="submit">ورود به پنل</button>
     </form>
+    <div class="login-security"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><use href="#i-lock"></use></svg>{{ ui_text('panel.login_security') }}</div>
 
     <p class="hint text-center mt-3">
       این صفحه فقط برای مدیران است. کاربران عادی از طریق ربات تلگرام خرید می‌کنند.
     </p>
   </div>
 </div>
-<script src="{{ panel_prefix }}/static/js/panel.js?v=1" defer></script>
+</div>
+<script src="{{ panel_prefix }}/static/js/panel.js?v=2" defer></script>
 </body>
 </html>

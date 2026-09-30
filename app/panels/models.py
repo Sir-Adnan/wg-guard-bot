@@ -98,6 +98,20 @@ class PlanSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class QueuedPlan:
+    plan_ref: str
+    state: str
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PlanActivation:
+    id: str
+    plan_ref: str
+    activated_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RemoteUser:
     """A provisioned customer account on a node."""
 
@@ -107,6 +121,7 @@ class RemoteUser:
     enabled: bool = True
     traffic_limit_bytes: int | None = None
     traffic_used_bytes: int = 0
+    duration_seconds: int | None = None
     device_limit: int | None = None
     speed_limit_down_kbps: int | None = None
     speed_limit_up_kbps: int | None = None
@@ -159,6 +174,12 @@ class PurchaseResult:
     operation_id: str | None = None
     created_at: datetime | None = None
     recovered: bool = False
+    device_ids: tuple[str, ...] = ()
+
+    @property
+    def all_device_ids(self) -> tuple[str, ...]:
+        """Old operation journals retain their single primary-device field."""
+        return self.device_ids or (self.device_id,)
 
 
 @dataclass(frozen=True, slots=True)

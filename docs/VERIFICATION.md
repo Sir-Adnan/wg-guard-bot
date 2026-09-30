@@ -15,9 +15,9 @@ including the mock WG-Guard panel, which `testpaths` now collects.
 
 | Check | Cost | Notes |
 |---|---|---|
-| `pytest -q` | ~113 s, 418 tests | needs PostgreSQL; the only check that exercises everything |
-| `pytest -q -m "not db"` | ~4 s, 141 tests | no database; deselects the 277 `db` tests |
-| `pytest -q` with no database reachable | ~4 s | 141 pass, 277 skip, **0 fail**; the header names the database it probed |
+| `pytest -q` | ~133 s, 519 tests | needs PostgreSQL; the only check that exercises everything |
+| `pytest -q -m "not db"` | ~4 s, 200 tests | no database; deselects the 319 `db` tests |
+| `pytest -q` with no database reachable | ~4 s | 200 pass, 319 skip, **0 fail**; the header names the database it probed |
 | `bash tools/menu_harness.sh` | <2 s | the operator scripts, with Docker, `curl` and root stubbed |
 | `ruff check .` | <0.1 s | cheap enough to run over the whole tree |
 | `alembic check` | seconds | needs a database; only for models and migrations |
@@ -194,8 +194,8 @@ Clean up after yourself (`docker rm -f wgguard-pg`); leaving containers and test
 images behind is reported in the handoff, not silently ignored.
 
 **Selecting tiers without a database.** A database-free run is a supported state,
-not a degraded one: 141 tests pass, the 277 `db` tests skip, nothing fails, and
-`pytest -q -m "not db"` selects the same 141 without even collecting the rest. The
+not a degraded one: 200 tests pass, the 319 `db` tests skip, nothing fails, and
+`pytest -q -m "not db"` selects the same 200 without even collecting the rest. The
 session header prints which database was probed, so a skip is never silent, and
 `REQUIRE_DB=1` turns a missing database into a hard error — that is what CI uses,
 where a silent skip would look like a green build.

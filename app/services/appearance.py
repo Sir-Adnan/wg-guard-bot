@@ -195,7 +195,7 @@ _BUTTON_RAW: tuple[tuple[str, str, str, str | None, str | None], ...] = (
     ("service.delete_device", "حذف دستگاه", "service", "danger", "trash"),
     ("service.extra_traffic", "خرید حجم اضافه", "service", "primary", "traffic"),
     ("service.manage", "مدیریت سرویس", "service", "primary", "settings"),
-    ("service.autorenew", "تمدید خودکار", "service", "primary", "refresh"),
+    ("service.autorenew", "بسته بعدی", "service", "primary", "refresh"),
     # wallet
     ("wallet.deposit", "افزایش موجودی", "wallet", "success", "plus"),
     ("wallet.custom_amount", "مبلغ دلخواه", "wallet", "primary", "edit"),

@@ -51,3 +51,11 @@ async def test_a_severity_written_as_a_string_is_recorded(session) -> None:
 
     stored = (await session.execute(select(SystemEvent).where(SystemEvent.source == "startup"))).scalar_one()
     assert stored.level is EventLevel.CRITICAL
+
+
+@pytest.mark.db
+async def test_error_reporting_does_not_persist_untrusted_exception_payloads(session, caplog) -> None:
+    await notifier.report_error(ValueError("PrivateKey = secret-canary"), source="redaction", notify=False)
+    stored = (await session.execute(select(SystemEvent).where(SystemEvent.source == "redaction"))).scalar_one()
+    assert stored.message == "ValueError"
+    assert "secret-canary" not in caplog.text

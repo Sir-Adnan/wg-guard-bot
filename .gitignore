@@ -43,3 +43,7 @@ wgguard-*.sql
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Local visual validation and synthetic preview artifacts
+/output/playwright/
+/.playwright-cli/

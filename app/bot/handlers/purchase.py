@@ -23,7 +23,7 @@ from app.services.delivery import delivery
 from app.services.notifications import notifier
 from app.services.orders import order_service
 from app.services.provisioning import provisioning
-from app.services.settings_store import app_settings, card_payments_enabled, wallet_enabled
+from app.services.settings_store import card_payments_enabled, wallet_enabled
 from app.services.texts import html_escape, texts
 
 log = get_logger(__name__)
@@ -387,44 +387,6 @@ async def finalize_order(event: CallbackQuery | Message, session: AsyncSession, 
     await delivery.deliver_service(session, service, intro=intro)
     await show(event, await delivery.service_summary(session, service), keyboard=await service_detail(session, service))
 
-    await _apply_cashback(session, order)
-    if order.user and order.user.referred_by_id:
-        await _pay_referral_bonus(session, order)
-
-
-async def _apply_cashback(session: AsyncSession, order: Order) -> None:
-    """Return a configurable percentage of a completed purchase to the wallet."""
-    percent = app_settings.get_float("shop.cashback_percent", 0.0)
-    if percent <= 0 or order.payable_rial <= 0 or order.is_test:
-        return
-
-    buyer = order.user or await session.get(User, order.user_id)
-    if buyer is None:
-        return
-
-    from app.db.models import PaymentKind
-    from app.services.users import user_service
-
-    amount = int(order.payable_rial * percent / 100)
-    if amount <= 0:
-        return
-
-    await user_service.credit(
-        session,
-        buyer,
-        amount,
-        kind=PaymentKind.GIFT,
-        method=PaymentMethod.GIFT,
-        order_id=order.id,
-        description=f"کش‌بک سفارش {order.order_code}",
-    )
-    await notifier.to_user(
-        buyer,
-        await texts.get(
-            "cashback.notice", session, amount=format_amount(amount), balance=format_amount(buyer.balance_rial)
-        ),
-    )
-
 
 async def _alert_staff_failure(session: AsyncSession, order: Order, reason: str) -> None:
     await notifier.to_admins(
@@ -434,40 +396,6 @@ async def _alert_staff_failure(session: AsyncSession, order: Order, reason: str)
         f"کاربر: {order.user.mention if order.user else '—'}\n"
         f"دلیل: {html_escape(reason)}",
         disable_notification=False,
-    )
-
-
-async def _pay_referral_bonus(session: AsyncSession, order: Order) -> None:
-    """Credit the referrer a share of a completed purchase."""
-    percent = app_settings.get_float("shop.referral_percent", 0.0)
-    if percent <= 0 or order.payable_rial <= 0:
-        return
-    from app.core.jalali import now_utc
-    from app.db.models import PaymentKind
-    from app.services.users import user_service
-
-    referrer = await session.get(User, order.user.referred_by_id)  # type: ignore[arg-type]
-    if referrer is None:
-        return
-    bonus = int(order.payable_rial * percent / 100)
-    if bonus <= 0:
-        return
-    await user_service.credit(
-        session,
-        referrer,
-        bonus,
-        kind=PaymentKind.REFERRAL,
-        method=PaymentMethod.REFERRAL,
-        order_id=order.id,
-        description=f"پاداش معرفی — سفارش {order.order_code}",
-    )
-    referrer.referral_earnings_rial = int(referrer.referral_earnings_rial) + bonus
-    buyer = order.user
-    if buyer is not None:
-        buyer.meta = {**(buyer.meta or {}), "referral_paid_at": now_utc().isoformat()}
-    await notifier.to_user(
-        referrer,
-        await texts.get("profile.referral_stats", session, count="—", earnings=format_amount(bonus)),
     )
 
 

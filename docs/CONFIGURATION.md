@@ -74,7 +74,7 @@ Project settings live in two places:
 
 | Variable | Default | Description |
 |---|---|---|
-| `CURRENCY_DISPLAY` | `toman` | `toman` or `rial`. **Storage is always Rial** |
+| `CURRENCY_DISPLAY` | `toman` | Customer display is always Toman; legacy `rial` is accepted and normalized to `toman`. **Storage is always integer Rial** |
 | `CARD_TO_CARD_ENABLED` | `true` | Card-to-card payments |
 | `WALLET_ENABLED` | `true` | Wallet |
 | `TEST_SERVICE_ENABLED` | `true` | Trial service |
@@ -121,7 +121,7 @@ These values are stored in the database and take effect immediately.
 | Connection guide | On | Shows the button in the menu |
 | Special offer | On | Shows the special-plan button |
 | Show categories | On | |
-| **Traffic unit** | `1024³` (binary) | How many bytes one "GB" in a plan means. The WG-Guard panel prints decimal gigabytes, so under the default a 50 GB plan shows up there as 53.7 GB — the same traffic, two units. Switching to `1000³` makes both read 50; it applies to every plan pushed to a node afterwards |
+| **Traffic unit** | `1000³` (decimal GB) | Matches WG-Guard: 100 GB = 100,000,000,000 bytes. A stored `gib` choice retains binary interpretation. Orders snapshot their basis; older orders without that metadata retain the historical binary basis. Existing service byte limits are never rewritten. Installations with no stored choice now use decimal GB for new orders and display |
 
 ### Group "Payment"
 

@@ -68,6 +68,13 @@ def test_format_amount_uses_display_unit() -> None:
     assert "۲۵۰,۰۰۰" in text  # Persian digits + grouping
 
 
+def test_legacy_rial_display_setting_cannot_expose_rial_to_customers() -> None:
+    from app.core.config import Settings
+
+    config = Settings(_env_file=None, env="test", secret_key="a" * 64, currency_display="rial")
+    assert config.currency_display == "toman"
+
+
 def test_digit_translation() -> None:
     assert fa_digits("1402") == "۱۴۰۲"
     assert en_digits("۱۴۰۲") == "1402"
@@ -82,10 +89,10 @@ def test_format_gb(gb, fragment: str) -> None:
 
 
 def test_byte_helpers() -> None:
-    assert gb_to_bytes(1) == 1024**3
+    assert gb_to_bytes(1) == 1000**3
     assert gb_to_bytes(0) is None
     assert gb_to_bytes(None) is None
-    assert bytes_to_gb(1024**3) == 1.0
+    assert bytes_to_gb(1000**3) == 1.0
     assert "گیگابایت" in format_bytes(2 * 1024**3)
 
 
@@ -112,7 +119,7 @@ def test_the_traffic_basis_can_match_the_vendor_panel() -> None:
         # The byte ladder follows the same basis (50 GB, not 50 KB).
         assert "گیگابایت" in format_bytes(gb_to_bytes(50))
     finally:
-        set_gb_basis(decimal=False)
+        set_gb_basis(decimal=True)
 
 
 @pytest.mark.db
@@ -132,7 +139,7 @@ async def test_the_stored_traffic_unit_drives_the_basis(session) -> None:
         apply_runtime_settings()
         assert gb_basis_is_decimal() is False
     finally:
-        set_gb_basis(decimal=False)
+        set_gb_basis(decimal=True)
         await app_settings.reset(session, "shop.traffic_unit")
 
 

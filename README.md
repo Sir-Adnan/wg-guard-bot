@@ -264,7 +264,7 @@ Everything is configured through the `.env` file (infrastructure) and the admin 
 | `SUPPORT_IDS` | — | Numeric support-agent IDs (limited access) |
 | `PANEL_PORT` | `8080` | Web panel port |
 | `PANEL_BASE_URL` | `http://localhost:8080` | Public panel URL |
-| `CURRENCY_DISPLAY` | `toman` | Display unit: `toman` or `rial` |
+| `CURRENCY_DISPLAY` | `toman` | Customer display is Toman; legacy `rial` is normalized to `toman` |
 | `TEST_SERVICE_ENABLED` | `true` | Enable the trial service |
 | `RECEIPT_EXPIRE_MINUTES` | `90` | How long a receipt stays valid |
 | `BACKUP_ENABLED` | `true` | Daily automatic backups |
@@ -353,9 +353,10 @@ and for admins: `/admin` the admin panel inside the bot
 1. In the WG-Guard panel, create an **API Token** with these scopes:
 
 ```
-node.read, plans.read, plans.write, users.read, users.create, users.update, users.delete
+node.read, templates.read, templates.write, users.read, users.create, users.update, users.delete
 devices.read, devices.write, configs.read, subscriptions.read, subscriptions.rotate
 traffic.read, traffic.update, stats.read, purchases.create, operations.read
+next_plans.read, next_plans.write
 ```
 
 2. In **Admin panel → WG-Guard panels**, add a node:
@@ -372,10 +373,12 @@ traffic.read, traffic.update, stats.read, purchases.create, operations.read
 
 ### How it works
 
-- On the first sale of a plan, that plan is created on the node automatically (`POST /api/v1/plans`) and its ID is stored.
+- The shop catalog stays in the bot. Each sale provisions a technical template from the immutable order snapshot (`POST /api/v1/templates`, `template_id`); later catalog edits cannot change what was paid for.
+- New catalogs default to decimal GB: 100 GB = 100,000,000,000 bytes. Speed limits are decimal Kbps: 100,000 Kbps = 100 Mbps; duration is seconds: 30 days = 2,592,000 seconds. An explicitly stored `shop.traffic_unit=gib` remains supported.
+- Paid renewals queue a successor and activate at the time/quota boundary; the auto-renew button opens checkout. Quota add-ons use the atomic `/quota/add` operation and preserve usage and expiry.
 - Services are provisioned through the **atomic** `POST /api/v1/purchases` endpoint, which registers the user, the device and the subscription link in a single call.
 - Every order gets a stable `Idempotency-Key`; if the connection drops, the bot retries with the same key and
-  even checks with `GET /api/v1/operations/result` whether the purchase went through. **So two services are never created for one payment.**
+  even checks with `GET /api/v1/operations/result` whether the purchase went through. **The same payment is recovered using its original node, request and key.** Automatic retries stop after the 90-day result-retention window.
 
 ---
 
@@ -592,7 +595,7 @@ least-loaded node. The capacity of each node is configurable.
 <summary><b>Is the currency Rial or Toman?</b></summary>
 
 Storage and all calculations always use **Rial**, but the user always sees **Toman**
-(configurable with `CURRENCY_DISPLAY`). When you enter a price in the panel, write the amount in Toman.
+(legacy `CURRENCY_DISPLAY=rial` is normalized to Toman). When you enter a price in the panel, write the amount in Toman.
 
 </details>
 

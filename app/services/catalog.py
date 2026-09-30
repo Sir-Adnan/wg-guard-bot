@@ -8,7 +8,7 @@ the WG-Guard node copy is created on demand by
 
 from __future__ import annotations
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
@@ -102,8 +102,9 @@ class CatalogService:
 
     async def decrement_stock(self, session: AsyncSession, plan: Plan) -> None:
         if not plan.is_unlimited_stock and plan.stock is not None:
-            plan.stock = max(int(plan.stock) - 1, 0)
             await session.flush()
+            await session.execute(update(Plan).where(Plan.id == plan.id).values(stock=func.greatest(Plan.stock - 1, 0)))
+            await session.refresh(plan, ["stock"])
 
     # -- admin -------------------------------------------------------------
     async def count_visible_plans(self, session: AsyncSession) -> int:

@@ -1,7 +1,7 @@
 """Typed mirrors of the WG-Guard OpenAPI schemas.
 
-The upstream document is an additive-only V1 contract, so every model allows
-unknown fields (``extra="allow"``) — a newer node never breaks an older bot.
+Response schemas tolerate additive V1 fields (``extra="allow"``). Request
+schemas use the current strict contract and preserve explicit null limits.
 
 Two more tolerance rules follow from the same contract, and both have bitten
 this deployment in production:
@@ -23,7 +23,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 #: Vendor statuses this build understands.  A node may introduce more, and an
 #: unknown name must never fail a read-back, so :attr:`User.status` is typed as
@@ -84,6 +84,12 @@ class _Model(BaseModel):
 # ---------------------------------------------------------------------------
 # Ops
 # ---------------------------------------------------------------------------
+class _RequestModel(BaseModel):
+    """Requests are strict and preserve explicit nulls for tri-state PATCH."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class Status(_Model):
     status: str = ""
 
@@ -147,7 +153,7 @@ class User(_Model):
     speed_limit_down_kbps: int | None = None
     speed_limit_up_kbps: int | None = None
     device_limit: int | None = None
-    plan_id: str | None = None
+    template_id: str | None = None
     interface_id: str | None = None
     start_policy: str = "immediate"
     duration_seconds: int | None = None
@@ -189,34 +195,32 @@ class Device(_Model):
     updated_at: datetime | None = None
 
 
-class UserCreate(_Model):
+class _LimitsRequest(_RequestModel):
+    traffic_limit_bytes: int | None = Field(default=None, ge=0, strict=True)
+    speed_limit_down_kbps: int | None = Field(default=None, ge=1, strict=True)
+    speed_limit_up_kbps: int | None = Field(default=None, ge=1, strict=True)
+    device_limit: int | None = Field(default=None, ge=1, strict=True)
+    duration_seconds: int | None = Field(default=None, ge=1, strict=True)
+
+
+class UserCreate(_LimitsRequest):
     username: str
     display_name: str | None = None
     note: str | None = None
     tags: list[str] | None = None
-    traffic_limit_bytes: int | None = None
-    speed_limit_down_kbps: int | None = None
-    speed_limit_up_kbps: int | None = None
-    device_limit: int | None = None
-    plan_id: str | None = None
+    template_id: str | None = None
     interface_id: str | None = None
     start_policy: StartPolicy | None = None
-    duration_seconds: int | None = None
     enabled: bool | None = None
     metadata: dict[str, Any] | None = None
 
 
-class UserPatch(_Model):
+class UserPatch(_LimitsRequest):
     display_name: str | None = None
     note: str | None = None
     tags: list[str] | None = None
-    traffic_limit_bytes: int | None = None
-    speed_limit_down_kbps: int | None = None
-    speed_limit_up_kbps: int | None = None
-    device_limit: int | None = None
-    plan_id: str | None = None
+    template_id: str | None = None
     interface_id: str | None = None
-    duration_seconds: int | None = None
     enabled: bool | None = None
     metadata: dict[str, Any] | None = None
 
@@ -239,16 +243,18 @@ class Plan(_Model):
     updated_at: datetime | None = None
 
 
-class PlanPatch(_Model):
-    name: str
-    traffic_limit_bytes: int | None = None
-    duration_seconds: int | None = None
+class PlanPatch(_LimitsRequest):
+    name: str | None = None
     start_policy: StartPolicy | None = None
-    device_limit: int | None = None
-    speed_limit_down_kbps: int | None = None
-    speed_limit_up_kbps: int | None = None
     interface_id: str | None = None
     enabled: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, value: str | None) -> str | None:
+        if value is not None and (not value.strip() or len(value.encode("utf-8")) > 64):
+            raise ValueError("Template name must be non-blank and at most 64 UTF-8 bytes")
+        return value
 
 
 class Obfuscation(_Model):
@@ -299,10 +305,11 @@ class Interface(_Model):
 # ---------------------------------------------------------------------------
 # Integration
 # ---------------------------------------------------------------------------
-class PurchaseRequest(_Model):
-    plan_id: str
+class PurchaseRequest(_RequestModel):
+    template_id: str
     username: str | None = None
     device_name: str = "device-1"
+    device_count: int | None = Field(default=None, ge=1, le=100, strict=True)
 
 
 class OperationResult(_Model):
@@ -311,7 +318,41 @@ class OperationResult(_Model):
     state: Literal["committed"] = "committed"
     user_id: str
     device_id: str
-    plan_id: str
+    device_ids: list[str] | None = None
+    template_id: str | None = None
+    created_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def _device_identity(self) -> OperationResult:
+        if self.device_ids is not None and (
+            not 1 <= len(self.device_ids) <= 100
+            or self.device_ids[0] != self.device_id
+            or len(set(self.device_ids)) != len(self.device_ids)
+        ):
+            raise ValueError("Inconsistent purchase device identities")
+        return self
+
+    @property
+    def all_device_ids(self) -> tuple[str, ...]:
+        return tuple(self.device_ids) if self.device_ids is not None else (self.device_id,)
+
+
+class QuotaSnapshot(_Model):
+    traffic_limit_bytes: int
+    traffic_used_rx: int = 0
+    traffic_used_tx: int = 0
+    traffic_used_total: int = 0
+    enabled: bool = True
+    disable_reason: str | None = None
+
+
+class QuotaTopUpResult(_Model):
+    operation_id: str
+    kind: Literal["quota_top_up"]
+    state: Literal["committed"]
+    user_id: str
+    before: QuotaSnapshot
+    after: QuotaSnapshot
     created_at: datetime | None = None
 
 
@@ -336,7 +377,7 @@ class NextPlanTerms(_Model):
 
 class NextPlan(_Model):
     user_id: str
-    plan_id: str
+    template_id: str
     terms: NextPlanTerms
     carry_unused_traffic: bool = False
     state: Literal["queued", "needs_review"] = "queued"
@@ -347,7 +388,7 @@ class NextPlan(_Model):
 class NextPlanActivation(_Model):
     activation_id: str
     user_id: str
-    plan_id: str
+    template_id: str
     trigger: Literal["time", "quota"]
     before: dict[str, Any] = Field(default_factory=dict)
     after: dict[str, Any] = Field(default_factory=dict)
@@ -411,6 +452,8 @@ __all__ = [
     "Plan",
     "PlanPatch",
     "PurchaseRequest",
+    "QuotaSnapshot",
+    "QuotaTopUpResult",
     "StartPolicy",
     "Status",
     "Telemetry",

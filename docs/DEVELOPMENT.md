@@ -87,8 +87,8 @@ targets never touch Docker.
 ```bash
 ruff check .                     # lint (the CI gate); path arguments work too
 ruff format .                    # format
-pytest -q -m "not db"            # 73 tests, no database
-pytest -q                        # 172 tests: app suite + mock panel suite
+pytest -q -m "not db"            # 200 selected tests, no database
+pytest -q                        # 519 tests: app suite + mock panel suite
 pytest tests/test_core.py -q     # one module
 alembic upgrade head             # apply migrations
 ```
@@ -116,7 +116,7 @@ Pick the file that already covers your area before writing a new one.
 
 The database marker is `@pytest.mark.db` (module-level `pytestmark`). Without a
 reachable PostgreSQL those tests are **skipped**, not failed — `pytest -q` reports
-73 passed / 99 skipped in about four seconds, and the session header names the
+200 passed / 319 skipped in about four seconds, and the session header names the
 database it probed. Set `REQUIRE_DB=1` (CI does it for you) when a skip must be an
 error instead.
 

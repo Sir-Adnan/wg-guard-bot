@@ -1,7 +1,7 @@
 """Provisioning: turning a paid order into a working VPN service.
 
-This is the only module that mutates a WG-Guard node.  It is written around one
-rule: **a network failure must never create a second service.**
+Paid operations and service maintenance share this orchestration layer. Its
+provisioning rule is: **a network failure must never create a second service.**
 
 How that is guaranteed
 ----------------------
@@ -23,10 +23,11 @@ transaction open for the caller.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from datetime import datetime
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import (
@@ -38,9 +39,11 @@ from app.core.errors import (
     ProvisioningFailed,
 )
 from app.core.jalali import now_utc
+from app.core.locales import default_text
 from app.core.logging import get_logger
-from app.core.money import days_to_seconds, gb_to_bytes
+from app.core.money import days_to_seconds
 from app.core.security import encrypt_secret
+from app.db.locks import locked_session
 from app.db.models import (
     Order,
     OrderKind,
@@ -51,13 +54,13 @@ from app.db.models import (
     ServiceDevice,
     ServiceStatus,
 )
-from app.db.session import session_scope
 from app.panels.base import PanelProvider
 from app.panels.manager import panel_manager
-from app.panels.models import PurchaseResult, RemoteUser
+from app.panels.models import PlanSpec, PurchaseResult, RemoteUser
 from app.services.catalog import catalog
 from app.services.notifications import notifier
-from app.services.orders import order_service
+from app.services.orders import order_service, order_snapshot_terms
+from app.services.rewards import apply_order_rewards
 
 log = get_logger(__name__)
 
@@ -96,63 +99,100 @@ class ProvisioningService:
     # ------------------------------------------------------------------
     async def provision_order(self, order_id: int) -> ProvisionResult:
         """Run the whole provisioning flow for one order in its own session."""
-        async with session_scope() as session:
+        async with locked_session(0x57474F, order_id) as (session, acquire):
             order = await session.get(Order, order_id)
             if order is None:
                 return ProvisionResult(order_id, ok=False, error="سفارش پیدا نشد.")
             if order.status == OrderStatus.COMPLETED:
+                await apply_order_rewards(session, order)
                 return ProvisionResult(order_id, ok=True, service_id=order.service_id)
             if order.status not in (OrderStatus.PAID, OrderStatus.PROVISIONING, OrderStatus.FAILED):
                 return ProvisionResult(order_id, ok=False, error=f"سفارش در وضعیت {order.status.value} قابل ساخت نیست.")
+            if order.attempts and now_utc() - (order.paid_at or order.created_at) >= timedelta(days=90):
+                return ProvisionResult(order_id, ok=False, error=default_text("error.node_response"))
+            if order.service_id:
+                await acquire(0x574753, order.service_id)
 
             await order_service.mark_provisioning(session, order)
+            await session.commit()
             try:
-                service = await self._dispatch(session, order)
+                service = await self._dispatch(session, order, acquire)
             except AppError as exc:
+                await session.rollback()
+                order = await session.get(Order, order_id)
                 await order_service.mark_failed(session, order, exc.message)
                 return ProvisionResult(order_id, ok=False, error=exc.message)
             except Exception as exc:  # pragma: no cover - defensive
-                log.exception("Unexpected provisioning failure for %s", order.order_code)
-                await notifier.report_error(exc, source="provisioning", notify=False)
-                message = (
-                    "ساخت سرویس با خطای غیرمنتظره‌ای روبه‌رو شد. مبلغ پرداختی محفوظ است؛ "
-                    "همکاران ما در حال بررسی هستند و سرویس به‌زودی ساخته می‌شود."
-                )
+                log.error("Unexpected provisioning failure for order %s (%s)", order_id, type(exc).__name__)
+                await session.rollback()
+                order = await session.get(Order, order_id)
+                await notifier.record_event("error", type(exc).__name__, source="provisioning", session=session)
+                message = default_text("error.node_response")
                 await order_service.mark_failed(session, order, message)
                 return ProvisionResult(order_id, ok=False, error=message)
 
             await order_service.mark_completed(session, order, service)
+            await session.commit()
+            await apply_order_rewards(session, order)
             service_id = service.id
             order_code = order.order_code
 
         log.info("Order %s provisioned (service #%s)", order_code, service_id)
         return ProvisionResult(order_id, ok=True, service_id=service_id)
 
-    async def _dispatch(self, session: AsyncSession, order: Order) -> Service:
+    async def _dispatch(
+        self, session: AsyncSession, order: Order, acquire: Callable[[int, int], Awaitable[None]]
+    ) -> Service:
         if order.kind == OrderKind.RENEW:
             return await self._provision_renew(session, order)
         if order.kind == OrderKind.EXTRA_TRAFFIC:
             return await self._provision_extra_traffic(session, order)
         if order.kind == OrderKind.EXTRA_DEVICE:
-            return await self._provision_extra_device(session, order)
-        return await self._provision_new(session, order)
+            raise ProvisioningFailed(default_text("service.extra_device_unavailable"))
+        return await self._provision_new(session, order, acquire)
 
     # ------------------------------------------------------------------
     # New service
     # ------------------------------------------------------------------
-    async def _provision_new(self, session: AsyncSession, order: Order) -> Service:
+    async def _provision_new(
+        self, session: AsyncSession, order: Order, acquire: Callable[[int, int], Awaitable[None]]
+    ) -> Service:
         plan = await self._plan_for(session, order)
-        panel = await panel_manager.pick_panel(session, plan)
+        saved = (order.meta or {}).get("purchase")
+        panel_id = saved["panel_id"] if saved else order.panel_id if order.attempts > 1 else None
+        panel = await session.get(Panel, panel_id) if panel_id else await panel_manager.pick_panel(session, plan)
+        if panel is None:
+            raise ProvisioningFailed(default_text("error.node_not_found"))
         provider = await panel_manager.provider_for(panel)
 
-        plan_ref = await panel_manager.ensure_node_plan(session, plan, panel)
+        recovered = await self._recover(provider, order.idempotency_key) if saved or order.attempts > 1 else None
+        if recovered is not None and not recovered.username:
+            username = saved["username"] if saved else await self._make_username(session, order, plan)
+            recovered = replace(recovered, username=username)
+        if recovered is None:
+            await acquire(0x574750, panel.id)
+            await session.refresh(panel)
+            if not panel.is_active or (panel.max_services is not None and panel.service_count >= panel.max_services):
+                raise PanelUnavailable(default_text("error.node_capacity"))
+        plan_ref = (
+            saved["plan_ref"]
+            if saved
+            else recovered.plan_ref
+            if recovered
+            else await self._ensure_order_plan(session, order, plan, panel, provider)
+        )
         order.panel_id = panel.id
         await session.flush()
 
-        result = await self._purchase_with_retry(session, provider, order, plan, panel, plan_ref)
+        result = recovered or await self._purchase_with_retry(session, provider, order, plan, panel, plan_ref)
         remote = await self._safe_get_user(provider, result.user_id)
 
-        config = await provider.device_config(result.device_id)
+        configs = [(device_id, await provider.device_config(device_id)) for device_id in result.all_device_ids]
+        try:
+            devices = {device.id: device for device in await provider.list_devices(result.user_id)}
+        except Exception as exc:
+            log.warning("Could not read device metadata for user %s (%s)", result.user_id, type(exc).__name__)
+            devices = {}
         subscription = await self._safe_subscription(provider, result.user_id)
 
         service = Service(
@@ -179,19 +219,46 @@ class ProvisioningService:
         session.add(service)
         await session.flush()
 
-        session.add(
-            ServiceDevice(
-                service_id=service.id,
-                wg_device_id=result.device_id,
-                name="device-1",
-                ipv4_address=None,
-                config_encrypted=encrypt_secret(config, purpose="config"),
-                is_active=True,
+        for index, (device_id, config) in enumerate(configs, start=1):
+            device = devices.get(device_id)
+            session.add(
+                ServiceDevice(
+                    service_id=service.id,
+                    wg_device_id=device_id,
+                    name=device.name if device and device.name else f"device-{index}",
+                    ipv4_address=device.ipv4_address if device else None,
+                    config_encrypted=encrypt_secret(config, purpose="config"),
+                    is_active=True,
+                )
             )
-        )
 
         await self._after_success(session, order, plan, panel)
         return service
+
+    async def _ensure_order_plan(
+        self,
+        session: AsyncSession,
+        order: Order,
+        plan: Plan,
+        panel: Panel,
+        provider: PanelProvider,
+    ) -> str:
+        """An order owns its technical snapshot; catalog edits cannot change it."""
+        meta = dict(order.meta or {})
+        spec = PlanSpec(
+            name=f"{order.plan_name} {order.order_code}"[:120],
+            **order_snapshot_terms(order),
+            start_policy=meta.get("start_policy", "immediate"),
+            interface_ref=meta.get("interface_id") or panel.default_interface_id,
+        )
+        reference = await provider.ensure_plan(spec, existing_ref=meta.get("node_plan_ref"))
+        order.meta = {**meta, "node_plan_ref": reference}
+        # Keep the legacy catalog reference useful to operators. Purchases never
+        # trust it: it may point to another node or have been edited since payment.
+        if not plan.wg_plan_id:
+            plan.wg_plan_id = reference
+        await session.flush()
+        return reference
 
     async def _purchase_with_retry(
         self,
@@ -204,16 +271,34 @@ class ProvisioningService:
     ) -> PurchaseResult:
         """Provision exactly once, honouring the provider's idempotency contract."""
         base = self._idem_base(order)
-        username = await self._make_username(session, order, plan)
+        saved = (order.meta or {}).get("purchase")
+        username = saved["username"] if saved else await self._make_username(session, order, plan)
         # The key follows the *payload*: it stays ``base`` for every retry of the
         # same request and only rotates once the node has definitively refused
         # it (a taken username), because a new payload must not be answered from
         # the idempotency cache of the old one.
-        key = base
+        key = saved["key"] if saved else base
+        variant = saved.get("variant", 0) if saved else 0
+        if saved:
+            recovered = await self._recover(provider, key)
+            if recovered is not None:
+                return replace(recovered, username=recovered.username or username)
 
         for attempt in range(MAX_USERNAME_ATTEMPTS):
             order.idempotency_key = key
-            await session.flush()
+            order.meta = {
+                **(order.meta or {}),
+                "purchase": {
+                    "panel_id": panel.id,
+                    "plan_ref": plan_ref,
+                    "username": username,
+                    "key": key,
+                    "variant": variant,
+                },
+            }
+            # Persist the exact request before an external mutation. The session
+            # advisory lock remains held across this transaction boundary.
+            await session.commit()
 
             try:
                 result = await provider.purchase(
@@ -222,8 +307,9 @@ class ProvisioningService:
             except PanelConflict as exc:
                 if self._is_username_conflict(exc):
                     log.info("Username %s taken on %s — retrying with a new username", username, panel.name)
-                    username = self._variant_username(username, attempt)
-                    key = f"{base}-r{attempt + 1}"
+                    username = self._variant_username(username, variant)
+                    variant += 1
+                    key = f"{base}-r{variant}"
                     continue
                 raise ProvisioningFailed(self._explain(exc)) from exc
             except PanelUnavailable as exc:
@@ -231,7 +317,7 @@ class ProvisioningService:
                 recovered = await self._recover(provider, key)
                 if recovered is not None:
                     log.info("Recovered committed purchase for order %s", order.order_code)
-                    return recovered
+                    return replace(recovered, username=recovered.username or username)
                 if attempt >= MAX_USERNAME_ATTEMPTS - 1:
                     raise ProvisioningFailed(self._explain(exc)) from exc
                 log.info("Retrying purchase for order %s with the same idempotency key", order.order_code)
@@ -242,8 +328,8 @@ class ProvisioningService:
                 recovered = await self._recover(provider, key)
                 if recovered is not None:
                     log.info("Recovered committed purchase for order %s after an unexpected error", order.order_code)
-                    return recovered
-                log.exception("Unexpected error while purchasing for order %s", order.order_code)
+                    return replace(recovered, username=recovered.username or username)
+                log.error("Unexpected purchase error for order %s (%s)", order.order_code, type(exc).__name__)
                 raise ProvisioningFailed(
                     "ارتباط با پنل ناگهان قطع شد و سفارش نیمه‌کاره ماند. چند دقیقه بعد دوباره تلاش کنید."
                 ) from exc
@@ -259,25 +345,15 @@ class ProvisioningService:
                     operation_id=result.operation_id,
                     created_at=result.created_at,
                     recovered=result.recovered,
+                    device_ids=result.device_ids,
                 )
             return result
 
         raise ProvisioningFailed("نام کاربری یکتا برای این سرویس پیدا نشد. لطفاً دوباره تلاش کنید.")
 
     async def _recover(self, provider: PanelProvider, key: str) -> PurchaseResult | None:
-        """Ask the node whether a purchase under ``key`` already committed.
-
-        A provider without purchase recovery returns ``None``, which means
-        "not committed" — the caller may then retry safely.  A recovery call
-        that *fails* is the same answer: the retry reuses the same idempotency
-        key, so the node replays its committed operation instead of duplicating
-        the account.
-        """
-        try:
-            return await provider.recover_purchase(key)
-        except Exception as exc:
-            log.warning("Purchase recovery for key %s failed: %s", key, exc)
-            return None
+        """Unknown recovery state must propagate, never become 'not committed'."""
+        return await provider.recover_purchase(key)
 
     # ------------------------------------------------------------------
     # Renewals / add-ons
@@ -286,19 +362,44 @@ class ProvisioningService:
         service = await self._service_for(session, order)
         _, _panel, provider = await panel_manager.find_service(session, service.id)
 
-        remote = await provider.renew_user(
-            service.wg_user_id,
-            duration_seconds=self._duration_seconds(order),
-            idempotency_key=self._idem_base(order),
-        )
-        self.apply_remote_state(service, remote)
-        service.is_test = False
-        self.reset_notifications(service)
-        await session.flush()
-
+        provider.require("next_plan")
+        remote = await provider.get_user(service.wg_user_id)
+        if remote.traffic_limit_bytes is None and remote.duration_seconds is None and remote.expires_at is None:
+            raise ProvisioningFailed(default_text("service.renew_unavailable"))
+        meta = dict(order.meta or {})
+        reference = meta.get("node_plan_ref")
+        await self.reconcile_next_plan(service, provider)
+        pending = (service.meta or {}).get("paid_next_plan")
+        if pending and pending["order_id"] != order.id:
+            raise ProvisioningFailed(default_text("service.renew_pending"))
+        queued = await provider.next_plan(service.wg_user_id)
+        activations = await provider.plan_activations(service.wg_user_id) if reference else []
+        activated = any(item.plan_ref == reference for item in activations)
+        if not activated and queued and queued.plan_ref != reference:
+            raise ProvisioningFailed(default_text("service.renew_pending"))
+        if not reference:
+            plan = await self._plan_for(session, order)
+            panel = await session.get(Panel, service.panel_id)
+            reference = await self._ensure_order_plan(session, order, plan, panel, provider)
+        if not activated and not queued:
+            # The ordinary replay cache lasts only 24h. Persist intent and reconcile
+            # queue + activation history before ever resending a paid successor.
+            service.meta = {**(service.meta or {}), "paid_next_plan": {"order_id": order.id, "plan_ref": reference}}
+            await session.commit()
+            await provider.queue_next_plan(
+                service.wg_user_id,
+                reference,
+                idempotency_key=self._idem_base(order),
+            )
+        if not activated:
+            service.meta = {**(service.meta or {}), "paid_next_plan": {"order_id": order.id, "plan_ref": reference}}
+            service.auto_renew = True
+        else:
+            order.meta = {**(order.meta or {}), "renewal_activated": True}
         plan = await self._plan_for(session, order, required=False)
         if plan is not None:
-            await self._after_success(session, order, plan, await session.get(Panel, service.panel_id))
+            await self._after_success(session, order, plan, None)
+        await session.flush()
         return service
 
     async def _provision_extra_traffic(self, session: AsyncSession, order: Order) -> Service:
@@ -308,40 +409,15 @@ class ProvisioningService:
         extra_bytes = self._limit_bytes(order) or 0
         if extra_bytes <= 0:
             raise ProvisioningFailed("حجم اضافه برای این سفارش تعیین نشده است.")
-        current = int(service.traffic_limit_bytes or 0)
-        new_limit = current + extra_bytes
-
-        remote = await provider.set_limits(service.wg_user_id, traffic_limit_bytes=new_limit)
+        remote = await provider.top_up_quota(
+            service.wg_user_id,
+            extra_bytes,
+            idempotency_key=self._idem_base(order),
+        )
         self.apply_remote_state(service, remote)
         # Clear the traffic alerts so the customer gets warned again next time.
         service.notified_80pct = False
         service.notified_100pct = False
-        await session.flush()
-        return service
-
-    async def _provision_extra_device(self, session: AsyncSession, order: Order) -> Service:
-        service = await self._service_for(session, order)
-        _, _panel, provider = await panel_manager.find_service(session, service.id)
-
-        devices = await provider.list_devices(service.wg_user_id)
-        limit = service.device_limit or order.device_limit or 1
-        if len(devices) >= limit:
-            raise ProvisioningFailed(f"سقف دستگاه‌های این سرویس ({limit}) تکمیل است.")
-
-        index = len(devices) + 1
-        device = await provider.create_device(service.wg_user_id, name=f"device-{index}")
-        config = await provider.device_config(device.id)
-        session.add(
-            ServiceDevice(
-                service_id=service.id,
-                wg_device_id=device.id,
-                name=device.name or f"device-{index}",
-                ipv4_address=device.ipv4_address,
-                config_encrypted=encrypt_secret(config, purpose="config"),
-                is_active=True,
-            )
-        )
-        service.device_limit = max(limit, index)
         await session.flush()
         return service
 
@@ -370,7 +446,9 @@ class ProvisioningService:
         meta = dict(order.meta or {})
         base = meta.get("idem_base")
         if not base:
-            base = order.idempotency_key.split("-r")[0] if "-r" in order.idempotency_key else order.idempotency_key
+            # Random URL-safe keys may contain '-r'; it is not evidence of a
+            # retry suffix. Legacy keys must retain their complete identity too.
+            base = order.idempotency_key
             meta["idem_base"] = base
             order.meta = meta
         return str(base)
@@ -412,8 +490,7 @@ class ProvisioningService:
     @staticmethod
     def _is_username_conflict(exc: PanelConflict) -> bool:
         code = (exc.panel_code or "").upper()
-        message = (exc.message or "").lower()
-        return code == "USERNAME_EXISTS" or "username" in message
+        return code == "USERNAME_EXISTS"
 
     @staticmethod
     def _explain(exc: PanelError) -> str:
@@ -428,7 +505,7 @@ class ProvisioningService:
 
     @staticmethod
     def _limit_bytes(order: Order) -> int | None:
-        return gb_to_bytes(order.traffic_gb)
+        return order_snapshot_terms(order)["traffic_limit_bytes"]
 
     @staticmethod
     def _duration_seconds(order: Order) -> int | None:
@@ -445,14 +522,14 @@ class ProvisioningService:
         try:
             return await provider.get_user(user_id)
         except Exception as exc:
-            log.warning("Could not read back user %s (continuing with local values): %s", user_id, exc)
+            log.warning("Could not read back user %s (continuing with local values): %s", user_id, type(exc).__name__)
             return None
 
     async def _safe_subscription(self, provider: PanelProvider, user_id: str) -> str | None:
         try:
             link = await provider.subscription_link(user_id)
         except Exception as exc:
-            log.warning("Could not read subscription link for %s: %s", user_id, exc)
+            log.warning("Could not read subscription link for %s: %s", user_id, type(exc).__name__)
             return None
         return link.path
 
@@ -465,18 +542,24 @@ class ProvisioningService:
 
     async def _after_success(self, session: AsyncSession, order: Order, plan: Plan, panel: Panel | None) -> None:
         """Bookkeeping shared by every successful provisioning path."""
-        plan.sales_count = int(plan.sales_count) + 1
+        await session.execute(update(Plan).where(Plan.id == plan.id).values(sales_count=Plan.sales_count + 1))
         if panel is not None:
-            panel.service_count = int(panel.service_count) + 1
-        await catalog.decrement_stock(session, plan)
+            await session.execute(
+                update(Panel).where(Panel.id == panel.id).values(service_count=Panel.service_count + 1)
+            )
+        if not (order.meta or {}).get("stock_reserved"):
+            await catalog.decrement_stock(session, plan)
         await session.flush()
 
     def apply_remote_state(self, service: Service, remote: RemoteUser) -> None:
         """Copy authoritative node state onto a local service row."""
         service.remote_status = remote.status
-        service.status = self._service_status(remote)
+        if service.status != ServiceStatus.DELETED:
+            service.status = self._service_status(remote)
         service.traffic_limit_bytes = remote.traffic_limit_bytes
         service.traffic_used_bytes = remote.traffic_used_bytes
+        service.speed_limit_down_kbps = remote.speed_limit_down_kbps
+        service.speed_limit_up_kbps = remote.speed_limit_up_kbps
         if remote.device_limit:
             service.device_limit = remote.device_limit
         service.expires_at = remote.expires_at
@@ -504,8 +587,29 @@ class ProvisioningService:
             log.debug("sync_service(%s) skipped: %s", service.id, exc)
             return service
         self.apply_remote_state(service, remote)
+        await self.reconcile_next_plan(service, provider)
         await session.flush()
         return service
+
+    async def reconcile_next_plan(self, service: Service, provider: PanelProvider) -> None:
+        pending = (service.meta or {}).get("paid_next_plan")
+        if not pending:
+            return
+        queued = await provider.next_plan(service.wg_user_id)
+        if queued and queued.plan_ref == pending["plan_ref"]:
+            service.auto_renew = True
+            service.meta = {**service.meta, "paid_next_plan": {**pending, "state": queued.state}}
+            return
+        activations = await provider.plan_activations(service.wg_user_id)
+        if any(item.plan_ref == pending["plan_ref"] for item in activations):
+            meta = dict(service.meta)
+            meta["last_paid_next_plan"] = meta.pop("paid_next_plan")
+            service.meta = meta
+            service.auto_renew = False
+            service.is_test = False
+            self.reset_notifications(service)
+        else:
+            service.meta = {**service.meta, "paid_next_plan": {**pending, "state": "needs_review"}}
 
     async def sync_services(self, session: AsyncSession, *, limit: int = 200, stale_minutes: int = 10) -> int:
         """Refresh services whose cached state is older than ``stale_minutes``."""

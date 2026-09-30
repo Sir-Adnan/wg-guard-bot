@@ -1,0 +1,20 @@
+<dialog class="workspace-dialog command-dialog" id="command-dialog" aria-labelledby="command-title">
+  <div class="command-dialog__head">
+    {{ icon('search') }}
+    <label class="sr-only" id="command-title" for="command-input">{{ ui_text('panel.search') }}</label>
+    <input id="command-input" class="command-input" type="search" autocomplete="off" placeholder="{{ ui_text('panel.search_hint') }}">
+    <button class="btn btn--icon btn--ghost" type="button" data-dialog-close aria-label="{{ ui_text('panel.close') }}">{{ icon('x') }}</button>
+  </div>
+  <nav class="command-results" aria-label="{{ ui_text('panel.navigation') }}"></nav>
+  <p class="command-empty" hidden>{{ ui_text('panel.search_empty') }}</p>
+  <div class="command-dialog__foot"><kbd>Esc</kbd> {{ ui_text('panel.close') }}</div>
+</dialog>
+<dialog class="workspace-dialog confirm-dialog" id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+  <div class="confirm-dialog__icon">{{ icon('shield') }}</div>
+  <h2 id="confirm-title">{{ ui_text('panel.confirm_title') }}</h2>
+  <p id="confirm-message"></p>
+  <form method="dialog" class="confirm-dialog__actions" data-busy="false">
+    <button class="btn btn--ghost" value="cancel" autofocus>{{ ui_text('panel.cancel') }}</button>
+    <button class="btn btn--primary" value="confirm">{{ ui_text('panel.confirm') }}</button>
+  </form>
+</dialog>

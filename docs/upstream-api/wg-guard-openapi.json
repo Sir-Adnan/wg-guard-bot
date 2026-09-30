@@ -1,0 +1,897 @@
+{
+  "openapi": "3.2.1",
+  "info": {
+    "title": "WG-Guard API",
+    "description": "REST management surface of the WG-Guard AmneziaWG node panel. Technical templates are available at /api/v1/templates and referenced by template_id; they are not external sales products. Authenticate with `Authorization: Bearer wg_…` API tokens (scopes below). Reseller-bound tokens use ownership-checked routes and owner-assigned templates; direct purchase terms require an owner-scoped token. All errors use one envelope (`error.code` is a stable machine code). Ordinary mutating endpoints with `Idempotency-Key` use token-scoped 24-hour response replay; they do not gain atomic multi-request semantics or result lookup. Purchases and quota top-ups commit their mutation and a non-secret result together; `Idempotency-Key` identifies that result for 90 days within the owner or reseller namespace. Lists are cursor-paginated (`limit` ≤ 500 + opaque `cursor`).\n\nUnits: quotas, charged usage and resource sizes are exact bytes (B); panel MB/GB are decimal (1 GB = 1000000000 B). Send 100000000000 for 100 GB; 107374182400 is 100 GiB and displays as 107.4 GB. Speed limits use decimal Kbps (1000 bits/s): Mbps × 1000, panel MB/s × 8000. Download is server to client; upload is client to server. RX is server received (client upload); TX is server sent (client download); both directions consume quota. Telemetry *_bytes_per_second is B/s, not Kbps. Durations/cadence/uptime are seconds; 30 days = 2592000 s and panel month shortcuts mean 30 days. Date-time fields are RFC3339 instants; responses use UTC (Z). Webhook signature t uses Unix seconds, not milliseconds. Utilization is percent on a 0-100 scale; load_1 is a dimensionless one-minute load average. Device limits, entity/sample counts and delivery attempts are integer counts; MTU is bytes and listen_port is a UDP port number. JSON numbers use their field's unit; conversion and display rounding never change stored quantities. See /docs for examples and settings-unit guidance.",
+    "version": "1.0.0"
+  },
+  "servers": [{ "url": "/" }],
+  "security": [{ "BearerAuth": [] }],
+  "tags": [
+    { "name": "node" }, { "name": "users" }, { "name": "bulk" }, { "name": "devices" },
+    { "name": "config" }, { "name": "stats" }, { "name": "templates" }, { "name": "interfaces" },
+    { "name": "settings" }, { "name": "webhooks" }, { "name": "integration" }, { "name": "ops" }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": ["ops"], "summary": "Public liveness probe", "security": [],
+        "responses": { "200": { "description": "Process is up", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Status" } } } } }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": ["ops"], "summary": "Public readiness probe (bring-up complete, DB reachable)", "security": [],
+        "responses": { "200": { "description": "Ready", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Status" } } } }, "503": { "description": "Not ready", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Status" } } } } }
+      }
+    },
+    "/openapi.json": {
+      "get": { "tags": ["ops"], "summary": "This document", "security": [], "responses": { "200": { "description": "OpenAPI document" } } }
+    },
+    "/docs": {
+      "get": { "tags": ["ops"], "summary": "Lightweight API reference page", "security": [], "responses": { "200": { "description": "HTML reference page" } } }
+    },
+    "/api/v1/node/health": {
+      "get": {
+        "tags": ["node"], "summary": "Public capability discovery: version + liveness only", "security": [],
+        "responses": { "200": { "description": "Node status", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string" }, "version": { "type": "string" } } } } } } }
+      }
+    },
+    "/api/v1/node": {
+      "get": {
+        "tags": ["node"], "summary": "Node identity, uptime, interface inventory", "security": [{ "BearerAuth": ["node.read"] }],
+        "responses": { "200": { "description": "Node description", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Node" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/node/stats": {
+      "get": {
+        "tags": ["node"],
+        "summary": "Runtime counters (uptime, user/device counts)",
+        "security": [{"BearerAuth": ["node.read"]}],
+        "responses": {"200": {"description": "Runtime statistics", "content": {"application/json": {"schema": {"type": "object", "description": "Counts can be omitted if their database query fails.", "properties": {"users": {"type": "integer", "description": "Entity count."}, "devices": {"type": "integer", "description": "Entity count."}, "uptime_seconds": {"type": "integer", "description": "WG-Guard process uptime in seconds."}}}}}}}
+      }
+    },
+    "/api/v1/node/telemetry": {
+      "get": {
+        "tags": ["stats"], "summary": "Bounded live node and VPN telemetry", "operationId": "getNodeTelemetry",
+        "description": "Returns the newest shared in-memory samples in chronological order. Unavailable measurements are null; interface names and raw errors are never returned. History is ephemeral across process restarts.",
+        "security": [{ "BearerAuth": ["stats.read"] }],
+        "parameters": [
+          { "name": "points", "in": "query", "description": "Newest samples to return; values above the cap are clamped.", "schema": { "type": "integer", "minimum": 1, "maximum": 180, "default": 60 } }
+        ],
+        "responses": {
+          "200": { "description": "Bounded telemetry history", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TelemetryResponse" } } } },
+          "400": { "$ref": "#/components/responses/Invalid" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v1/purchases": {
+      "post": {
+        "tags": ["integration"],
+        "summary": "Provision a customer, requested devices and subscription link atomically",
+        "operationId": "createPurchase",
+        "description": "Requires an Idempotency-Key unique within the owner or reseller namespace. Send exactly one of template_id (technical template) or entitlement (direct finite terms). Direct terms are allowed only for owner-scoped tokens; reseller tokens must use an enabled owner-assigned template. Sales SKUs and prices live in the caller, not this catalog. An identical retry returns the same 201 result with Idempotency-Replayed: true; a different request with that key returns 409. An omitted username is derived stably from the principal and key. Database commit does not assert a successful live VPN handshake. The result contains no capability link or private configuration; retrieve those separately with appropriate permissions. device_count defaults to 1, accepts 1-100 and must fit the account device limit; it does not default to the device cap. Each device has independent keys and an allocated address. Any device failure rolls back the entire transaction, including the account, link and operation result. A successful result includes device_ids; configs/QRs remain separate no-store reads.",
+        "security": [{"BearerAuth": ["purchases.create"]}],
+        "parameters": [{"$ref": "#/components/parameters/IntegrationKey"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PurchaseRequest"}, "examples": {"templatePurchase": {"summary": "Owner-assigned technical template (owner or reseller)", "value": {"template_id": "template-uuid", "username": "alice", "device_name": "phone"}}, "directPurchase": {"summary": "Owner only: 100 GB, 30 days, download 100 Mbps, upload 20 Mbps", "value": {"username": "alice", "device_name": "phone", "entitlement": {"traffic_limit_bytes": 100000000000, "duration_seconds": 2592000, "device_limit": 1, "start_policy": "immediate", "speed_limit_down_kbps": 100000, "speed_limit_up_kbps": 20000}}}, "multiDevicePurchase": {"summary": "Owner: three ready configs within a three-device cap", "value": {"username": "alice", "device_count": 3, "entitlement": {"traffic_limit_bytes": 100000000000, "duration_seconds": 2592000, "device_limit": 3}}}}}}},
+        "responses": {"201": {"description": "Committed purchase; same body on replay", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PurchaseOperationResult"}}}}, "400": {"$ref": "#/components/responses/Invalid"}, "401": {"$ref": "#/components/responses/Unauthorized"}, "403": {"$ref": "#/components/responses/Forbidden"}, "409": {"$ref": "#/components/responses/Conflict"}}
+      }
+    },
+    "/api/v1/operations/result": {
+      "get": {
+        "tags": ["integration"], "summary": "Recover a committed integration result by key", "operationId": "getOperationResult",
+        "description": "The key is supplied in a header to keep it out of URL logs. Lookup is scoped to the owner or reseller principal and retained for 90 days; a missing or expired result is 404. It does not expose subscription capabilities or private keys.",
+        "security": [{ "BearerAuth": ["operations.read"] }],
+        "parameters": [{ "$ref": "#/components/parameters/IntegrationKey" }],
+        "responses": { "200": { "description": "Previously committed result", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OperationResult" } } } }, "400": { "$ref": "#/components/responses/Invalid" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/users": {
+      "post": {
+        "tags": ["users"], "summary": "Create a user", "operationId": "createUser",
+        "description": "Idempotent with `Idempotency-Key`. When template_id names an enabled template, its technical terms override submitted limit, duration, start-policy and interface fields. Without a template, absent limits mean unlimited. This route creates no device; use /purchases for atomic customer-plus-first-device provisioning. Speed limits are independent per direction (kbps).",
+        "security": [{ "BearerAuth": ["users.create"] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UserCreate" }, "example": { "username": "alice", "duration_seconds": 2592000, "traffic_limit_bytes": 100000000000, "speed_limit_down_kbps": 100000, "speed_limit_up_kbps": null, "device_limit": 3 } } } },
+        "responses": { "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } }, "400": { "$ref": "#/components/responses/Invalid" }, "409": { "$ref": "#/components/responses/Conflict" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      },
+      "get": {
+        "tags": ["users"], "summary": "List users (cursor pagination)", "security": [{ "BearerAuth": ["users.read"] }],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "maximum": 500, "default": 50 } },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
+          { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["created_at", "username", "expires_at", "used"], "default": "created_at" } },
+          { "name": "order", "in": "query", "schema": { "type": "string", "enum": ["asc", "desc"] } },
+          { "name": "username", "in": "query", "schema": { "type": "string" }, "description": "Substring filter (wildcards are literal)" },
+          { "name": "status", "in": "query", "schema": { "$ref": "#/components/schemas/UserStatus" } },
+          { "name": "traffic_exceeded", "in": "query", "schema": { "type": "boolean" } },
+          { "name": "enabled", "in": "query", "schema": { "type": "boolean" } },
+          { "name": "expires_before", "in": "query", "schema": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." } },
+          { "name": "expires_after", "in": "query", "schema": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." } },
+          { "name": "created_before", "in": "query", "schema": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." } },
+          { "name": "created_after", "in": "query", "schema": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." } },
+          { "name": "template_id", "in": "query", "schema": { "type": "string" } },
+          { "name": "interface_id", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Page of users", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UserPage" } } } } }
+      }
+    },
+    "/api/v1/users/bulk": {
+      "post": {
+        "tags": ["bulk"],
+        "summary": "Bulk-create users (prefix + zero-padded index)",
+        "security": [{"BearerAuth": ["users.bulk"]}],
+        "description": "Creates only user records, no devices or customer links. Enabled templates override manual entitlement terms. Unknown fields are rejected; metadata, enabled, auto_devices and exact expiry are not bulk-create properties.",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["count"], "properties": {"count": {"type": "integer", "minimum": 1, "maximum": 500}, "prefix": {"type": "string", "example": "gs"}, "start_index": {"type": "integer", "default": 1}, "width": {"type": "integer", "default": 3}, "duration_seconds": {"type": "integer", "description": "Duration in seconds: 86400 = 1 day; 2592000 = 30 days. The panel month shortcut means 30 days, not a calendar month."}, "traffic_limit_bytes": {"type": ["integer", "null"], "description": "Quota in exact bytes (B). 1 GB = 1000000000 B; 100 GB = 100000000000 B. 100 GiB = 107374182400 B and displays as 107.4 GB. null = unlimited; 0 is a finite zero-byte allowance.", "minimum": 0}, "speed_limit_down_kbps": {"type": ["integer", "null"], "description": "Download (server to client) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 100000 = 100 Mbps = 12.5 MB/s in the panel speed form. null = unlimited.", "minimum": 1}, "speed_limit_up_kbps": {"type": ["integer", "null"], "description": "Upload (client to server) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 20000 = 20 Mbps = 2.5 MB/s in the panel speed form. null = unlimited.", "minimum": 1}, "device_limit": {"type": ["integer", "null"], "description": "Maximum registered device/peer configuration count, including disabled devices. null = unlimited; zero is invalid. This does not allocate devices, detect physical hardware or count simultaneous connections. Lowering it does not delete existing devices. Use purchase device_count to provision a specific number of ready configurations.", "minimum": 1}, "template_id": {"type": ["string", "null"], "description": "Optional enabled technical template ID. On create, saved quota, duration, start policy, device cap, speeds and interface override manual entitlement fields. Omit/null for manual terms."}, "interface_id": {"type": ["string", "null"], "description": "Connection profile ID, not a name such as awg0. Omit/null for automatic selection when creating a device. A user PATCH does not move existing devices."}, "start_policy": {"$ref": "#/components/schemas/StartPolicy"}, "display_name": {"type": "string", "description": "Shared presentation label."}, "note": {"type": "string", "description": "Shared internal text; JSON \\n preserves line breaks."}, "tags": {"type": "array", "items": {"type": "string"}, "description": "Shared tags as a JSON string array."}}, "additionalProperties": false}}}},
+        "responses": {"201": {"description": "Created users + skipped count", "content": {"application/json": {"schema": {"type": "object", "properties": {"created": {"type": "array", "items": {"$ref": "#/components/schemas/User"}}, "skipped": {"type": "integer"}}}}}}}
+      }
+    },
+    "/api/v1/users/bulk-action": {
+      "post": {
+        "tags": ["bulk"],
+        "summary": "Apply one action to many users (per-item results)",
+        "security": [{"BearerAuth": ["users.bulk"]}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["action", "user_ids"], "properties": {"action": {"type": "string", "enum": ["enable", "disable", "delete", "renew", "reset_traffic", "add_traffic", "update"]}, "user_ids": {"type": "array", "maxItems": 500, "items": {"type": "string"}}, "params": {"type": "object", "properties": {"reason": {"type": "string"}, "mode": {"type": "string", "enum": ["from_expiration", "from_now", "exact"], "description": "For action=renew; omitted defaults to from_expiration."}, "duration_seconds": {"type": "integer", "description": "Duration in seconds: 86400 = 1 day; 2592000 = 30 days. The panel month shortcut means 30 days, not a calendar month."}, "rx_bytes": {"type": "integer", "description": "Traffic received by the node from a client, in bytes (B); client upload. This is an amount, not a per-second rate."}, "tx_bytes": {"type": "integer", "description": "Traffic sent by the node to a client, in bytes (B); client download. This is an amount, not a per-second rate."}, "display_name": {"type": "string", "description": "Optional presentation label distinct from the username. PATCH empty string clears it; absent/null leaves it unchanged."}, "note": {"type": "string", "description": "Internal text; JSON \\n preserves line breaks. PATCH empty string clears it; absent/null leaves it unchanged. Never store credentials here."}, "traffic_limit_bytes": {"type": ["integer", "null"], "description": "Quota in exact bytes (B). 1 GB = 1000000000 B; 100 GB = 100000000000 B. 100 GiB = 107374182400 B and displays as 107.4 GB. null = unlimited; 0 is a finite zero-byte allowance.", "minimum": 0}, "speed_limit_down_kbps": {"type": ["integer", "null"], "description": "Download (server to client) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 100000 = 100 Mbps = 12.5 MB/s in the panel speed form. null = unlimited.", "minimum": 1}, "speed_limit_up_kbps": {"type": ["integer", "null"], "description": "Upload (client to server) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 20000 = 20 Mbps = 2.5 MB/s in the panel speed form. null = unlimited.", "minimum": 1}, "device_limit": {"type": ["integer", "null"], "description": "Maximum registered device/peer configuration count, including disabled devices. null = unlimited; zero is invalid. This does not allocate devices, detect physical hardware or count simultaneous connections. Lowering it does not delete existing devices. Use purchase device_count to provision a specific number of ready configurations.", "minimum": 1}, "exact": {"type": "string", "format": "date-time", "description": "For action=renew with mode=exact: RFC3339 expiry instant."}}, "additionalProperties": false}}, "additionalProperties": false}}}},
+        "responses": {"200": {"description": "Per-item results", "content": {"application/json": {"schema": {"type": "object", "properties": {"results": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "ok": {"type": "boolean"}, "error": {"type": "string"}}}}, "ok": {"type": "integer"}}}}}}},
+        "description": "Per-user results; not an all-or-nothing transaction. params are action-specific: renew uses mode/duration_seconds/exact; add_traffic uses rx_bytes/tx_bytes to adjust charged usage, not quota; update accepts display_name, note, quota, independent speeds and device cap. Other single-user PATCH fields are not available here."
+      }
+    },
+    "/api/v1/users/{id}": {
+      "get": {
+        "tags": ["users"], "summary": "Get a user", "security": [{ "BearerAuth": ["users.read"] }],
+        "parameters": [{ "$ref": "#/components/parameters/UserID" }],
+        "responses": { "200": { "description": "User", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } }, "404": { "$ref": "#/components/responses/NotFound" } }
+      },
+      "patch": {
+        "tags": ["users"], "summary": "Partially update a user (username immutable; `null` clears a limit)", "description": "Changing template_id on an existing user changes its reference only; it does not reset the existing entitlement. Update quota/duration fields explicitly or queue a successor.", "security": [{ "BearerAuth": ["users.update"] }],
+        "parameters": [{ "$ref": "#/components/parameters/UserID" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UserPatch" } } } },
+        "responses": { "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } }, "404": { "$ref": "#/components/responses/NotFound" } }
+      },
+      "delete": {
+        "tags": ["users"], "summary": "Soft-delete a user (username stays reserved; peers removed)", "security": [{ "BearerAuth": ["users.delete"] }],
+        "parameters": [{ "$ref": "#/components/parameters/UserID" }],
+        "responses": { "200": { "description": "Deleted" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/users/{id}/subscription": {
+      "get": {
+        "tags": ["integration"], "summary": "Retrieve a customer's private subscription link", "operationId": "getCustomerSubscription",
+        "description": "The path is a bearer capability relative to this panel's public origin. Resolve it against the configured public base URL or the API origin before delivery. The link and device configurations are secrets; the response is no-store. Reseller tokens can read only their own customers. A missing or revoked link returns 404.",
+        "security": [{ "BearerAuth": ["subscriptions.read"] }],
+        "parameters": [{ "$ref": "#/components/parameters/UserID" }],
+        "responses": { "200": { "description": "Private customer link", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerLink" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/users/{id}/subscription/rotate": {
+      "post": {
+        "tags": ["integration"], "summary": "Revoke the old link and every old device configuration", "operationId": "rotateCustomerAccess",
+        "description": "Atomically replaces the customer link and every device key, preserving device IDs, addresses and quotas. Old links, configs and QR values stop working after successful runtime reconciliation. If reconciliation fails, the new database state is retained and the response is 503; read the current link before retrying. This operation intentionally does not use response-replay middleware.",
+        "security": [{ "BearerAuth": ["subscriptions.rotate"] }],
+        "parameters": [{ "$ref": "#/components/parameters/UserID" }],
+        "responses": { "200": { "description": "New private link and count of rotated devices", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerLinkRotation" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "503": { "description": "Database rotation committed; runtime reconciliation pending" } }
+      }
+    },
+    "/api/v1/users/{id}/next-plan": {
+      "get": {
+        "tags": ["integration"], "summary": "Read the queued successor plan", "operationId": "getNextPlan",
+        "description": "Returns null when no successor is queued. Reseller tokens can read only their own customers.",
+        "security": [{ "BearerAuth": ["next_plans.read"] }],
+        "parameters": [{ "$ref": "#/components/parameters/UserID" }],
+        "responses": { "200": { "description": "Current queue state", "content": { "application/json": { "schema": { "type": "object", "required": ["next_plan"], "properties": { "next_plan": { "anyOf": [{ "$ref": "#/components/schemas/NextPlan" }, { "type": "null" }] } } } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      },
+      "put": {
+        "tags": ["integration"], "summary": "Queue or replace one authorized successor", "operationId": "putNextPlan",
+        "description": "No payment is taken. The caller must have already authorized this entitlement. Template terms are snapshotted when queued, so later catalog edits or reseller-template revocation do not rewrite it. At the first time or quota boundary the successor subscription starts once, with fresh usage counters. A manual suspension/disable blocks automatic activation. A changed current template or incompatible device set moves the queue to needs_review. Optional carry_unused_traffic adds only unused prior traffic when time ends first, never time. Reseller tokens require an owner-assigned enabled template. Optional Idempotency-Key provides token-scoped 24-hour replay.",
+        "security": [{ "BearerAuth": ["next_plans.write"] }],
+        "parameters": [{ "$ref": "#/components/parameters/UserID" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NextPlanRequest" }, "example": { "template_id": "template-uuid", "carry_unused_traffic": false } } } },
+        "responses": { "200": { "description": "Queued successor", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NextPlan" } } } }, "400": { "$ref": "#/components/responses/Invalid" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      },
+      "delete": {
+        "tags": ["integration"], "summary": "Cancel the queued successor", "operationId": "deleteNextPlan",
+        "description": "Idempotent removal; it does not reverse an already activated plan. Optional Idempotency-Key provides token-scoped 24-hour replay.",
+        "security": [{ "BearerAuth": ["next_plans.write"] }],
+        "parameters": [{ "$ref": "#/components/parameters/UserID" }],
+        "responses": { "204": { "description": "Queue removed or already absent" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/users/{id}/next-plan/activations": {
+      "get": {
+        "tags": ["integration"], "summary": "Recover recent automatic successor activations", "operationId": "listNextPlanActivations",
+        "description": "Returns newest first, at most 100, retained for one year. Includes non-secret before/after entitlement snapshots and the actual first boundary trigger. Reseller tokens see only their own customers. This read is the fallback when an asynchronous notification is missed.",
+        "security": [{ "BearerAuth": ["next_plans.read"] }],
+        "parameters": [{ "$ref": "#/components/parameters/UserID" }, { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 } }],
+        "responses": { "200": { "description": "Recent activations", "content": { "application/json": { "schema": { "type": "object", "required": ["items"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/NextPlanActivation" } } } } } } }, "400": { "$ref": "#/components/responses/Invalid" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/users/{id}/enable": {
+      "post": {
+        "tags": ["users"], "summary": "Enable a user (returns to active/waiting)", "security": [{ "BearerAuth": ["users.update"] }],
+        "parameters": [{ "$ref": "#/components/parameters/UserID" }],
+        "responses": { "200": { "description": "Enabled", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } } }
+      }
+    },
+    "/api/v1/users/{id}/disable": {
+      "post": {
+        "tags": ["users"], "summary": "Disable a user", "security": [{ "BearerAuth": ["users.update"] }],
+        "parameters": [{ "$ref": "#/components/parameters/UserID" }],
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object", "properties": { "reason": { "type": "string", "enum": ["manual", "admin_action"], "default": "manual" } } } } } },
+        "responses": { "200": { "description": "Disabled", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } } }
+      }
+    },
+    "/api/v1/users/{id}/renew": {
+      "post": {
+        "tags": ["users"], "summary": "Renew a subscription", "description": "Idempotent with `Idempotency-Key`. Reactivates expired accounts; traffic_exceeded accounts are NOT reactivated here (quota recovery is an explicit admin action).", "security": [{ "BearerAuth": ["users.update"] }],
+        "parameters": [{ "$ref": "#/components/parameters/UserID" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["mode"], "properties": { "mode": { "type": "string", "enum": ["from_expiration", "from_now", "exact"] }, "duration_seconds": { "type": "integer", "description": "Duration in seconds: 86400 = 1 day; 2592000 = 30 days. The panel month shortcut means 30 days, not a calendar month." }, "exact": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." } } } } } },
+        "responses": { "200": { "description": "Renewed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } } }
+      }
+    },
+    "/api/v1/users/{id}/quota/add": {
+      "post": {
+        "tags": ["integration", "users"], "summary": "Add paid data allowance without resetting usage", "operationId": "topUpQuota",
+        "description": "Requires an Idempotency-Key (1–128 printable ASCII characters without spaces). Atomically increases an existing finite quota and stores a before/after result for 90 days in the owner or reseller namespace; an identical retry returns the same operation with Idempotency-Replayed: true, while a different request with the key returns 409. Reseller tokens may top up only owned customers. Charged RX/TX usage stays unchanged, and manual disable/suspension is not lifted. A quota-only traffic_exceeded block is lifted when the new limit exceeds charged usage. A 503 after commit means runtime reconciliation is pending; recover the committed result through GET /api/v1/operations/result and retry with the same key. Unlimited accounts require an explicit finite limit via PATCH /users/{id}; /traffic/add is a charged-counter correction, not a top-up.",
+        "security": [{ "BearerAuth": ["users.update"] }],
+        "parameters": [{ "$ref": "#/components/parameters/UserID" }, { "$ref": "#/components/parameters/IntegrationKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QuotaTopUpRequest" }, "example": { "bytes": 1000000000 } } } },
+        "responses": { "200": { "description": "Committed top-up and before/after snapshot; same result on replay", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QuotaTopUpResult" } } } }, "400": { "$ref": "#/components/responses/Invalid" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "503": { "$ref": "#/components/responses/Unavailable" } }
+      }
+    },
+    "/api/v1/users/{id}/traffic/add": {
+      "post": {
+        "tags": ["users"], "summary": "Add traffic to the charged counters", "description": "Idempotent with `Idempotency-Key`. Pushing the total to/over the limit trips the account immediately.", "security": [{ "BearerAuth": ["traffic.update"] }],
+        "parameters": [{ "$ref": "#/components/parameters/UserID" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "rx_bytes": { "type": "integer", "minimum": 0, "description": "Traffic received by the node from a client, in bytes (B); client upload. This is an amount, not a per-second rate." }, "tx_bytes": { "type": "integer", "minimum": 0, "description": "Traffic sent by the node to a client, in bytes (B); client download. This is an amount, not a per-second rate." } } } } } },
+        "responses": { "200": { "description": "Updated user", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/users/{id}/traffic/set": {
+      "post": {
+        "tags": ["users"], "summary": "Set the charged counters to absolute values", "description": "Idempotent with `Idempotency-Key`. `null` leaves a counter untouched; landing below the limit reactivates a traffic_exceeded account.", "security": [{ "BearerAuth": ["traffic.update"] }],
+        "parameters": [{ "$ref": "#/components/parameters/UserID" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "rx_bytes": { "type": ["integer", "null"], "minimum": 0, "description": "Traffic received by the node from a client, in bytes (B); client upload. This is an amount, not a per-second rate. null leaves this counter unchanged on /traffic/set." }, "tx_bytes": { "type": ["integer", "null"], "minimum": 0, "description": "Traffic sent by the node to a client, in bytes (B); client download. This is an amount, not a per-second rate. null leaves this counter unchanged on /traffic/set." } } } } } },
+        "responses": { "200": { "description": "Updated user", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } } }
+      }
+    },
+    "/api/v1/users/{id}/traffic/reset": {
+      "post": {
+        "tags": ["users"], "summary": "Reset usage to zero (one-op unblock)", "description": "Idempotent with `Idempotency-Key`. Zeroes user and device totals while retaining peer baselines; a traffic_exceeded account returns to active (or waiting per policy). Reseller tokens can reset only owned customers.", "security": [{ "BearerAuth": ["traffic.update"] }],
+        "parameters": [{ "$ref": "#/components/parameters/UserID" }],
+        "responses": { "200": { "description": "Reset", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } } }
+      }
+    },
+    "/api/v1/users/{id}/traffic": {
+      "get": {
+        "tags": ["stats"],
+        "summary": "Traffic time series for the user's devices",
+        "security": [{"BearerAuth": ["traffic.read"]}],
+        "parameters": [{"$ref": "#/components/parameters/UserID"}, {"name": "granularity", "in": "query", "schema": {"type": "string", "enum": ["samples", "hourly", "daily"], "default": "samples"}}, {"name": "hours", "in": "query", "schema": {"type": "integer", "default": 48}, "description": "Lookback window in hours, not seconds: 24 means the preceding 24 hours. Capped by retention (samples 48, hourly 720, daily 8760)."}],
+        "responses": {"200": {"description": "Traffic amounts per sample/hour/day bucket, not per-second rates or cumulative charged quota", "content": {"application/json": {"schema": {"type": "object", "properties": {"granularity": {"type": "string"}, "series": {"type": "array", "items": {"type": "object", "properties": {"ts": {"type": "string", "description": "UTC RFC3339 sample or bucket-start timestamp."}, "rx": {"type": "integer", "description": "Received bytes (B) within this bucket at the server: client upload."}, "tx": {"type": "integer", "description": "Sent bytes (B) within this bucket at the server: client download."}}}}, "hours": {"type": "integer", "description": "Requested lookback window in hours."}}}}}}}
+      }
+    },
+    "/api/v1/users/{id}/devices": {
+      "get": {
+        "tags": ["devices"],
+        "summary": "List the user's devices",
+        "security": [{"BearerAuth": ["devices.read"]}],
+        "parameters": [{"$ref": "#/components/parameters/UserID"}],
+        "responses": {"200": {"description": "Devices", "content": {"application/json": {"schema": {"type": "object", "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/Device"}}}}}}}}
+      },
+      "post": {
+        "tags": ["devices"],
+        "summary": "Create a device (keys generated server-side)",
+        "security": [{"BearerAuth": ["devices.write"]}],
+        "parameters": [{"$ref": "#/components/parameters/UserID"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string", "description": "Trimmed non-blank device label, at most 64 UTF-8 bytes. Not an idempotency/uniqueness key."}, "interface_id": {"type": "string", "description": "Optional enabled connection-profile ID, not its display name."}, "preshared_key": {"type": "boolean", "default": false, "description": "Generate an additional preshared key server-side when true; not a caller-supplied secret."}}, "additionalProperties": false}}}},
+        "responses": {"201": {"description": "Created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Device"}}}}, "409": {"$ref": "#/components/responses/Conflict"}},
+        "description": "Creates one independent device/peer. Disabled devices also consume device_limit slots; creation at/over the cap returns 409 DEVICE_LIMIT_REACHED. Profile selection is explicit interface_id, user profile, then the first enabled interface in name order. The account must be enabled and peer-eligible. This route has no idempotency replay middleware: inspect the device list after a lost response before retrying. Reseller-bound tokens cannot use this write route; provision ready devices during /purchases instead."
+      }
+    },
+    "/api/v1/devices/{id}": {
+      "get": {
+        "tags": ["devices"], "summary": "Get a device", "security": [{ "BearerAuth": ["devices.read"] }],
+        "parameters": [{ "$ref": "#/components/parameters/DeviceID" }],
+        "responses": { "200": { "description": "Device", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Device" } } } }, "404": { "$ref": "#/components/responses/NotFound" } }
+      },
+      "patch": {
+        "tags": ["devices"], "summary": "Rename a device", "security": [{ "BearerAuth": ["devices.write"] }],
+        "parameters": [{ "$ref": "#/components/parameters/DeviceID" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } } } } },
+        "responses": { "200": { "description": "Renamed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Device" } } } } }
+      },
+      "delete": {
+        "tags": ["devices"], "summary": "Delete a device (IP released; peer removed)", "security": [{ "BearerAuth": ["devices.write"] }],
+        "parameters": [{ "$ref": "#/components/parameters/DeviceID" }],
+        "responses": { "200": { "description": "Deleted" } }
+      }
+    },
+    "/api/v1/devices/{id}/enable": {
+      "post": { "tags": ["devices"], "summary": "Enable a device", "security": [{ "BearerAuth": ["devices.write"] }], "parameters": [{ "$ref": "#/components/parameters/DeviceID" }], "responses": { "200": { "description": "Enabled" } } }
+    },
+    "/api/v1/devices/{id}/disable": {
+      "post": { "tags": ["devices"], "summary": "Disable a device", "security": [{ "BearerAuth": ["devices.write"] }], "parameters": [{ "$ref": "#/components/parameters/DeviceID" }], "responses": { "200": { "description": "Disabled" } } }
+    },
+    "/api/v1/devices/{id}/regenerate": {
+      "post": {
+        "tags": ["devices"], "summary": "Regenerate device keys", "description": "The old peer key is revoked by reconciliation (matched by device IP), the new key is applied.", "security": [{ "BearerAuth": ["devices.write"] }],
+        "parameters": [{ "$ref": "#/components/parameters/DeviceID" }],
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object", "properties": { "preshared_key": { "type": "boolean" } } } } } },
+        "responses": { "200": { "description": "Regenerated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Device" } } } } }
+      }
+    },
+    "/api/v1/devices/{id}/config": {
+      "get": {
+        "tags": ["config"], "summary": "Download the client configuration (text)", "description": "Requires configs.read; contains the private key — treat as a secret. Returns the canonical full-field configuration bytes shared by the admin and subscription downloads, ending in exactly one newline. Response headers include `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`; the `Content-Disposition` filename has a short ASCII username label (up to six characters), a hyphen, and a stable eight-character device code followed by `.conf`. Optional downloads.filename_prefix/suffix each contribute at most two characters to the label. The profile-name stem is at most 15 characters.", "security": [{ "BearerAuth": ["configs.read"] }],
+        "parameters": [{ "$ref": "#/components/parameters/DeviceID" }],
+        "responses": { "200": { "description": "AWG client configuration", "content": { "text/plain": { "schema": { "type": "string" } } } } }
+      }
+    },
+    "/api/v1/devices/{id}/qr": {
+      "get": {
+        "tags": ["config"], "summary": "Client configuration as a PNG QR code", "description": "Encodes the exact canonical configuration returned by the text endpoint. Returns `image/png`, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and an inline `.png` filename with the same short stem as the config download. An oversized configuration returns `INVALID_REQUEST` instead of partial image data.", "security": [{ "BearerAuth": ["configs.read"] }],
+        "parameters": [{ "$ref": "#/components/parameters/DeviceID" }],
+        "responses": { "200": { "description": "PNG image", "content": { "image/png": { "schema": { "type": "string", "format": "binary" } } } }, "400": { "$ref": "#/components/responses/Invalid" } }
+      }
+    },
+    "/api/v1/stats": {
+      "get": {
+        "tags": ["stats"],
+        "summary": "Node-wide statistics",
+        "security": [{"BearerAuth": ["stats.read"]}],
+        "responses": {"200": {"description": "Counts and traffic totals", "content": {"application/json": {"schema": {"type": "object", "description": "Node-wide counts and charged byte totals. Fields can be omitted when a backing query fails. Active counts status=active; blocked includes traffic_exceeded, expired, disabled and suspended.", "properties": {"users_total": {"type": "integer", "description": "Entity count."}, "users_active": {"type": "integer", "description": "Entity count."}, "users_blocked": {"type": "integer", "description": "Entity count."}, "users_deleted": {"type": "integer", "description": "Entity count."}, "devices": {"type": "integer", "description": "Entity count."}, "traffic_used_rx": {"type": "integer", "description": "Charged received traffic in bytes (B), from client to server (upload)."}, "traffic_used_tx": {"type": "integer", "description": "Charged sent traffic in bytes (B), from server to client (download)."}, "traffic_used_total": {"type": "integer", "description": "Total charged traffic in bytes (B): traffic_used_rx + traffic_used_tx; both directions count toward quota."}}}}}}}
+      }
+    },
+    "/api/v1/users/{id}/stats": {
+      "get": {
+        "tags": ["stats"],
+        "summary": "Per-user statistics (used, limit, remaining, percent)",
+        "security": [{"BearerAuth": ["stats.read"]}],
+        "parameters": [{"$ref": "#/components/parameters/UserID"}],
+        "responses": {"200": {"description": "User statistics", "content": {"application/json": {"schema": {"type": "object", "description": "User statistics; device count can be omitted if its query fails.", "properties": {"devices": {"type": "integer", "description": "Entity count."}, "traffic_used_rx": {"type": "integer", "description": "Charged received traffic in bytes (B), from client to server (upload)."}, "traffic_used_tx": {"type": "integer", "description": "Charged sent traffic in bytes (B), from server to client (download)."}, "traffic_used_total": {"type": "integer", "description": "Total charged traffic in bytes (B): traffic_used_rx + traffic_used_tx; both directions count toward quota."}, "traffic_limit_bytes": {"type": ["integer", "null"], "description": "Quota in exact bytes (B). 1 GB = 1000000000 B; 100 GB = 100000000000 B. 100 GiB = 107374182400 B and displays as 107.4 GB. null = unlimited; 0 is a finite zero-byte allowance."}, "last_activity_at": {"type": ["string", "null"], "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds."}, "traffic_remaining_bytes": {"type": "integer", "description": "max(0, quota minus charged usage), in bytes; absent for unlimited quota."}, "traffic_percent_used": {"type": "number", "description": "Charged usage / finite positive quota * 100; can exceed 100. Absent for unlimited or zero quota."}}}}}}}
+      }
+    },
+    "/api/v1/devices/{id}/stats": {
+      "get": {
+        "tags": ["stats"],
+        "summary": "Per-device statistics (totals, handshake, online)",
+        "security": [{"BearerAuth": ["stats.read"]}],
+        "parameters": [{"$ref": "#/components/parameters/DeviceID"}],
+        "responses": {"200": {"description": "Device statistics", "content": {"application/json": {"schema": {"type": "object", "description": "Device observations; not charged user counters.", "properties": {"rx_bytes": {"type": "integer", "description": "Accumulated customer upload in bytes."}, "tx_bytes": {"type": "integer", "description": "Accumulated customer download in bytes."}, "last_handshake_at": {"type": ["string", "null"], "format": "date-time"}, "last_endpoint": {"type": "string"}, "online_window_seconds": {"type": "integer", "description": "Handshake recency threshold in seconds; present only when positive and a handshake exists."}, "online": {"type": "boolean", "description": "Handshake inside recency window, not active traffic or a hardware session count. Absent without a usable window/handshake."}}}}}}}
+      }
+    },
+    "/api/v1/templates": {
+      "get": {
+        "tags": ["templates"], "summary": "List technical templates", "security": [{ "BearerAuth": ["templates.read"] }],
+        "responses": { "200": { "description": "Templates", "content": { "application/json": { "schema": { "type": "object", "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/Template" } } } } } } } }
+      },
+      "post": {
+        "tags": ["templates"], "summary": "Create a technical template", "security": [{ "BearerAuth": ["templates.write"] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TemplateCreate" } } } },
+        "responses": { "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Template" } } } } }
+      }
+    },
+    "/api/v1/templates/{id}": {
+      "get": {
+        "tags": ["templates"], "summary": "Get a technical template", "security": [{ "BearerAuth": ["templates.read"] }],
+        "parameters": [{ "$ref": "#/components/parameters/TemplateID" }],
+        "responses": { "200": { "description": "Template", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Template" } } } }, "404": { "$ref": "#/components/responses/NotFound" } }
+      },
+      "patch": {
+        "tags": ["templates"], "summary": "Update a technical template", "security": [{ "BearerAuth": ["templates.write"] }],
+        "parameters": [{ "$ref": "#/components/parameters/TemplateID" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TemplatePatch" } } } },
+        "responses": { "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Template" } } } } }
+      },
+      "delete": {
+        "tags": ["templates"], "summary": "Delete a template (refused while assigned to users)", "security": [{ "BearerAuth": ["templates.write"] }],
+        "parameters": [{ "$ref": "#/components/parameters/TemplateID" }],
+        "responses": { "200": { "description": "Deleted" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/interfaces": {
+      "get": {
+        "tags": ["interfaces"], "summary": "List tunnel interfaces/profiles", "security": [{ "BearerAuth": ["interfaces.read"] }],
+        "responses": { "200": { "description": "Interfaces", "content": { "application/json": { "schema": { "type": "object", "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/Interface" } } } } } } } }
+      },
+      "post": {
+        "tags": ["interfaces"], "summary": "Create a profile (server keypair generated)", "security": [{ "BearerAuth": ["interfaces.write"] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "pattern": "^awg[0-9]+$", "example": "awg0" }, "listen_port": { "type": "integer", "description": "UDP port number, not a byte or time quantity." }, "ipv4_subnet": { "type": "string", "example": "10.8.0.0/24", "description": "IPv4 network in CIDR notation; the prefix after / is a bit count (for example 10.8.0.0/24)." }, "mtu": { "type": "integer", "description": "Tunnel IP-packet MTU in bytes (B); not a traffic allowance." }, "preset": { "type": "string", "enum": ["plain", "recommended", "performance", "balanced", "resilient", "suggested", "randomized"], "description": "Server-owned profile policy. Omit this field when sending explicit obfuscation; preset and obfuscation are mutually exclusive." }, "backend_mode": { "type": "string", "enum": ["kernel", "userspace"] }, "endpoint_override": { "type": "string", "description": "Canonical hostname or IP address, optionally with port; URLs, paths, whitespace, and control characters are rejected.", "example": "vpn.example.com:51820" }, "obfuscation": { "$ref": "#/components/schemas/Obfuscation" } } } } } },
+        "responses": { "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Interface" } } } }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/interfaces/{id}": {
+      "get": {
+        "tags": ["interfaces"], "summary": "Get a profile", "security": [{ "BearerAuth": ["interfaces.read"] }],
+        "parameters": [{ "$ref": "#/components/parameters/InterfaceID" }],
+        "responses": { "200": { "description": "Interface", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Interface" } } } }, "404": { "$ref": "#/components/responses/NotFound" } }
+      },
+      "patch": {
+        "tags": ["interfaces"], "summary": "Update MTU/endpoint/obfuscation/enabled", "description": "Name, port, and pool are immutable here. Obfuscation-mode transitions recreate the link (reconcile).", "security": [{ "BearerAuth": ["interfaces.write"] }],
+        "parameters": [{ "$ref": "#/components/parameters/InterfaceID" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "mtu": { "type": "integer", "description": "Tunnel IP-packet MTU in bytes (B); not a traffic allowance." }, "enabled": { "type": "boolean" }, "endpoint_override": { "type": ["string", "null"], "description": "Canonical hostname or IP address, optionally with port; URLs, paths, whitespace, and control characters are rejected." }, "obfuscation": { "$ref": "#/components/schemas/Obfuscation" } } } } } },
+        "responses": { "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Interface" } } } } }
+      },
+      "delete": {
+        "tags": ["interfaces"], "summary": "Delete a profile (refused while devices exist)", "security": [{ "BearerAuth": ["interfaces.write"] }],
+        "parameters": [{ "$ref": "#/components/parameters/InterfaceID" }],
+        "responses": { "200": { "description": "Deleted" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "tags": ["settings"], "summary": "List settings (secrets redacted — only `secret_set`)", "description": "The key determines units: *_gb is decimal GB; *_months is fixed 30-day periods; *_seconds, *_hours and *_days are time units; *_count and max_attempts are counts. network.client_persistent_keepalive is seconds in pinned 0/N/N-M string form. api.rate_limit_per_minute is requests per fixed 60-second window. Preset lists contain numeric strings. Values and zero semantics are validated per definition; see /docs.", "security": [{ "BearerAuth": ["node.read"] }],
+        "responses": { "200": { "description": "Settings catalog" } }
+      },
+      "patch": {
+        "tags": ["settings"], "summary": "Update settings (typed registry; validated)", "description": "Send each setting in the unit of its key, not in the raw-byte unit of user quota fields. For example users.default_quota_gb: 100 prefills 100 GB, while a user's traffic_limit_bytes for that amount is 100000000000. A default-quota setting of 0 removes the prefill; user quota 0 is a finite zero-byte allowance. See /docs for time, count and rate-limit units.", "security": [{ "BearerAuth": ["node.settings"] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true, "example": { "node.endpoint": "vpn.example.com", "api.rate_limit_per_minute": 600 } } } } },
+        "responses": { "200": { "description": "Updated keys" }, "400": { "$ref": "#/components/responses/Invalid" } }
+      }
+    },
+    "/api/v1/webhooks": {
+      "get": {
+        "tags": ["webhooks"], "summary": "List webhook endpoints (with delivery stats)", "security": [{ "BearerAuth": ["webhooks.read"] }],
+        "responses": { "200": { "description": "Endpoints", "content": { "application/json": { "schema": { "type": "object", "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/WebhookEndpoint" } } } } } } } }
+      },
+      "post": {
+        "tags": ["webhooks"], "summary": "Create a webhook endpoint", "description": "An empty `secret` generates one and returns it exactly once. Signing: `X-WG-Signature: t=<ts>,v1=<hex hmac-sha256(secret, \"<ts>.<body>\")>` with a ~5-minute replay window.", "security": [{ "BearerAuth": ["webhooks.write"] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["url", "events"], "properties": { "url": { "type": "string" }, "events": { "type": "array", "items": { "$ref": "#/components/schemas/WebhookEvent" } }, "secret": { "type": "string" }, "include_reseller_events": { "type": "boolean", "default": false, "description": "Owner-only opt-in for a node-wide endpoint to receive reseller customer events. Ordinary operator tokens cannot see or change opted-in endpoints." } } } } } },
+        "responses": { "201": { "description": "Created (secret present when generated)" } }
+      }
+    },
+    "/api/v1/webhooks/{id}": {
+      "get": {
+        "tags": ["webhooks"], "summary": "Get a webhook endpoint", "security": [{ "BearerAuth": ["webhooks.read"] }],
+        "parameters": [{ "$ref": "#/components/parameters/WebhookID" }],
+        "responses": { "200": { "description": "Endpoint", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebhookEndpoint" } } } } }
+      },
+      "patch": {
+        "tags": ["webhooks"], "summary": "Update url/events/enabled or rotate the secret", "security": [{ "BearerAuth": ["webhooks.write"] }],
+        "parameters": [{ "$ref": "#/components/parameters/WebhookID" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "url": { "type": "string" }, "events": { "type": "array", "items": { "$ref": "#/components/schemas/WebhookEvent" } }, "enabled": { "type": "boolean" }, "secret": { "type": "string", "description": "Empty string generates a new secret (returned once)" }, "include_reseller_events": { "type": "boolean", "description": "Owner-only change to node-wide reseller event fanout." } } } } } },
+        "responses": { "200": { "description": "Updated" } }
+      },
+      "delete": {
+        "tags": ["webhooks"], "summary": "Delete a webhook endpoint", "security": [{ "BearerAuth": ["webhooks.write"] }],
+        "parameters": [{ "$ref": "#/components/parameters/WebhookID" }],
+        "responses": { "200": { "description": "Deleted" } }
+      }
+    },
+    "/api/v1/webhooks/{id}/redeliver": {
+      "post": {
+        "tags": ["webhooks"], "summary": "Manually redeliver one delivery (resets attempts)", "security": [{ "BearerAuth": ["webhooks.write"] }],
+        "parameters": [{ "$ref": "#/components/parameters/WebhookID" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["delivery_id"], "properties": { "delivery_id": { "type": "string" } } } } } },
+        "responses": { "202": { "description": "Queued for redelivery" } }
+      }
+    },
+    "/api/v1/webhooks/{id}/deliveries": {
+      "get": {
+        "tags": ["webhooks"], "summary": "List non-secret delivery receipts for one owned endpoint",
+        "description": "Newest first, retained for seven days. Reseller tokens see only their own endpoint and its tenant-matched events. The response never includes signed payloads, endpoint secrets or URLs. `next_before` is the last delivery ID of this page; pass it as `before` to continue. `event_id` filters exact event identity.",
+        "security": [{ "BearerAuth": ["webhooks.read"] }],
+        "parameters": [{ "$ref": "#/components/parameters/WebhookID" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 } },
+          { "name": "before", "in": "query", "schema": { "type": "string" } },
+          { "name": "event_id", "in": "query", "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Receipt page", "content": { "application/json": { "schema": { "type": "object", "required": ["items", "next_before"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/WebhookReceipt" } }, "next_before": { "type": "string" } } } } } }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/webhooks/{id}/deliveries/{deliveryID}": {
+      "get": {
+        "tags": ["webhooks"], "summary": "Get one non-secret delivery receipt",
+        "security": [{ "BearerAuth": ["webhooks.read"] }],
+        "parameters": [{ "$ref": "#/components/parameters/WebhookID" }, { "name": "deliveryID", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Receipt", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebhookReceipt" } } } }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": { "type": "http", "scheme": "bearer", "description": "API token: `Authorization: Bearer wg_…` with scopes; separate from admin sessions." }
+    },
+    "parameters": {
+      "IntegrationKey": { "name": "Idempotency-Key", "in": "header", "required": true, "description": "1–128 printable ASCII characters, without spaces. Do not put a secret here. Stable across token rotation within the same owner or reseller namespace.", "schema": { "type": "string", "minLength": 1, "maxLength": 128 } },
+      "UserID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+      "DeviceID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+      "TemplateID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+      "InterfaceID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+      "WebhookID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+    },
+    "responses": {
+      "Unauthorized": { "description": "Missing or invalid token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Forbidden": { "description": "Token lacks the required scope", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "NotFound": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Conflict": { "description": "Conflict (exists, limit reached, pool exhausted, in use)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Invalid": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Unavailable": { "description": "Operation committed but runtime reconciliation is pending; recover the journaled result and retry", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+    },
+    "schemas": {
+      "PurchaseRequest": {"type": "object", "additionalProperties": false, "oneOf": [{"required": ["template_id"]}, {"required": ["entitlement"]}], "properties": {"template_id": {"type": "string", "description": "Existing technical template ID; required for reseller-bound tokens."}, "entitlement": {"$ref": "#/components/schemas/DirectEntitlement"}, "username": {"type": "string", "description": "Optional global username; omitted uses a stable generated identifier."}, "device_name": {"type": "string", "description": "Single device: exact trimmed name, default device-1. Multiple devices: name prefix, default device; generated labels append -1, -2, etc. Each final name must occupy 1-64 UTF-8 bytes."}, "device_count": {"type": ["integer", "null"], "minimum": 1, "maximum": 100, "default": 1, "description": "Number of independent ready device configurations to create atomically with the account and customer link. Omitted/null defaults to one. Must not exceed the selected template or direct entitlement device_limit. Not a device cap. Replay fingerprints include the effective count."}}},
+      "DirectEntitlement": { "type": "object", "description": "Owner-scoped technical terms, independent of external price/SKU. All three finite limits are mandatory to prevent accidental unlimited subscriptions.", "required": ["traffic_limit_bytes", "duration_seconds", "device_limit"], "additionalProperties": false, "properties": { "traffic_limit_bytes": { "type": "integer", "format": "int64", "minimum": 1, "description": "Quota in exact bytes (B). 1 GB = 1000000000 B; 100 GB = 100000000000 B. 100 GiB = 107374182400 B and displays as 107.4 GB." }, "duration_seconds": { "type": "integer", "format": "int64", "minimum": 1, "maximum": 315360000, "description": "Duration in seconds: 86400 = 1 day; 2592000 = 30 days. The panel month shortcut means 30 days, not a calendar month." }, "device_limit": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum device/peer configuration count for the user; not a bandwidth or simultaneous-connection measurement." }, "start_policy": { "$ref": "#/components/schemas/StartPolicy" }, "speed_limit_down_kbps": { "type": "integer", "minimum": 1, "description": "Download (server to client) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 100000 = 100 Mbps = 12.5 MB/s in the panel speed form." }, "speed_limit_up_kbps": { "type": "integer", "minimum": 1, "description": "Upload (client to server) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 20000 = 20 Mbps = 2.5 MB/s in the panel speed form." }, "interface_id": { "type": "string", "description": "Optional connection profile; omitted uses the current system default." } } },
+      "QuotaTopUpRequest": { "type": "object", "required": ["bytes"], "additionalProperties": false, "properties": { "bytes": { "type": "integer", "format": "int64", "minimum": 1, "description": "Positive increment in exact bytes (B) to a finite allowance, not charged usage. 1000000000 adds 1 GB; 1073741824 adds 1 GiB (about 1.1 GB in the panel)." } } },
+      "QuotaSnapshot": { "type": "object", "required": ["traffic_limit_bytes", "traffic_used_rx", "traffic_used_tx", "status"], "properties": { "traffic_limit_bytes": { "type": "integer", "format": "int64", "description": "Quota in exact bytes (B). 1 GB = 1000000000 B; 100 GB = 100000000000 B. 100 GiB = 107374182400 B and displays as 107.4 GB." }, "traffic_used_rx": { "type": "integer", "format": "int64", "description": "Charged received traffic in bytes (B), from client to server (upload)." }, "traffic_used_tx": { "type": "integer", "format": "int64", "description": "Charged sent traffic in bytes (B), from server to client (download)." }, "status": { "type": "string" } } },
+      "OperationResult": { "description": "Principal-scoped, non-secret result retained for 90 days; no private configuration or customer-link capability is stored here.", "oneOf": [{ "$ref": "#/components/schemas/PurchaseOperationResult" }, { "$ref": "#/components/schemas/QuotaTopUpResult" }], "discriminator": { "propertyName": "kind", "mapping": { "purchase": "#/components/schemas/PurchaseOperationResult", "quota_top_up": "#/components/schemas/QuotaTopUpResult" } } },
+      "PurchaseOperationResult": {"type": "object", "required": ["operation_id", "kind", "state", "user_id", "device_id", "created_at"], "properties": {"operation_id": {"type": "string"}, "kind": {"type": "string", "enum": ["purchase"]}, "state": {"type": "string", "enum": ["committed"]}, "user_id": {"type": "string"}, "device_id": {"type": "string", "description": "First provisioned device ID; equals device_ids[0] in newly committed results."}, "template_id": {"type": "string", "description": "Present when provisioned from a technical template; absent for direct owner terms."}, "created_at": {"type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds."}, "device_ids": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "string"}, "description": "Every created device ID in creation order. Stored operation results committed before multi-device support can omit this array; their device_id identifies the single device."}}},
+      "QuotaTopUpResult": { "type": "object", "required": ["operation_id", "kind", "state", "user_id", "before", "after", "created_at"], "properties": { "operation_id": { "type": "string" }, "kind": { "type": "string", "enum": ["quota_top_up"] }, "state": { "type": "string", "enum": ["committed"] }, "user_id": { "type": "string" }, "before": { "$ref": "#/components/schemas/QuotaSnapshot" }, "after": { "$ref": "#/components/schemas/QuotaSnapshot" }, "created_at": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." } } },
+      "CustomerLink": { "type": "object", "required": ["path"], "properties": { "path": { "type": "string", "description": "Secret relative subscription path /sub/{token}; do not log or expose publicly." } } },
+      "CustomerLinkRotation": { "type": "object", "required": ["path", "devices_rotated"], "properties": { "path": { "type": "string" }, "devices_rotated": { "type": "integer", "minimum": 0, "description": "Number of device key pairs replaced by this operation." } } },
+      "NextPlanRequest": { "type": "object", "required": ["template_id"], "additionalProperties": false, "properties": { "template_id": { "type": "string" }, "carry_unused_traffic": { "type": "boolean", "default": false } } },
+      "NextPlanTerms": { "type": "object", "required": ["name", "traffic_limit_bytes", "duration_seconds", "device_limit", "speed_limit_down_kbps", "speed_limit_up_kbps", "interface_id"], "properties": { "name": { "type": "string" }, "traffic_limit_bytes": { "type": ["integer", "null"], "description": "Quota in exact bytes (B). 1 GB = 1000000000 B; 100 GB = 100000000000 B. 100 GiB = 107374182400 B and displays as 107.4 GB. null = unlimited; 0 is a finite zero-byte allowance." }, "duration_seconds": { "type": ["integer", "null"], "description": "Duration in seconds: 86400 = 1 day; 2592000 = 30 days. The panel month shortcut means 30 days, not a calendar month. null = no configured duration." }, "device_limit": { "type": ["integer", "null"], "description": "Maximum device/peer configuration count for the user; not a bandwidth or simultaneous-connection measurement. null = unlimited." }, "speed_limit_down_kbps": { "type": ["integer", "null"], "description": "Download (server to client) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 100000 = 100 Mbps = 12.5 MB/s in the panel speed form. null = unlimited." }, "speed_limit_up_kbps": { "type": ["integer", "null"], "description": "Upload (client to server) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 20000 = 20 Mbps = 2.5 MB/s in the panel speed form. null = unlimited." }, "interface_id": { "type": ["string", "null"] } } },
+      "NextPlan": { "type": "object", "required": ["user_id", "template_id", "terms", "carry_unused_traffic", "state", "created_at"], "properties": { "user_id": { "type": "string" }, "template_id": { "type": "string" }, "terms": { "$ref": "#/components/schemas/NextPlanTerms" }, "carry_unused_traffic": { "type": "boolean" }, "state": { "type": "string", "enum": ["queued", "needs_review"] }, "review_reason": { "type": "string" }, "created_at": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." } } },
+      "NextPlanEntitlementState": { "type": "object", "required": ["template_id", "expires_at", "traffic_limit_bytes", "traffic_used_rx", "traffic_used_tx", "status"], "properties": { "template_id": { "type": ["string", "null"] }, "expires_at": { "type": ["string", "null"], "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." }, "traffic_limit_bytes": { "type": ["integer", "null"], "description": "Quota in exact bytes (B). 1 GB = 1000000000 B; 100 GB = 100000000000 B. 100 GiB = 107374182400 B and displays as 107.4 GB. null = unlimited; 0 is a finite zero-byte allowance." }, "traffic_used_rx": { "type": "integer", "description": "Charged received traffic in bytes (B), from client to server (upload)." }, "traffic_used_tx": { "type": "integer", "description": "Charged sent traffic in bytes (B), from server to client (download)." }, "status": { "type": "string" } } },
+      "NextPlanActivation": { "type": "object", "required": ["activation_id", "user_id", "template_id", "trigger", "before", "after", "activated_at"], "properties": { "activation_id": { "type": "string" }, "user_id": { "type": "string" }, "template_id": { "type": "string" }, "trigger": { "type": "string", "enum": ["time", "quota"] }, "before": { "$ref": "#/components/schemas/NextPlanEntitlementState" }, "after": { "$ref": "#/components/schemas/NextPlanEntitlementState" }, "activated_at": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." } } },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code", "message", "request_id"],
+            "properties": {
+              "code": { "type": "string", "description": "Stable machine code: USER_NOT_FOUND, USERNAME_EXISTS, DEVICE_LIMIT_REACHED, TRAFFIC_EXCEEDED, INVALID_REQUEST, UNAUTHORIZED, FORBIDDEN, RATE_LIMITED, NODE_UNAVAILABLE, INTERNAL_ERROR, …" },
+              "message": { "type": "string" },
+              "request_id": { "type": "string" }
+            }
+          }
+        }
+      },
+      "Status": {
+        "type": "object",
+        "properties": { "status": { "type": "string" } }
+      },
+      "Node": {
+        "type": "object",
+        "properties": {
+          "version": { "type": "string" },
+          "node_id": { "type": "string" },
+          "tools_version": { "type": "string" },
+          "uptime_seconds": { "type": "integer", "description": "Elapsed uptime in seconds. Node endpoints report WG-Guard process uptime; TelemetryPoint reports host uptime." },
+          "interfaces": { "type": "array", "items": { "type": "object", "properties": {
+            "id": { "type": "string" }, "name": { "type": "string" }, "listen_port": { "type": "integer", "description": "UDP port number, not a byte or time quantity." },
+            "ipv4_subnet": { "type": "string", "description": "IPv4 network in CIDR notation; the prefix after / is a bit count (for example 10.8.0.0/24)." }, "enabled": { "type": "boolean" },
+            "backend_mode": { "type": "string" }, "devices": { "type": "integer" } } } }
+        }
+      },
+      "TelemetryResponse": {
+        "type": "object",
+        "required": ["cadence_seconds", "latest", "points"],
+        "properties": {
+          "cadence_seconds": { "type": "integer", "minimum": 1, "description": "Configured sampler cadence in seconds." },
+          "latest": { "anyOf": [{ "$ref": "#/components/schemas/TelemetryPoint" }, { "type": "null" }] },
+          "points": { "type": "array", "maxItems": 180, "items": { "$ref": "#/components/schemas/TelemetryPoint" } }
+        }
+      },
+      "TelemetryPoint": {
+        "type": "object",
+        "required": ["timestamp", "health", "issues", "cpu_percent", "memory_used_bytes", "memory_total_bytes", "memory_percent", "disk_used_bytes", "disk_total_bytes", "disk_percent", "load_1", "uptime_seconds", "process_rss_bytes", "process_heap_bytes", "goroutines", "host_rx_bytes", "host_tx_bytes", "vpn_rx_bytes", "vpn_tx_bytes", "host_rx_bytes_per_second", "host_tx_bytes_per_second", "vpn_rx_bytes_per_second", "vpn_tx_bytes_per_second", "online_users", "active_peers", "enabled_interfaces", "observed_interfaces"],
+        "properties": {
+          "timestamp": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." },
+          "health": { "type": "string", "enum": ["healthy", "degraded", "unavailable"] },
+          "issues": { "type": "array", "items": { "type": "string", "enum": ["source_unavailable", "host_metrics_unavailable", "host_network_unavailable", "vpn_metrics_unavailable", "awg_interface_missing", "readiness_failed", "accounting_recent_error", "sample_stale"] } },
+          "cpu_percent": { "type": ["number", "null"], "format": "double", "minimum": 0, "maximum": 100, "description": "CPU utilization as a percentage on a 0-100 scale; 25 means 25%, not 0.25. null = measurement unavailable." },
+          "memory_used_bytes": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Used host memory in bytes (B). null = measurement unavailable." },
+          "memory_total_bytes": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Total host memory in bytes (B). null = measurement unavailable." },
+          "memory_percent": { "type": ["number", "null"], "format": "double", "minimum": 0, "maximum": 100, "description": "Host memory utilization as a percentage on a 0-100 scale; 25 means 25%. null = measurement unavailable." },
+          "disk_used_bytes": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Used filesystem bytes (B). null = measurement unavailable." },
+          "disk_total_bytes": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Total filesystem capacity in bytes (B). null = measurement unavailable." },
+          "disk_percent": { "type": ["number", "null"], "format": "double", "minimum": 0, "maximum": 100, "description": "Filesystem utilization as a percentage on a 0-100 scale; 25 means 25%. null = measurement unavailable." },
+          "load_1": { "type": ["number", "null"], "format": "double", "minimum": 0, "description": "Host one-minute load average; dimensionless runnable/uninterruptible task load, not a percentage or byte rate. null = measurement unavailable." },
+          "uptime_seconds": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Elapsed uptime in seconds. Node endpoints report WG-Guard process uptime; TelemetryPoint reports host uptime. null = measurement unavailable." },
+          "process_rss_bytes": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "WG-Guard resident memory in bytes (B). null = measurement unavailable." },
+          "process_heap_bytes": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "WG-Guard allocated Go heap memory in bytes (B). null = measurement unavailable." },
+          "goroutines": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "WG-Guard goroutine count. null = measurement unavailable." },
+          "host_rx_bytes": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Cumulative host-network received bytes (B); not a rate or charged customer quota. null = measurement unavailable." },
+          "host_tx_bytes": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Cumulative host-network sent bytes (B); not a rate or charged customer quota. null = measurement unavailable." },
+          "vpn_rx_bytes": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Accumulated VPN traffic received by the node, in bytes (B); client upload. null = measurement unavailable." },
+          "vpn_tx_bytes": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Accumulated VPN traffic sent by the node, in bytes (B); client download. null = measurement unavailable." },
+          "host_rx_bytes_per_second": { "type": ["number", "null"], "format": "double", "minimum": 0, "description": "Host-network receive rate in bytes/s (B/s). Divide by 1000000 for MB/s; multiply by 8 then divide by 1000000 for Mbps. null = measurement unavailable." },
+          "host_tx_bytes_per_second": { "type": ["number", "null"], "format": "double", "minimum": 0, "description": "Host-network send rate in bytes/s (B/s). Divide by 1000000 for MB/s; multiply by 8 then divide by 1000000 for Mbps. null = measurement unavailable." },
+          "vpn_rx_bytes_per_second": { "type": ["number", "null"], "format": "double", "minimum": 0, "description": "VPN client-upload rate observed by the node, in bytes/s (B/s); not Kbps. 12500000 B/s = 12.5 MB/s = 100 Mbps. null = measurement unavailable." },
+          "vpn_tx_bytes_per_second": { "type": ["number", "null"], "format": "double", "minimum": 0, "description": "VPN client-download rate observed by the node, in bytes/s (B/s); not Kbps. 12500000 B/s = 12.5 MB/s = 100 Mbps. null = measurement unavailable." },
+          "online_users": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Distinct online-user count under the handshake-recency policy. null = measurement unavailable." },
+          "active_peers": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Online VPN peer count under the handshake-recency policy. null = measurement unavailable." },
+          "enabled_interfaces": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Enabled tunnel-interface count. null = measurement unavailable." },
+          "observed_interfaces": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Observed tunnel-interface count. null = measurement unavailable." }
+        }
+      },
+      "UserStatus": { "type": "string", "enum": ["active", "disabled", "suspended", "expired", "traffic_exceeded", "waiting_first_connection"] },
+      "StartPolicy": { "type": "string", "enum": ["immediate", "first_connection"], "description": "When the configured duration_seconds starts for a created subscription: immediate at creation, first_connection at the first observed connection. A queued Next Plan starts its duration at successor activation." },
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "username": {"type": "string", "description": "Immutable global username; use id in resource paths."},
+          "display_name": {"type": "string"},
+          "note": {"type": "string"},
+          "tags": {"type": "array", "items": {"type": "string"}},
+          "status": {"$ref": "#/components/schemas/UserStatus", "description": "Derived lifecycle state; not writable through user create/PATCH."},
+          "disable_reason": {"type": ["string", "null"], "enum": ["manual", "expired", "traffic_limit", "admin_action", null]},
+          "traffic_limit_bytes": {"type": ["integer", "null"], "description": "Quota in exact bytes (B). 1 GB = 1000000000 B; 100 GB = 100000000000 B. 100 GiB = 107374182400 B and displays as 107.4 GB. null = unlimited; 0 is a finite zero-byte allowance."},
+          "traffic_used_rx": {"type": "integer", "description": "Charged received traffic in bytes (B), from client to server (upload)."},
+          "traffic_used_tx": {"type": "integer", "description": "Charged sent traffic in bytes (B), from server to client (download)."},
+          "traffic_used_total": {"type": "integer", "description": "Total charged traffic in bytes (B): traffic_used_rx + traffic_used_tx; both directions count toward quota."},
+          "speed_limit_down_kbps": {"type": ["integer", "null"], "description": "Download (server to client) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 100000 = 100 Mbps = 12.5 MB/s in the panel speed form. null = unlimited."},
+          "speed_limit_up_kbps": {"type": ["integer", "null"], "description": "Upload (client to server) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 20000 = 20 Mbps = 2.5 MB/s in the panel speed form. null = unlimited."},
+          "device_limit": {"type": ["integer", "null"], "description": "Maximum registered configurations, including disabled devices; null is unlimited. It is not the number of configurations already provisioned."},
+          "template_id": {"type": ["string", "null"], "description": "Technical template reference; existing terms are not automatically synchronized to later catalog edits."},
+          "interface_id": {"type": ["string", "null"], "description": "User connection-profile reference; existing devices retain their own interface_id."},
+          "start_policy": {"$ref": "#/components/schemas/StartPolicy"},
+          "duration_seconds": {"type": ["integer", "null"], "description": "Duration in seconds: 86400 = 1 day; 2592000 = 30 days. The panel month shortcut means 30 days, not a calendar month. null = no configured duration."},
+          "activated_at": {"type": ["string", "null"], "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds."},
+          "expires_at": {"type": ["string", "null"], "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds."},
+          "last_activity_at": {"type": ["string", "null"], "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds."},
+          "enabled": {"type": "boolean"},
+          "metadata": {"type": "object", "additionalProperties": true, "description": "Caller annotations stored at creation; current PATCH does not persist metadata updates."},
+          "deleted": {"type": "boolean"},
+          "created_at": {"type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds."},
+          "updated_at": {"type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds."}
+        }
+      },
+      "UserCreate": {
+        "type": "object",
+        "required": ["username"],
+        "properties": {
+          "username": {"type": "string", "pattern": "^[a-zA-Z0-9_-]{3,32}$", "description": "Globally unique immutable ASCII username, 3-32 letters/digits/underscore/hyphen. Resource paths require the returned opaque id, not this name. Soft deletion keeps the name reserved."},
+          "display_name": {"type": "string", "description": "Optional presentation label distinct from the username. PATCH empty string clears it; absent/null leaves it unchanged."},
+          "note": {"type": "string", "description": "Internal text; JSON \\n preserves line breaks. PATCH empty string clears it; absent/null leaves it unchanged. Never store credentials here."},
+          "tags": {"type": "array", "items": {"type": "string"}, "description": "JSON string array, not comma-separated text. PATCH [] clears tags; absent/null leaves them unchanged."},
+          "traffic_limit_bytes": {"type": ["integer", "null"], "description": "Quota in exact bytes (B). 1 GB = 1000000000 B; 100 GB = 100000000000 B. 100 GiB = 107374182400 B and displays as 107.4 GB. null = unlimited; 0 is a finite zero-byte allowance.", "minimum": 0},
+          "speed_limit_down_kbps": {"type": ["integer", "null"], "description": "Download (server to client) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 100000 = 100 Mbps = 12.5 MB/s in the panel speed form. null = unlimited.", "minimum": 1},
+          "speed_limit_up_kbps": {"type": ["integer", "null"], "description": "Upload (client to server) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 20000 = 20 Mbps = 2.5 MB/s in the panel speed form. null = unlimited.", "minimum": 1},
+          "device_limit": {"type": ["integer", "null"], "description": "Maximum registered device/peer configuration count, including disabled devices. null = unlimited; zero is invalid. This does not allocate devices, detect physical hardware or count simultaneous connections. Lowering it does not delete existing devices. Use purchase device_count to provision a specific number of ready configurations.", "minimum": 1},
+          "template_id": {"type": ["string", "null"], "description": "Optional enabled technical template ID. On create, saved quota, duration, start policy, device cap, speeds and interface override manual entitlement fields. Omit/null for manual terms."},
+          "interface_id": {"type": ["string", "null"], "description": "Connection profile ID, not a name such as awg0. Omit/null for automatic selection when creating a device. A user PATCH does not move existing devices."},
+          "start_policy": {"$ref": "#/components/schemas/StartPolicy"},
+          "duration_seconds": {"type": ["integer", "null"], "description": "Duration in seconds: 86400 = 1 day; 2592000 = 30 days. The panel month shortcut means 30 days, not a calendar month. null = no configured duration."},
+          "enabled": {"type": "boolean", "default": true, "description": "Account enabled flag (default true on create); status is a separate derived response field, not a writable request property."},
+          "metadata": {"type": "object", "additionalProperties": true, "description": "Optional caller annotations saved on single-user creation. The current user PATCH handler accepts this property but does not persist updates; keep the editable billing journal outside WG-Guard."}
+        },
+        "additionalProperties": false
+      },
+      "UserPatch": {
+        "type": "object",
+        "properties": {
+          "display_name": {"type": "string", "description": "Optional presentation label distinct from the username. PATCH empty string clears it; absent/null leaves it unchanged."},
+          "note": {"type": "string", "description": "Internal text; JSON \\n preserves line breaks. PATCH empty string clears it; absent/null leaves it unchanged. Never store credentials here."},
+          "tags": {"type": "array", "items": {"type": "string"}, "description": "JSON string array, not comma-separated text. PATCH [] clears tags; absent/null leaves them unchanged."},
+          "traffic_limit_bytes": {"type": ["integer", "null"], "description": "Quota in exact bytes (B). 1 GB = 1000000000 B; 100 GB = 100000000000 B. 100 GiB = 107374182400 B and displays as 107.4 GB. null = unlimited; 0 is a finite zero-byte allowance.", "minimum": 0},
+          "speed_limit_down_kbps": {"type": ["integer", "null"], "description": "Download (server to client) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 100000 = 100 Mbps = 12.5 MB/s in the panel speed form. null = unlimited.", "minimum": 1},
+          "speed_limit_up_kbps": {"type": ["integer", "null"], "description": "Upload (client to server) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 20000 = 20 Mbps = 2.5 MB/s in the panel speed form. null = unlimited.", "minimum": 1},
+          "device_limit": {"type": ["integer", "null"], "description": "Maximum registered device/peer configuration count, including disabled devices. null = unlimited; zero is invalid. This does not allocate devices, detect physical hardware or count simultaneous connections. Lowering it does not delete existing devices. Use purchase device_count to provision a specific number of ready configurations.", "minimum": 1},
+          "template_id": {"type": ["string", "null"], "description": "Optional technical template reference. PATCH only changes the reference and does not reapply saved terms or reset expiry/usage. null clears the reference."},
+          "interface_id": {"type": ["string", "null"], "description": "Connection profile ID, not a name such as awg0. Omit/null for automatic selection when creating a device. A user PATCH does not move existing devices."},
+          "duration_seconds": {"type": ["integer", "null"], "description": "Stored duration in seconds; positive values only. PATCH absent/null leaves it unchanged, and a value does not recalculate expires_at. Use renewal to change expiry. 2592000 = 30 days, the panel month shortcut."},
+          "enabled": {"type": "boolean", "description": "Account enabled flag (default true on create); status is a separate derived response field, not a writable request property."},
+          "metadata": {"type": "object", "additionalProperties": true, "description": "Optional caller annotations saved on single-user creation. The current user PATCH handler accepts this property but does not persist updates; keep the editable billing journal outside WG-Guard."}
+        },
+        "additionalProperties": false
+      },
+      "UserPage": {
+        "type": "object",
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/User" } },
+          "next_cursor": { "type": "string", "description": "Opaque; empty = last page" }
+        }
+      },
+      "Device": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "user_id": { "type": "string" },
+          "interface_id": { "type": "string" },
+          "name": { "type": "string" },
+          "ipv4_address": { "type": "string" },
+          "public_key": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "last_handshake_at": { "type": ["string", "null"], "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." },
+          "last_endpoint": { "type": "string" },
+          "rx_bytes": { "type": "integer", "description": "Traffic received by the node from a client, in bytes (B); client upload. This is an amount, not a per-second rate." },
+          "tx_bytes": { "type": "integer", "description": "Traffic sent by the node to a client, in bytes (B); client download. This is an amount, not a per-second rate." },
+          "created_at": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." },
+          "updated_at": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." }
+        }
+      },
+      "Template": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "traffic_limit_bytes": { "type": ["integer", "null"], "description": "Quota in exact bytes (B). 1 GB = 1000000000 B; 100 GB = 100000000000 B. 100 GiB = 107374182400 B and displays as 107.4 GB. null = unlimited; 0 is a finite zero-byte allowance." },
+          "duration_seconds": { "type": ["integer", "null"], "description": "Duration in seconds: 86400 = 1 day; 2592000 = 30 days. The panel month shortcut means 30 days, not a calendar month. null = no configured duration." },
+          "start_policy": { "$ref": "#/components/schemas/StartPolicy" },
+          "device_limit": { "type": ["integer", "null"], "description": "Maximum device/peer configuration count for the user; not a bandwidth or simultaneous-connection measurement. null = unlimited." },
+          "speed_limit_down_kbps": { "type": ["integer", "null"], "description": "Download (server to client) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 100000 = 100 Mbps = 12.5 MB/s in the panel speed form. null = unlimited." },
+          "speed_limit_up_kbps": { "type": ["integer", "null"], "description": "Upload (client to server) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 20000 = 20 Mbps = 2.5 MB/s in the panel speed form. null = unlimited." },
+          "interface_id": { "type": ["string", "null"] },
+          "enabled": { "type": "boolean" },
+          "created_at": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." },
+          "updated_at": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." }
+        }
+      },
+      "TemplateCreate": { "allOf": [{ "$ref": "#/components/schemas/TemplatePatch" }, { "type": "object", "required": ["name"] }] },
+      "TemplatePatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "description": "Non-blank technical template name, at most 64 UTF-8 bytes; not a price/SKU."},
+          "traffic_limit_bytes": {"type": ["integer", "null"], "description": "Quota in exact bytes (B). 1 GB = 1000000000 B; 100 GB = 100000000000 B. 100 GiB = 107374182400 B and displays as 107.4 GB. null = unlimited; 0 is a finite zero-byte allowance.", "minimum": 0},
+          "duration_seconds": {"type": ["integer", "null"], "description": "Duration in seconds; 2592000 = 30 days. Create absent/null means no configured duration; template PATCH absent/null leaves the stored duration unchanged. Positive values only."},
+          "start_policy": {"$ref": "#/components/schemas/StartPolicy"},
+          "device_limit": {"type": ["integer", "null"], "description": "Maximum registered device/peer configuration count, including disabled devices. null = unlimited; zero is invalid. This does not allocate devices, detect physical hardware or count simultaneous connections. Lowering it does not delete existing devices. Use purchase device_count to provision a specific number of ready configurations.", "minimum": 1},
+          "speed_limit_down_kbps": {"type": ["integer", "null"], "description": "Download (server to client) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 100000 = 100 Mbps = 12.5 MB/s in the panel speed form. null = unlimited.", "minimum": 1},
+          "speed_limit_up_kbps": {"type": ["integer", "null"], "description": "Upload (client to server) limit in decimal kilobits/s (1 Kbps = 1000 bits/s). 20000 = 20 Mbps = 2.5 MB/s in the panel speed form. null = unlimited.", "minimum": 1},
+          "interface_id": {"type": ["string", "null"], "description": "Saved connection-profile ID applied to newly created accounts/devices; null uses automatic profile selection. Editing the template does not migrate existing accounts or devices."},
+          "enabled": {"type": "boolean", "description": "Whether this technical template is available for new provisioning. Disabling it does not automatically disable existing customers."}
+        }
+      },
+      "Obfuscation": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Complete supported AmneziaWG profile at the pinned revisions. Scalar-or-range values are inclusive: a scalar is a JSON integer and a true range is canonical string N-M. Enabled H1-H4 intervals must be non-zero and pairwise non-overlapping. AdvancedSecurity is intentionally unsupported.",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "jc": { "type": "integer", "minimum": 0, "maximum": 128, "description": "Junk packet count; enabled profiles require 1-128.", "example": 5 },
+          "jmin": { "type": "integer", "minimum": 0, "maximum": 1279, "description": "Minimum junk size; must be less than jmax.", "example": 40 },
+          "jmax": { "type": "integer", "minimum": 0, "maximum": 1280, "description": "Maximum junk size; must exceed jmin.", "example": 70 },
+          "s1": { "type": "integer", "minimum": 0, "maximum": 1132, "description": "Handshake-init padding size.", "example": 86 },
+          "s2": { "type": "integer", "minimum": 0, "maximum": 1188, "description": "Handshake-response padding size; s1 + 56 must not equal s2.", "example": 61 },
+          "s3": { "type": "integer", "minimum": 0, "maximum": 65535, "description": "Cookie-message padding size; explicit advanced option.", "example": 40 },
+          "s4": { "type": "integer", "minimum": 0, "maximum": 65535, "description": "Transport-message padding size; explicit advanced option.", "example": 48 },
+          "h1": { "description": "Inclusive u32 magic-header scalar or range.", "example": "100-110", "oneOf": [{ "type": "integer", "minimum": 0, "maximum": 4294967295 }, { "type": "string", "pattern": "^[0-9]+(-[0-9]+)?$" }] },
+          "h2": { "description": "Inclusive u32 magic-header scalar or range.", "example": 200, "oneOf": [{ "type": "integer", "minimum": 0, "maximum": 4294967295 }, { "type": "string", "pattern": "^[0-9]+(-[0-9]+)?$" }] },
+          "h3": { "description": "Inclusive u32 magic-header scalar or range.", "example": "300-310", "oneOf": [{ "type": "integer", "minimum": 0, "maximum": 4294967295 }, { "type": "string", "pattern": "^[0-9]+(-[0-9]+)?$" }] },
+          "h4": { "description": "Inclusive u32 magic-header scalar or range.", "example": 400, "oneOf": [{ "type": "integer", "minimum": 0, "maximum": 4294967295 }, { "type": "string", "pattern": "^[0-9]+(-[0-9]+)?$" }] },
+          "i1": { "type": "string", "description": "Canonical single-line UTF-8 signature value; leading/trailing whitespace and control characters are rejected." },
+          "i2": { "type": "string", "description": "Canonical single-line UTF-8 signature value; leading/trailing whitespace and control characters are rejected." },
+          "i3": { "type": "string", "description": "Canonical single-line UTF-8 signature value; leading/trailing whitespace and control characters are rejected." },
+          "i4": { "type": "string", "description": "Canonical single-line UTF-8 signature value; leading/trailing whitespace and control characters are rejected." },
+          "i5": { "type": "string", "description": "Canonical single-line UTF-8 signature value; leading/trailing whitespace and control characters are rejected." },
+          "header_protection_key": { "type": "string", "writeOnly": true, "maxLength": 44, "description": "Base64-encoded 32-byte HPK. Omit on PATCH to preserve; send an empty string to clear (link recreation required). All S1-S4 values must then be at least 12.", "example": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" },
+          "header_protection_key_set": { "type": "boolean", "readOnly": true, "description": "Whether an HPK is configured; the key itself is never returned.", "example": true },
+          "content_padding_addition": { "description": "Inclusive u16 content-padding scalar or range; zero uses the backend default.", "example": "10-20", "oneOf": [{ "type": "integer", "minimum": 0, "maximum": 65535 }, { "type": "string", "pattern": "^[0-9]+(-[0-9]+)?$" }] },
+          "rekey_after_time": { "description": "Inclusive u16 rekey interval scalar or range in seconds; zero uses the backend default.", "example": "120-180", "oneOf": [{ "type": "integer", "minimum": 0, "maximum": 65535 }, { "type": "string", "pattern": "^[0-9]+(-[0-9]+)?$" }] },
+          "rekey_timeout": { "description": "Inclusive u16 rekey timeout scalar or range in seconds; zero uses the backend default.", "example": "15-25", "oneOf": [{ "type": "integer", "minimum": 0, "maximum": 65535 }, { "type": "string", "pattern": "^[0-9]+(-[0-9]+)?$" }] },
+          "reject_after_time": { "description": "Inclusive u16 reject-after interval scalar or range in seconds; zero uses the backend default.", "example": 90, "oneOf": [{ "type": "integer", "minimum": 0, "maximum": 65535 }, { "type": "string", "pattern": "^[0-9]+(-[0-9]+)?$" }] },
+          "keepalive_timeout": { "description": "Inclusive u16 transport keepalive-timeout scalar or range in seconds; distinct from peer PersistentKeepalive.", "example": "30-45", "oneOf": [{ "type": "integer", "minimum": 0, "maximum": 65535 }, { "type": "string", "pattern": "^[0-9]+(-[0-9]+)?$" }] },
+          "max_handshake_attempts": { "description": "Inclusive u16 maximum-handshake-attempt scalar or range; zero uses the backend default.", "example": "4-8", "oneOf": [{ "type": "integer", "minimum": 0, "maximum": 65535 }, { "type": "string", "pattern": "^[0-9]+(-[0-9]+)?$" }] },
+          "random_trailers": { "type": "boolean", "description": "Unsafe/client-specific opt-in; generated profiles leave this false." },
+          "disable_cookies": { "type": "boolean", "description": "Unsafe opt-in that weakens DoS protection; generated profiles leave this false." }
+        }
+      },
+      "Interface": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "listen_port": { "type": "integer", "description": "UDP port number, not a byte or time quantity." },
+          "ipv4_subnet": { "type": "string", "description": "IPv4 network in CIDR notation; the prefix after / is a bit count (for example 10.8.0.0/24)." },
+          "mtu": { "type": "integer", "description": "Tunnel IP-packet MTU in bytes (B); not a traffic allowance." },
+          "public_key": { "type": "string" },
+          "obfuscation": { "$ref": "#/components/schemas/Obfuscation" },
+          "preset": { "type": "string", "enum": ["plain", "recommended", "performance", "balanced", "resilient", "suggested", "randomized", "custom"], "description": "Persisted profile classification; custom is inferred when explicit parameters are supplied." },
+          "enabled": { "type": "boolean" },
+          "backend_mode": { "type": "string", "enum": ["kernel", "userspace"] },
+          "endpoint_override": { "type": "string", "description": "Canonical hostname or IP address, optionally with port." },
+          "created_at": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." },
+          "updated_at": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." }
+        }
+      },
+      "WebhookEvent": { "type": "string", "enum": ["user.created", "user.updated", "user.enabled", "user.disabled", "user.expired", "user.traffic_exceeded", "user.first_connected", "device.created", "device.deleted", "node.started"] },
+      "WebhookReceipt": {
+        "type": "object", "required": ["id", "event_id", "event_type", "status", "attempts", "next_attempt_at", "created_at", "updated_at"],
+        "properties": {
+          "id": { "type": "string" }, "event_id": { "type": "string" },
+          "event_type": { "$ref": "#/components/schemas/WebhookEvent" },
+          "status": { "type": "string", "enum": ["pending", "delivered", "dead"] },
+          "attempts": { "type": "integer", "minimum": 0, "description": "Number of webhook delivery attempts; not elapsed seconds." },
+          "next_attempt_at": { "type": ["string", "null"], "format": "date-time", "description": "Next scheduled retry while pending; null once delivered or dead. RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." },
+          "created_at": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." },
+          "updated_at": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." }
+        }
+      },
+      "WebhookEnvelopeBase": {
+        "type": "object", "required": ["id", "type", "timestamp", "node_id", "data"],
+        "properties": {
+          "id": { "type": "string", "description": "Stable event ID; deduplicate redeliveries and crash retries by this value." },
+          "type": { "$ref": "#/components/schemas/WebhookEvent" },
+          "timestamp": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." },
+          "node_id": { "type": "string" },
+          "data": { "type": "object" }
+        }
+      },
+      "WebhookUserCreatedData": { "type": "object", "required": ["user_id", "username", "status"], "properties": {
+        "user_id": { "type": "string" }, "username": { "type": "string" }, "status": { "type": "string" }
+      } },
+      "WebhookUserUpdatedData": { "type": "object", "required": ["user_id"], "properties": {
+        "user_id": { "type": "string" }, "username": { "type": "string" }, "deleted": { "type": "boolean" },
+        "template_id": { "type": "string" }, "next_plan_trigger": { "type": "string", "enum": ["time", "quota"] }
+      } },
+      "WebhookUserStateData": { "type": "object", "required": ["user_id", "username"], "properties": {
+        "user_id": { "type": "string" }, "username": { "type": "string" }, "reason": { "type": "string" }
+      } },
+      "WebhookUserTrafficExceededData": { "type": "object", "required": ["user_id", "username", "used_bytes", "limit_bytes"], "properties": {
+        "user_id": { "type": "string" }, "username": { "type": "string" },
+        "used_bytes": { "type": "integer", "format": "int64", "description": "Total charged traffic in bytes (B), including both upload and download." }, "limit_bytes": { "type": "integer", "format": "int64", "description": "Quota in exact bytes (B); 1 GB = 1000000000 B." }
+      } },
+      "WebhookDeviceData": { "type": "object", "required": ["device_id", "user_id", "name", "ipv4"], "properties": {
+        "device_id": { "type": "string" }, "user_id": { "type": "string" },
+        "name": { "type": "string" }, "ipv4": { "type": "string" }
+      } },
+      "WebhookNodeStartedData": { "type": "object", "required": ["node_id", "version"], "properties": {
+        "node_id": { "type": "string" }, "version": { "type": "string" }
+      } },
+      "WebhookEnvelope": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/WebhookUserCreatedEnvelope" },
+          { "$ref": "#/components/schemas/WebhookUserUpdatedEnvelope" },
+          { "$ref": "#/components/schemas/WebhookUserEnabledEnvelope" },
+          { "$ref": "#/components/schemas/WebhookUserDisabledEnvelope" },
+          { "$ref": "#/components/schemas/WebhookUserExpiredEnvelope" },
+          { "$ref": "#/components/schemas/WebhookUserTrafficExceededEnvelope" },
+          { "$ref": "#/components/schemas/WebhookUserFirstConnectedEnvelope" },
+          { "$ref": "#/components/schemas/WebhookDeviceCreatedEnvelope" },
+          { "$ref": "#/components/schemas/WebhookDeviceDeletedEnvelope" },
+          { "$ref": "#/components/schemas/WebhookNodeStartedEnvelope" }
+        ]
+      },
+      "WebhookUserCreatedEnvelope": { "allOf": [{ "$ref": "#/components/schemas/WebhookEnvelopeBase" }, { "type": "object", "properties": { "type": { "const": "user.created" }, "data": { "$ref": "#/components/schemas/WebhookUserCreatedData" } } }] },
+      "WebhookUserUpdatedEnvelope": { "allOf": [{ "$ref": "#/components/schemas/WebhookEnvelopeBase" }, { "type": "object", "properties": { "type": { "const": "user.updated" }, "data": { "$ref": "#/components/schemas/WebhookUserUpdatedData" } } }] },
+      "WebhookUserEnabledEnvelope": { "allOf": [{ "$ref": "#/components/schemas/WebhookEnvelopeBase" }, { "type": "object", "properties": { "type": { "const": "user.enabled" }, "data": { "$ref": "#/components/schemas/WebhookUserStateData" } } }] },
+      "WebhookUserDisabledEnvelope": { "allOf": [{ "$ref": "#/components/schemas/WebhookEnvelopeBase" }, { "type": "object", "properties": { "type": { "const": "user.disabled" }, "data": { "$ref": "#/components/schemas/WebhookUserStateData" } } }] },
+      "WebhookUserExpiredEnvelope": { "allOf": [{ "$ref": "#/components/schemas/WebhookEnvelopeBase" }, { "type": "object", "properties": { "type": { "const": "user.expired" }, "data": { "$ref": "#/components/schemas/WebhookUserStateData" } } }] },
+      "WebhookUserTrafficExceededEnvelope": { "allOf": [{ "$ref": "#/components/schemas/WebhookEnvelopeBase" }, { "type": "object", "properties": { "type": { "const": "user.traffic_exceeded" }, "data": { "$ref": "#/components/schemas/WebhookUserTrafficExceededData" } } }] },
+      "WebhookUserFirstConnectedEnvelope": { "allOf": [{ "$ref": "#/components/schemas/WebhookEnvelopeBase" }, { "type": "object", "properties": { "type": { "const": "user.first_connected" }, "data": { "$ref": "#/components/schemas/WebhookUserStateData" } } }] },
+      "WebhookDeviceCreatedEnvelope": { "allOf": [{ "$ref": "#/components/schemas/WebhookEnvelopeBase" }, { "type": "object", "properties": { "type": { "const": "device.created" }, "data": { "$ref": "#/components/schemas/WebhookDeviceData" } } }] },
+      "WebhookDeviceDeletedEnvelope": { "allOf": [{ "$ref": "#/components/schemas/WebhookEnvelopeBase" }, { "type": "object", "properties": { "type": { "const": "device.deleted" }, "data": { "$ref": "#/components/schemas/WebhookDeviceData" } } }] },
+      "WebhookNodeStartedEnvelope": { "allOf": [{ "$ref": "#/components/schemas/WebhookEnvelopeBase" }, { "type": "object", "properties": { "type": { "const": "node.started" }, "data": { "$ref": "#/components/schemas/WebhookNodeStartedData" } } }] },
+      "WebhookEndpoint": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "reseller_id": { "type": "string", "description": "Present for a reseller-owned endpoint; absent for a node-wide endpoint." },
+          "include_reseller_events": { "type": "boolean", "description": "Owner-approved subscription to reseller customer events for this node-wide endpoint. Always false for a reseller endpoint." },
+          "url": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "events": { "type": "array", "items": { "$ref": "#/components/schemas/WebhookEvent" } },
+          "created_at": { "type": "string", "format": "date-time", "description": "RFC3339 instant with an explicit timezone (for example 2026-10-30T12:00:00Z); responses use UTC (Z). Not a localized calendar date or Unix milliseconds." },
+          "stats": {
+            "type": "object",
+            "properties": {
+              "pending": { "type": "integer" },
+              "delivered": { "type": "integer" },
+              "dead": { "type": "integer" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {
+    "wgEvent": {
+      "post": {
+        "summary": "Signed WG-Guard event delivery",
+        "description": "The configured endpoint receives an at-least-once POST. Return any 2xx to acknowledge; other statuses and transport failures are retried. Deduplicate by body `id`. Delivery may reorder, including across endpoints. A reseller receiver receives only events belonging to its reseller; node.started is node-wide only. A node-wide receiver gets reseller events only after an explicit owner opt-in; existing receivers migrate with that option off.",
+        "security": [],
+        "parameters": [
+          { "name": "X-WG-Event", "in": "header", "required": true, "schema": { "$ref": "#/components/schemas/WebhookEvent" } },
+          { "name": "X-WG-Delivery", "in": "header", "required": true, "description": "Stable delivery ID for this endpoint and event.", "schema": { "type": "string" } },
+          { "name": "X-WG-Signature", "in": "header", "required": true, "description": "t=<unix_seconds>,v1=<hex HMAC-SHA256(secret, '<t>.<raw body>')>. Reject timestamps outside a five-minute replay window.", "schema": { "type": "string" } }
+        ],
+        "requestBody": { "required": true, "content": { "application/json": {
+          "schema": { "$ref": "#/components/schemas/WebhookEnvelope" },
+          "examples": {
+            "userCreated": { "summary": "Provisioned customer", "value": { "id": "event-uuid", "type": "user.created", "timestamp": "2026-09-29T12:00:00Z", "node_id": "node-1", "data": { "user_id": "user-uuid", "username": "alice", "status": "active" } } },
+            "successorActivated": { "summary": "Queued successor activated", "value": { "id": "event-uuid", "type": "user.updated", "timestamp": "2026-09-29T12:00:00Z", "node_id": "node-1", "data": { "user_id": "user-uuid", "template_id": "template-uuid", "next_plan_trigger": "quota" } } },
+            "quotaReached": { "summary": "Quota boundary reached", "value": { "id": "event-uuid", "type": "user.traffic_exceeded", "timestamp": "2026-09-29T12:00:00Z", "node_id": "node-1", "data": { "user_id": "user-uuid", "username": "alice", "used_bytes": 1000000000, "limit_bytes": 1000000000 } } }
+          }
+        } } },
+        "responses": { "200": { "description": "Any 2xx acknowledges delivery." } }
+      }
+    }
+  },
+  "x-webhooks": {
+    "description": "Events and one pending delivery per subscribed enabled receiver commit with the mutation. Scheduler polls every 5 s, takes up to 64 due deliveries per pass, with up to four concurrent 10 s HTTP requests. Non-2xx and network failures retry after 30 s doubling to a 6 h cap; after webhooks.max_attempts (default 12) the delivery is dead until manually redeliverable. Retention is seven days. Crash after HTTP success but before the SQLite receipt update can duplicate a POST; receivers deduplicate by event id. There is no total, per-user, or cross-endpoint delivery ordering guarantee. Use resource GET and the scoped receipt API to reconcile state. Node-wide endpoints receive reseller events only with explicit owner opt-in."
+  }
+}

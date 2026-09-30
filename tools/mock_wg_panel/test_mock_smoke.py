@@ -62,7 +62,7 @@ def provision(client: TestClient, key: str, username: str = "alice") -> tuple[st
     """Create a purchase and return ``(user_id, device_id)``."""
     response = client.post(
         "/api/v1/purchases",
-        json={"plan_id": "plan_starter", "username": username, "device_name": "phone"},
+        json={"template_id": "plan_starter", "username": username, "device_name": "phone"},
         headers={**AUTH, "Idempotency-Key": key},
     )
     assert response.status_code == 201, response.text
@@ -99,7 +99,7 @@ def test_missing_scope_returns_403(client: TestClient) -> None:
     assert client.get("/api/v1/node", headers=READONLY_AUTH).status_code == 200
     forbidden = client.post(
         "/api/v1/purchases",
-        json={"plan_id": "plan_starter"},
+        json={"template_id": "plan_starter"},
         headers={**READONLY_AUTH, "Idempotency-Key": "scope-key"},
     )
     assert forbidden.status_code == 403
@@ -111,7 +111,7 @@ def test_custom_tokens_from_config() -> None:
     config = MockConfig(tokens={"wg_only_users": frozenset({"users.read"})})
     with TestClient(create_app(config)) as client:
         assert client.get("/api/v1/users", headers={"Authorization": "Bearer wg_only_users"}).status_code == 200
-        denied = client.get("/api/v1/plans", headers={"Authorization": "Bearer wg_only_users"})
+        denied = client.get("/api/v1/templates", headers={"Authorization": "Bearer wg_only_users"})
         assert denied.status_code == 403
         assert client.get("/api/v1/users", headers=READONLY_AUTH).status_code == 401
 
@@ -122,15 +122,15 @@ def test_custom_tokens_from_config() -> None:
 def test_purchase_creates_user_device_and_link(client: TestClient) -> None:
     response = client.post(
         "/api/v1/purchases",
-        json={"plan_id": "plan_starter", "username": "alice", "device_name": "phone"},
+        json={"template_id": "plan_starter", "username": "alice", "device_name": "phone"},
         headers={**AUTH, "Idempotency-Key": "purchase-basic"},
     )
     assert response.status_code == 201
     result = response.json()
     assert result["kind"] == "purchase" and result["state"] == "committed"
-    assert result["plan_id"] == "plan_starter" and result["operation_id"]
+    assert result["template_id"] == "plan_starter" and result["operation_id"]
     user = client.get(f"/api/v1/users/{result['user_id']}", headers=AUTH).json()
-    assert user["username"] == "alice" and user["plan_id"] == "plan_starter"
+    assert user["username"] == "alice" and user["template_id"] == "plan_starter"
     assert user["traffic_limit_bytes"] == 32 * 1024**3 and user["expires_at"]
     devices = client.get(f"/api/v1/users/{result['user_id']}/devices", headers=AUTH).json()["items"]
     assert [device["id"] for device in devices] == [result["device_id"]]
@@ -140,7 +140,7 @@ def test_purchase_creates_user_device_and_link(client: TestClient) -> None:
 
 
 def test_purchase_replay_and_operations_result(client: TestClient) -> None:
-    body = {"plan_id": "plan_standard", "username": "replay-user", "device_name": "laptop"}
+    body = {"template_id": "plan_standard", "username": "replay-user", "device_name": "laptop"}
     headers = {**AUTH, "Idempotency-Key": "purchase-replay"}
     first = client.post("/api/v1/purchases", json=body, headers=headers)
     assert first.status_code == 201 and "Idempotency-Replayed" not in first.headers
@@ -163,47 +163,47 @@ def test_same_key_different_body_conflicts(client: TestClient) -> None:
     headers = {**AUTH, "Idempotency-Key": "purchase-conflict"}
     assert (
         client.post(
-            "/api/v1/purchases", json={"plan_id": "plan_starter", "username": "bob"}, headers=headers
+            "/api/v1/purchases", json={"template_id": "plan_starter", "username": "bob"}, headers=headers
         ).status_code
         == 201
     )
-    clash = client.post("/api/v1/purchases", json={"plan_id": "plan_standard", "username": "bob"}, headers=headers)
+    clash = client.post("/api/v1/purchases", json={"template_id": "plan_standard", "username": "bob"}, headers=headers)
     assert clash.status_code == 409
     assert clash.json()["error"]["code"] == "CONFLICT"
 
 
 def test_purchase_validation(client: TestClient) -> None:
-    missing = client.post("/api/v1/purchases", json={"plan_id": "plan_starter"}, headers=AUTH)
+    missing = client.post("/api/v1/purchases", json={"template_id": "plan_starter"}, headers=AUTH)
     assert missing.status_code == 400 and missing.json()["error"]["code"] == "INVALID_REQUEST"
 
     spaced = client.post(
-        "/api/v1/purchases", json={"plan_id": "plan_starter"}, headers={**AUTH, "Idempotency-Key": "bad key"}
+        "/api/v1/purchases", json={"template_id": "plan_starter"}, headers={**AUTH, "Idempotency-Key": "bad key"}
     )
     assert spaced.status_code == 400 and spaced.json()["error"]["code"] == "INVALID_REQUEST"
 
     unknown_key = client.post(
         "/api/v1/purchases",
-        json={"plan_id": "plan_starter", "surprise": True},
+        json={"template_id": "plan_starter", "surprise": True},
         headers={**AUTH, "Idempotency-Key": "extra-key"},
     )
     assert unknown_key.status_code == 400 and unknown_key.json()["error"]["code"] == "INVALID_REQUEST"
 
     unknown_plan = client.post(
         "/api/v1/purchases",
-        json={"plan_id": "plan-does-not-exist"},
+        json={"template_id": "plan-does-not-exist"},
         headers={**AUTH, "Idempotency-Key": "unknown-plan"},
     )
-    assert unknown_plan.status_code == 404 and unknown_plan.json()["error"]["code"] == "PLAN_NOT_FOUND"
+    assert unknown_plan.status_code == 404 and unknown_plan.json()["error"]["code"] == "TEMPLATE_NOT_FOUND"
 
     duplicate = client.post(
         "/api/v1/purchases",
-        json={"plan_id": "plan_starter", "username": "alice"},
+        json={"template_id": "plan_starter", "username": "alice"},
         headers={**AUTH, "Idempotency-Key": "dupe-1"},
     )
     assert duplicate.status_code == 201
     clash = client.post(
         "/api/v1/purchases",
-        json={"plan_id": "plan_starter", "username": "alice"},
+        json={"template_id": "plan_starter", "username": "alice"},
         headers={**AUTH, "Idempotency-Key": "dupe-2"},
     )
     assert clash.status_code == 409 and clash.json()["error"]["code"] == "USERNAME_EXISTS"
@@ -211,7 +211,7 @@ def test_purchase_validation(client: TestClient) -> None:
 
 def test_purchase_derives_stable_username(client: TestClient) -> None:
     headers = {**AUTH, "Idempotency-Key": "derived-key"}
-    first = client.post("/api/v1/purchases", json={"plan_id": "plan_starter"}, headers=headers).json()
+    first = client.post("/api/v1/purchases", json={"template_id": "plan_starter"}, headers=headers).json()
     user = client.get(f"/api/v1/users/{first['user_id']}", headers=AUTH).json()
     assert user["username"].startswith("u_") and len(user["username"]) == 14
 
@@ -267,7 +267,7 @@ def test_user_lifecycle(client: TestClient) -> None:
 
     assert client.delete(f"/api/v1/users/{user_id}", headers=AUTH).status_code == 200
     assert client.get(f"/api/v1/users/{user_id}", headers=AUTH).json()["deleted"] is True
-    assert client.get(f"/api/v1/users/{user_id}/stats", headers=AUTH).json()["status"] == "disabled"
+    assert client.get(f"/api/v1/users/{user_id}", headers=AUTH).json()["status"] == "disabled"
     assert client.get("/api/v1/users/usr_missing", headers=AUTH).status_code == 404
 
 
@@ -360,8 +360,8 @@ def test_node_stats_telemetry_and_settings(client: TestClient) -> None:
     assert node["node_id"] and node["interfaces"][0]["devices"] == 1
 
     stats = client.get("/api/v1/node/stats", headers=AUTH).json()
-    assert stats["users_total"] == 1 and stats["devices_total"] == 1
-    assert client.get("/api/v1/stats", headers=AUTH).json()["traffic"]["total_bytes"] == 0
+    assert stats["users"] == 1 and stats["devices"] == 1
+    assert client.get("/api/v1/stats", headers=AUTH).json()["traffic_used_total"] == 0
 
     telemetry = client.get("/api/v1/node/telemetry", params={"points": 5}, headers=AUTH).json()
     assert telemetry["cadence_seconds"] >= 1 and len(telemetry["points"]) == 5
@@ -380,16 +380,19 @@ def test_node_stats_telemetry_and_settings(client: TestClient) -> None:
 
 
 def test_plans_and_interfaces_crud(client: TestClient) -> None:
-    plans = client.get("/api/v1/plans", headers=AUTH).json()["items"]
+    plans = client.get("/api/v1/templates", headers=AUTH).json()["items"]
     assert {"plan_starter", "plan_standard"} <= {plan["id"] for plan in plans}
 
     provision(client, "plan-assign-key", username="plan-user")  # plan_starter becomes assigned
-    created = client.post("/api/v1/plans", json={"name": "Custom", "device_limit": 1}, headers=AUTH)
+    created = client.post("/api/v1/templates", json={"name": "Custom", "device_limit": 1}, headers=AUTH)
     assert created.status_code == 201
-    plan_id = created.json()["id"]
-    assert client.patch(f"/api/v1/plans/{plan_id}", json={"enabled": False}, headers=AUTH).json()["enabled"] is False
-    assert client.delete(f"/api/v1/plans/{plan_id}", headers=AUTH).status_code == 200
-    assert client.delete("/api/v1/plans/plan_starter", headers=AUTH).status_code == 409  # assigned to a user
+    template_id = created.json()["id"]
+    assert (
+        client.patch(f"/api/v1/templates/{template_id}", json={"enabled": False}, headers=AUTH).json()["enabled"]
+        is False
+    )
+    assert client.delete(f"/api/v1/templates/{template_id}", headers=AUTH).status_code == 200
+    assert client.delete("/api/v1/templates/plan_starter", headers=AUTH).status_code == 409  # assigned to a user
 
     seeded = client.post("/__mock__/seed/plan", json={"id": "plan_e2e", "name": "E2E", "device_limit": 9})
     assert seeded.status_code == 200 and seeded.json()["id"] == "plan_e2e"
@@ -411,9 +414,10 @@ def test_user_and_device_statistics(client: TestClient) -> None:
     user_id, device_id = provision(client, "stats-key", username="stats-user")
     client.post(f"/api/v1/users/{user_id}/traffic/add", json={"rx_bytes": 50, "tx_bytes": 50}, headers=AUTH)
     user_stats = client.get(f"/api/v1/users/{user_id}/stats", headers=AUTH).json()
-    assert user_stats["used_bytes"] == 100 and user_stats["percent"] is not None
+    assert user_stats["traffic_used_total"] == 100 and user_stats["traffic_percent_used"] is not None
     device_stats = client.get(f"/api/v1/devices/{device_id}/stats", headers=AUTH).json()
-    assert device_stats["total_bytes"] == 0 and device_stats["online"] is False
+    assert device_stats["rx_bytes"] + device_stats["tx_bytes"] == 0
+    assert device_stats["last_handshake_at"] is None and "online" not in device_stats
     series = client.get(
         f"/api/v1/users/{user_id}/traffic", params={"granularity": "hourly", "hours": 4}, headers=AUTH
     ).json()
@@ -468,7 +472,7 @@ def test_fail_injection_retries_then_succeeds(client: TestClient) -> None:
     assert armed.status_code == 200 and armed.json()["count"] == 2
 
     headers = {**AUTH, "Idempotency-Key": "retry-key"}
-    body = {"plan_id": "plan_starter", "username": "retry-user"}
+    body = {"template_id": "plan_starter", "username": "retry-user"}
     for _ in range(2):
         failed = client.post("/api/v1/purchases", json=body, headers=headers)
         assert failed.status_code == 503
@@ -504,7 +508,7 @@ def test_request_journal_and_reset(client: TestClient) -> None:
     assert (
         client.post(
             "/api/v1/purchases",
-            json={"plan_id": "plan_starter", "username": "journal-user"},
+            json={"template_id": "plan_starter", "username": "journal-user"},
             headers={**AUTH, "Idempotency-Key": "journal-key"},
         ).status_code
         == 201
@@ -521,7 +525,7 @@ async def _async_flow(app: Any) -> tuple[int, str, int]:
         unauthorized = await async_client.get("/api/v1/users")
         purchase = await async_client.post(
             "/api/v1/purchases",
-            json={"plan_id": "plan_unlimited", "username": "async-user"},
+            json={"template_id": "plan_unlimited", "username": "async-user"},
             headers={**AUTH, "Idempotency-Key": "async-key"},
         )
         return health.status_code, unauthorized.json()["error"]["code"], purchase.status_code

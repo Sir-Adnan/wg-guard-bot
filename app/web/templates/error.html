@@ -5,8 +5,9 @@
 {% block header %}خطا {{ code|fa }}{% endblock %}
 
 {% block content %}
-<div class="card">
+<div class="card error-panel">
   <div class="card__body">
+    <div class="error-code" aria-hidden="true">{{ code|fa }}</div>
     <div class="empty">
       {% if code == 403 %}
         {{ icon('ban') }}

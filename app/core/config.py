@@ -113,6 +113,12 @@ class Settings(BaseSettings):
     receipt_max_file_mb: int = 8
 
     # -- derived ------------------------------------------------------------
+    @field_validator("currency_display")
+    @classmethod
+    def _customer_currency(cls, value: str) -> str:
+        """Accept legacy Rial settings, but customer copy always uses Toman."""
+        return "toman"
+
     @field_validator("log_level")
     @classmethod
     def _upper_level(cls, v: str) -> str:

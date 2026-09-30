@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.jalali import jalali_date, jalali_short_day, now_utc, to_local
 from app.core.logging import get_logger
-from app.core.money import format_amount, to_toman
+from app.core.money import bytes_to_gb, format_amount, to_toman
 from app.db.models import (
     Order,
     OrderKind,
@@ -381,10 +381,10 @@ class ReportService:
                     user.telegram_id if user else "",
                     service.panel.name if service.panel else "—",
                     service.status.value,
-                    round((service.traffic_limit_bytes or 0) / 1024**3, 2)
-                    if service.traffic_limit_bytes
+                    round(bytes_to_gb(service.traffic_limit_bytes), 2)
+                    if service.traffic_limit_bytes is not None
                     else "نامحدود",
-                    round(service.traffic_used_bytes / 1024**3, 2),
+                    round(bytes_to_gb(service.traffic_used_bytes), 2),
                     service.device_limit,
                     jalali_date(service.started_at) if service.started_at else "—",
                     jalali_date(service.expires_at) if service.expires_at else "—",

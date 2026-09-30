@@ -14,15 +14,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.core.errors import PanelError, PanelNotFound
+from app.core.errors import PanelError, PanelNotFound, PanelUnavailable, PanelValidation
+from app.core.locales import default_text
 from app.core.logging import get_logger
 from app.panels.base import (
     CAP_ATOMIC_PURCHASE,
     CAP_INTERFACES,
+    CAP_MULTI_DEVICE_PURCHASE,
     CAP_NEXT_PLAN,
     CAP_NODE_QR,
     CAP_PLAN_SYNC,
     CAP_PURCHASE_RECOVERY,
+    CAP_QUOTA_TOP_UP,
     CAP_SUBSCRIPTION_ROTATE,
     CAP_TRAFFIC_SERIES,
     CAP_TRAFFIC_WRITE,
@@ -32,9 +35,11 @@ from app.panels.base import (
 from app.panels.client import WGGuardClient
 from app.panels.models import (
     NodeInfo,
+    PlanActivation,
     PlanSpec,
     ProviderHealth,
     PurchaseResult,
+    QueuedPlan,
     RemoteDevice,
     RemoteInterface,
     RemoteStatus,
@@ -60,12 +65,12 @@ STATUS_MAP: dict[str, RemoteStatus] = {
 
 
 def normalise_status(value: str | None) -> RemoteStatus:
-    return STATUS_MAP.get((value or "").strip(), "active")
+    return STATUS_MAP.get((value or "").strip(), "disabled")
 
 
 def to_remote_user(user: WgUser) -> RemoteUser:
     status = normalise_status(user.status)
-    if not user.enabled and status == "active":
+    if not user.enabled and status in ("active", "waiting_first_connection"):
         status = "disabled"
     return RemoteUser(
         id=user.id,
@@ -74,13 +79,14 @@ def to_remote_user(user: WgUser) -> RemoteUser:
         enabled=user.enabled,
         traffic_limit_bytes=user.traffic_limit_bytes,
         traffic_used_bytes=user.traffic_used_total,
+        duration_seconds=user.duration_seconds,
         device_limit=user.device_limit,
         speed_limit_down_kbps=user.speed_limit_down_kbps,
         speed_limit_up_kbps=user.speed_limit_up_kbps,
         expires_at=user.expires_at,
         activated_at=user.activated_at,
         last_activity_at=user.last_activity_at,
-        plan_ref=user.plan_id,
+        plan_ref=user.template_id,
         raw=user.model_dump(),
     )
 
@@ -111,11 +117,13 @@ class WGGuardProvider(PanelProvider):
         {
             CAP_PLAN_SYNC,
             CAP_ATOMIC_PURCHASE,
+            CAP_MULTI_DEVICE_PURCHASE,
             CAP_PURCHASE_RECOVERY,
             CAP_NODE_QR,
             CAP_NEXT_PLAN,
             CAP_SUBSCRIPTION_ROTATE,
             CAP_TRAFFIC_WRITE,
+            CAP_QUOTA_TOP_UP,
             CAP_TRAFFIC_SERIES,
             CAP_WEBHOOKS,
             CAP_INTERFACES,
@@ -185,7 +193,7 @@ class WGGuardProvider(PanelProvider):
     # -- catalogue ---------------------------------------------------------
     def _plan_payload(self, spec: PlanSpec) -> PlanPatch:
         return PlanPatch(
-            name=spec.name[:120],
+            name=self._template_name(spec.name),
             traffic_limit_bytes=spec.traffic_limit_bytes,
             duration_seconds=spec.duration_seconds,
             start_policy="immediate" if spec.start_policy == "immediate" else "first_connection",
@@ -196,6 +204,14 @@ class WGGuardProvider(PanelProvider):
             enabled=True,
         )
 
+    @staticmethod
+    def _template_name(name: str) -> str:
+        # The contract counts UTF-8 bytes, not Python characters or codepoints.
+        name = name.strip().encode("utf-8")[:64].decode("utf-8", errors="ignore").strip()
+        if not name:
+            raise PanelValidation(default_text("error.node_validation"))
+        return name
+
     async def ensure_plan(self, spec: PlanSpec, *, existing_ref: str | None = None) -> str:
         payload = self._plan_payload(spec)
 
@@ -205,8 +221,15 @@ class WGGuardProvider(PanelProvider):
             except PanelNotFound:
                 log.info("Node plan %s vanished — recreating %r", existing_ref, spec.name)
             else:
+                if remote.duration_seconds is not None and payload.duration_seconds is None:
+                    # PATCH null leaves duration unchanged. A fresh template is
+                    # required; existing customers retain their original terms.
+                    return (await self._client.create_plan(payload)).id
                 if self._plan_drifted(remote, payload):
                     await self._client.update_plan(existing_ref, payload)
+                    updated = await self._client.get_plan(existing_ref)
+                    if self._plan_drifted(updated, payload):
+                        raise PanelValidation(default_text("error.node_response"))
                 return existing_ref
 
         created = await self._client.create_plan(payload)
@@ -215,6 +238,9 @@ class WGGuardProvider(PanelProvider):
     @staticmethod
     def _plan_drifted(remote: Any, payload: PlanPatch) -> bool:
         checks = (
+            (remote.name, payload.name),
+            (remote.enabled, payload.enabled),
+            (remote.start_policy, payload.start_policy),
             (remote.traffic_limit_bytes, payload.traffic_limit_bytes),
             (remote.duration_seconds, payload.duration_seconds),
             (remote.device_limit, payload.device_limit),
@@ -222,7 +248,7 @@ class WGGuardProvider(PanelProvider):
             (remote.speed_limit_up_kbps, payload.speed_limit_up_kbps),
             (remote.interface_id, payload.interface_id),
         )
-        return any(expected is not None and actual != expected for actual, expected in checks)
+        return any(actual != expected for actual, expected in checks)
 
     # -- provisioning ------------------------------------------------------
     async def purchase(
@@ -232,15 +258,21 @@ class WGGuardProvider(PanelProvider):
         username: str,
         device_name: str,
         idempotency_key: str,
+        device_count: int = 1,
     ) -> PurchaseResult:
         result = await self._client.create_purchase(
-            plan_ref, idempotency_key=idempotency_key, username=username, device_name=device_name
+            plan_ref,
+            idempotency_key=idempotency_key,
+            username=username,
+            device_name=device_name,
+            device_count=device_count if device_count != 1 else None,
         )
         return PurchaseResult(
             user_id=result.user_id,
             device_id=result.device_id,
+            device_ids=result.all_device_ids,
             username=username,
-            plan_ref=result.plan_id,
+            plan_ref=result.template_id,
             operation_id=result.operation_id,
             created_at=result.created_at,
         )
@@ -248,16 +280,18 @@ class WGGuardProvider(PanelProvider):
     async def recover_purchase(self, idempotency_key: str) -> PurchaseResult | None:
         try:
             found = await self._client.operation_result(idempotency_key)
-        except PanelNotFound:
-            return None
-        except PanelError:
-            return None
-        remote = await self.get_user(found.user_id)
+        except PanelNotFound as exc:
+            if exc.panel_code == "OPERATION_NOT_FOUND":
+                return None
+            raise
+        if found.kind != "purchase":
+            raise PanelError(default_text("error.node_response"))
         return PurchaseResult(
             user_id=found.user_id,
             device_id=found.device_id,
-            username=remote.username,
-            plan_ref=found.plan_id,
+            device_ids=found.all_device_ids,
+            username="",
+            plan_ref=found.template_id,
             operation_id=found.operation_id,
             created_at=found.created_at,
             recovered=True,
@@ -304,6 +338,15 @@ class WGGuardProvider(PanelProvider):
     async def reset_traffic(self, user_ref: str) -> RemoteUser:
         return to_remote_user(await self._client.reset_traffic(user_ref))
 
+    async def top_up_quota(self, user_ref: str, num_bytes: int, *, idempotency_key: str) -> RemoteUser:
+        try:
+            result = await self._client.top_up_quota(user_ref, num_bytes, idempotency_key=idempotency_key)
+        except PanelUnavailable:
+            result = await self._client.operation_result(idempotency_key)
+        if result.kind != "quota_top_up" or result.user_id != user_ref:
+            raise PanelError(default_text("error.node_response"))
+        return await self.get_user(user_ref)
+
     async def set_enabled(self, user_ref: str, enabled: bool) -> RemoteUser:
         if enabled:
             return to_remote_user(await self._client.enable_user(user_ref))
@@ -342,9 +385,31 @@ class WGGuardProvider(PanelProvider):
         return SubscriptionLink(path=rotated.path, devices_rotated=rotated.devices_rotated)
 
     # -- optional ----------------------------------------------------------
-    async def queue_next_plan(self, user_ref: str, plan_ref: str, *, carry_unused_traffic: bool = False) -> bool:
-        await self._client.put_next_plan(user_ref, plan_ref, carry_unused_traffic=carry_unused_traffic)
+    async def queue_next_plan(
+        self,
+        user_ref: str,
+        plan_ref: str,
+        *,
+        carry_unused_traffic: bool = False,
+        idempotency_key: str | None = None,
+    ) -> bool:
+        await self._client.put_next_plan(
+            user_ref,
+            plan_ref,
+            carry_unused_traffic=carry_unused_traffic,
+            idempotency_key=idempotency_key,
+        )
         return True
+
+    async def next_plan(self, user_ref: str) -> QueuedPlan | None:
+        queued = await self._client.get_next_plan(user_ref)
+        return QueuedPlan(queued.template_id, queued.state, queued.created_at) if queued else None
+
+    async def plan_activations(self, user_ref: str) -> list[PlanActivation]:
+        return [
+            PlanActivation(item.activation_id, item.template_id, item.activated_at)
+            for item in await self._client.list_next_plan_activations(user_ref, limit=100)
+        ]
 
     async def clear_next_plan(self, user_ref: str) -> bool:
         await self._client.delete_next_plan(user_ref)

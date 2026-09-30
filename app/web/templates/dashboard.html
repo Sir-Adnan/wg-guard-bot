@@ -18,6 +18,17 @@
   {% endfor %}
 {% endif %}
 
+<section class="overview-hero">
+  <div class="overview-hero__copy"><div class="eyebrow">{{ ui_text('panel.overview') }}</div><h2>{{ ui_text('panel.welcome') }}</h2><p>{{ ui_text('panel.workspace_hint') }}</p><div class="overview-hero__links"><a class="btn btn--sm" href="{{ panel_prefix }}/orders">{{ icon('receipt') }} سفارش‌ها</a><a class="btn btn--sm" href="{{ panel_prefix }}/services">{{ icon('wifi') }} سرویس‌ها</a></div></div>
+  <div class="overview-hero__metric"><span>درآمد {{ days|fa }} روز گذشته</span><strong>{{ summary.revenue_rial|money }}</strong><span>امروز: {{ summary.revenue_today_rial|money }}</span></div>
+</section>
+<nav class="dashboard-shortcuts" aria-label="{{ ui_text('panel.quick_actions') }}">
+  <a class="shortcut" href="{{ panel_prefix }}/receipts">{{ icon('card') }}<span class="shortcut__body"><strong>رسیدهای پرداخت</strong><span>{{ summary.pending_receipts|fa }} در انتظار بررسی</span></span></a>
+  <a class="shortcut" href="{{ panel_prefix }}/orders">{{ icon('receipt') }}<span class="shortcut__body"><strong>سفارش‌ها</strong><span>{{ counters.orders|fa }} در انتظار پیگیری</span></span></a>
+  <a class="shortcut" href="{{ panel_prefix }}/tickets">{{ icon('chat') }}<span class="shortcut__body"><strong>پشتیبانی</strong><span>{{ open_tickets|fa }} تیکت باز</span></span></a>
+  <a class="shortcut" href="{{ panel_prefix }}/reports">{{ icon('chart') }}<span class="shortcut__body"><strong>گزارش فروش</strong><span>بررسی درآمد و پرداخت‌ها</span></span></a>
+</nav>
+
 {# ------------------------------------------------------------- stat strip #}
 <section class="grid grid--stats">
   {{ stat('درآمد ' ~ days|fa ~ ' روز', summary.revenue_rial|money, 'money',
@@ -47,8 +58,8 @@
              aria-label="نمودار درآمد روزانه">
           <defs>
             <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#7c5cff"></stop>
-              <stop offset="100%" stop-color="#22d3ee"></stop>
+              <stop offset="0%" class="chart-gradient-start"></stop>
+              <stop offset="100%" class="chart-gradient-end"></stop>
             </linearGradient>
           </defs>
           <line class="axis" x1="0" y1="159" x2="720" y2="159"></line>

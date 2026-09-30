@@ -145,7 +145,7 @@ async def test_snapshots_carry_the_provider_kind(session, panel_row) -> None:
         ("suspended", "disabled"),  # vendor-only state folded into ours
         ("expired", "expired"),
         ("traffic_exceeded", "traffic_exceeded"),
-        ("something-new", "active"),  # additive vendor change must not crash
+        ("something-new", "disabled"),  # tolerate additive states without claiming access
     ],
 )
 def test_status_normalisation(vendor: str, expected: str) -> None:

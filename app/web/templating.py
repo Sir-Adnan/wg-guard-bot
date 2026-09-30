@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 from app import __version__
 from app.core.config import settings
 from app.core.jalali import humanize_delta, jalali_date, jalali_datetime, jalali_long, jalali_short_day
+from app.core.locales import default_text
 from app.core.money import (
     fa_digits,
     format_amount,
@@ -94,6 +95,7 @@ templates.env.globals.update(
         "app_name": settings.app_name,
         "panel_prefix": settings.panel_prefix,
         "currency_label": unit_label(),
+        "ui_text": default_text,
         "currency_display": settings.currency_display,
         "environment": settings.env,
     }

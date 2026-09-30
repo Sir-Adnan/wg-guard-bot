@@ -119,7 +119,7 @@ async def test_provisioning_creates_service_device_and_subscription(session, cus
     assert service is not None
     assert service.status is ServiceStatus.ACTIVE
     assert service.wg_user_id
-    assert service.traffic_limit_bytes == 30 * 1024**3
+    assert service.traffic_limit_bytes == 30 * 1000**3
     assert service.subscription_encrypted
     assert service.panel_id == panel_row.id
 
@@ -438,7 +438,7 @@ async def test_extra_traffic_raises_the_limit(session, customer, plan, panel_row
     result = await provisioning.provision_order(extra.id)
     assert result.ok, result.error
     await session.refresh(service)
-    assert service.traffic_limit_bytes == (original_limit or 0) + 10 * 1024**3
+    assert service.traffic_limit_bytes == (original_limit or 0) + 10 * 1000**3
 
 
 async def test_deleted_service_is_hidden_but_kept(session, customer, plan, panel_row) -> None:

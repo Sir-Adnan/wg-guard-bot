@@ -11,13 +11,13 @@ Traffic is the other unit that has two spellings.  A plan says "50 GB"; the node
 stores bytes.  Whether that is 50 × 1024³ or 50 × 1000³ is a product decision —
 WG-Guard's own panel prints decimal gigabytes, so the operator who types 50 in
 the bot and then opens the node sees 53.7 GB under the binary basis.  The basis
-lives here, defaults to the binary one this project has always used, and is moved
+lives here, defaults to decimal GB to match WG-Guard, and is moved
 by :func:`set_gb_basis` from the stored setting (see ``shop.traffic_unit``).
 """
 
 from __future__ import annotations
 
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 
 from app.core.config import settings
 
@@ -28,7 +28,7 @@ RIAL_PER_TOMAN = 10
 GB_BINARY = 1024**3
 GB_DECIMAL = 1000**3
 
-_gb_bytes: int = GB_BINARY
+_gb_bytes: int = GB_DECIMAL
 
 #: Persian (Extended Arabic-Indic) digits, written with explicit escapes so no
 #: editor or copy/paste can silently swap them for Arabic-Indic ones.
@@ -69,7 +69,7 @@ def set_gb_basis(*, decimal: bool) -> None:
 
     Called once per process from the stored setting, and again whenever the
     operator changes it — the value is read by the provisioning path, so a
-    process that never calls this keeps the historical binary basis.
+    process that never calls this uses the upstream decimal basis.
     """
     global _gb_bytes
     _gb_bytes = GB_DECIMAL if decimal else GB_BINARY
@@ -82,6 +82,11 @@ def gb_basis_is_decimal() -> bool:
 def to_rial(toman: int | float | Decimal) -> int:
     """Convert Toman to Rial."""
     return int((Decimal(str(toman)) * RIAL_PER_TOMAN).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+def percent_of_rial(amount_rial: int, percent: int | str | Decimal, *, rounding: str = ROUND_DOWN) -> int:
+    """Calculate a percentage without ever converting money to float."""
+    return int((Decimal(amount_rial) * Decimal(str(percent)) / 100).quantize(Decimal(1), rounding=rounding))
 
 
 def user_unit_amount(rial: int) -> int:
@@ -163,14 +168,19 @@ def format_bytes(num_bytes: int | None) -> str:
     return f"{size:.2f} ترابایت".translate(_TO_PERSIAN)
 
 
-def gb_to_bytes(gb: float | int | None) -> int | None:
+def gb_to_bytes(gb: float | int | Decimal | None, *, basis: int | None = None) -> int | None:
     """Convert a GB figure to bytes (``None``/0 stays unlimited)."""
     if gb is None:
         return None
-    value = float(gb)
+    value = Decimal(str(gb))
     if value <= 0:
         return None
-    return int(Decimal(str(value)) * _gb_basis())
+    return int(value * (basis if basis is not None else _gb_basis()))
+
+
+def kbps_to_mbps(kbps: int) -> str:
+    """Decimal Kbps -> exact display number in Mbps, including sub-Mbps caps."""
+    return format(Decimal(kbps) / 1000, "f").rstrip("0").rstrip(".") if kbps % 1000 else str(kbps // 1000)
 
 
 def bytes_to_gb(num_bytes: int | None) -> float | None:

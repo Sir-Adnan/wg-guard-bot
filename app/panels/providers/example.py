@@ -120,6 +120,7 @@ class ExampleProvider(PanelProvider):
         username: str,
         device_name: str,
         idempotency_key: str,
+        device_count: int = 1,
     ) -> PurchaseResult:
         """Create the account, its first peer and its subscription link.
 

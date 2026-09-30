@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import InsufficientFunds, NotFoundError, ValidationError
 from app.core.jalali import now_utc
+from app.core.locales import default_text
 from app.core.logging import get_logger
 from app.core.security import random_code
 from app.db.models import (
@@ -145,6 +146,7 @@ class UserService:
         """Add funds and record the ledger entry."""
         if amount_rial <= 0:
             raise ValidationError("مبلغ باید بزرگ‌تر از صفر باشد.")
+        await self._lock_wallet(session, user)
         user.balance_rial = int(user.balance_rial) + int(amount_rial)
         entry = Payment(
             user_id=user.id,
@@ -178,8 +180,9 @@ class UserService:
         """Remove funds; raises :class:`InsufficientFunds` unless partial is allowed."""
         if amount_rial <= 0:
             raise ValidationError("مبلغ باید بزرگ‌تر از صفر باشد.")
+        await self._lock_wallet(session, user)
         if not allow_partial and user.balance_rial < amount_rial:
-            raise InsufficientFunds(f"موجودی کیف پول کافی نیست. کمبود: {amount_rial - user.balance_rial} ریال")
+            raise InsufficientFunds(default_text("error.wallet_balance"))
         charged = min(int(amount_rial), int(user.balance_rial)) if allow_partial else int(amount_rial)
         user.balance_rial = int(user.balance_rial) - charged
         entry = Payment(
@@ -207,6 +210,7 @@ class UserService:
         staff_id: int | None = None,
     ) -> Payment:
         """Force the balance to an absolute value (admin correction)."""
+        await self._lock_wallet(session, user)
         delta = int(new_balance_rial) - int(user.balance_rial)
         if delta == 0:
             raise ValidationError("موجودی تغییری نکرده است.")
@@ -227,6 +231,14 @@ class UserService:
             method=None,
             description=description,
             staff_id=staff_id,
+        )
+
+    @staticmethod
+    async def _lock_wallet(session: AsyncSession, user: User) -> None:
+        """Re-read the balance under a row lock before changing the ledger."""
+        await session.flush()
+        await session.scalar(
+            select(User).where(User.id == user.id).with_for_update(of=User).execution_options(populate_existing=True)
         )
 
     async def history(self, session: AsyncSession, user_id: int, *, limit: int = 20, offset: int = 0) -> list[Payment]:

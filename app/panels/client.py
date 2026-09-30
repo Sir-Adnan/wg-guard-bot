@@ -2,7 +2,7 @@
 
 Design goals
 ------------
-* **Contract fidelity** — mirrors ``docs/upstream-api/openapi-wg-guard.json``
+* **Contract fidelity** — mirrors ``docs/upstream-api/wg-guard-openapi.json``
   1:1, including the error envelope and cursor pagination.
 * **Safe retries** — network errors / 5xx / 429 are retried with exponential
   backoff *only* for safe requests (``GET``) or when the caller supplied an
@@ -30,6 +30,7 @@ from app.core.errors import (
     PanelUnavailable,
     PanelValidation,
 )
+from app.core.locales import default_text
 from app.core.logging import get_logger
 from app.panels.schemas import (
     CustomerLink,
@@ -42,6 +43,8 @@ from app.panels.schemas import (
     OperationResult,
     Plan,
     PlanPatch,
+    PurchaseRequest,
+    QuotaTopUpResult,
     Status,
     Telemetry,
     User,
@@ -140,19 +143,24 @@ class WGGuardClient:
             except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout) as exc:
                 last_error = exc
                 if not may_retry or attempt >= self.max_retries:
-                    raise PanelUnavailable(f"ارتباط با پنل برقرار نشد ({type(exc).__name__}).") from exc
+                    raise PanelUnavailable(default_text("error.node_unavailable")) from exc
                 await self._sleep(attempt)
                 continue
             except httpx.HTTPError as exc:
-                raise PanelError(f"خطای انتقال در پنل: {exc}") from exc
+                raise PanelUnavailable(default_text("error.node_unavailable")) from exc
 
             if response.status_code in RETRY_STATUSES and may_retry and attempt < self.max_retries:
+                retry_after = response.headers.get("Retry-After")
+                if retry_after:
+                    with suppress(ValueError):
+                        if float(retry_after) > self.max_backoff:
+                            return self._handle(response, expect=expect)
                 await self._sleep(attempt, response.headers.get("Retry-After"))
                 continue
 
             return self._handle(response, expect=expect)
 
-        raise PanelUnavailable("پنل پس از چند تلاش پاسخ نداد.") from last_error
+        raise PanelUnavailable(default_text("error.node_unavailable")) from last_error
 
     async def _sleep(self, attempt: int, retry_after: str | None = None) -> None:
         delay = min(self.backoff_base * (2**attempt), self.max_backoff)
@@ -164,7 +172,7 @@ class WGGuardClient:
         await asyncio.sleep(delay)
 
     def _handle(self, response: httpx.Response, *, expect: str) -> Any:
-        if response.status_code >= 400:
+        if not 200 <= response.status_code < 300:
             raise self._to_error(response)
 
         if expect == "text":
@@ -176,12 +184,11 @@ class WGGuardClient:
         try:
             return response.json()
         except ValueError as exc:
-            raise PanelError("پاسخ پنل قابل خواندن نبود.") from exc
+            raise PanelError(default_text("error.node_response")) from exc
 
     @staticmethod
     def _to_error(response: httpx.Response) -> PanelError:
         code: str | None = None
-        message: str | None = None
         payload: Any = None
         try:
             payload = response.json()
@@ -191,23 +198,40 @@ class WGGuardClient:
         if isinstance(payload, dict):
             envelope = payload.get("error")
             if isinstance(envelope, dict):
-                code = envelope.get("code")
-                message = envelope.get("message")
+                candidate = envelope.get("code")
+                if isinstance(candidate, str) and candidate in {
+                    "USER_NOT_FOUND",
+                    "DEVICE_NOT_FOUND",
+                    "TEMPLATE_NOT_FOUND",
+                    "OPERATION_NOT_FOUND",
+                    "USERNAME_EXISTS",
+                    "DEVICE_LIMIT_REACHED",
+                    "TRAFFIC_EXCEEDED",
+                    "INVALID_REQUEST",
+                    "UNAUTHORIZED",
+                    "FORBIDDEN",
+                    "RATE_LIMITED",
+                    "NODE_UNAVAILABLE",
+                    "INTERNAL_ERROR",
+                    "IDEMPOTENCY_KEY_REUSED",
+                    "CONFLICT",
+                    "PARAM_CONSTRAINT",
+                }:
+                    code = candidate
 
-        detail = f"{code}: {message}" if code else (message or response.text[:200])
         status = response.status_code
 
         if status in (401, 403):
-            return PanelAuthError(f"دسترسی پنل رد شد ({detail or status}).", status=status, panel_code=code)
+            return PanelAuthError(default_text("error.node_auth"), status=status, panel_code=code)
         if status == 409:
-            return PanelConflict(f"پنل این عملیات را نپذیرفت ({detail or status}).", status=status, panel_code=code)
+            return PanelConflict(default_text("error.node_conflict"), status=status, panel_code=code)
         if status == 404:
-            return PanelNotFound(f"در پنل یافت نشد ({detail or status}).", status=status, panel_code=code)
-        if status == 400:
-            return PanelValidation(f"درخواست نامعتبر برای پنل ({detail or status}).", status=status, panel_code=code)
+            return PanelNotFound(default_text("error.node_not_found"), status=status, panel_code=code)
+        if status in (400, 422):
+            return PanelValidation(default_text("error.node_validation"), status=status, panel_code=code)
         if status in RETRY_STATUSES:
-            return PanelUnavailable(f"پنل در دسترس نیست ({detail or status}).", status=status, panel_code=code)
-        return PanelError(f"خطای پنل ({detail or status}).", status=status, panel_code=code)
+            return PanelUnavailable(default_text("error.node_unavailable"), status=status, panel_code=code)
+        return PanelError(default_text("error.node_response"), status=status, panel_code=code)
 
     # -- ops ---------------------------------------------------------------
     async def health(self) -> Status:
@@ -245,17 +269,36 @@ class WGGuardClient:
         idempotency_key: str,
         username: str | None = None,
         device_name: str = "device-1",
+        device_count: int | None = None,
     ) -> OperationResult:
         """Atomic purchase: commits user + first device + customer link."""
-        payload: dict[str, Any] = {"plan_id": plan_id, "device_name": device_name}
+        payload: dict[str, Any] = {"template_id": plan_id, "device_name": device_name}
         if username:
             payload["username"] = username
-        data = await self._request("POST", "/api/v1/purchases", json=payload, idempotency_key=idempotency_key)
+        if device_count is not None:
+            payload["device_count"] = device_count
+        payload = PurchaseRequest.model_validate(payload).model_dump(exclude_unset=True)
+        # Let provisioning recover an ambiguous commit before resending.
+        data = await self._request(
+            "POST", "/api/v1/purchases", json=payload, idempotency_key=idempotency_key, retry=False
+        )
         return OperationResult.model_validate(data)
 
-    async def operation_result(self, idempotency_key: str) -> OperationResult:
+    async def operation_result(self, idempotency_key: str) -> OperationResult | QuotaTopUpResult:
         data = await self._request("GET", "/api/v1/operations/result", idempotency_key=idempotency_key)
+        if data.get("kind") == "quota_top_up":
+            return QuotaTopUpResult.model_validate(data)
         return OperationResult.model_validate(data)
+
+    async def top_up_quota(self, user_id: str, num_bytes: int, *, idempotency_key: str) -> QuotaTopUpResult:
+        """Add allowance atomically, preserving charged RX/TX counters."""
+        data = await self._request(
+            "POST",
+            f"/api/v1/users/{user_id}/quota/add",
+            json={"bytes": num_bytes},
+            idempotency_key=idempotency_key,
+        )
+        return QuotaTopUpResult.model_validate(data)
 
     async def customer_subscription(self, user_id: str) -> CustomerLink:
         data = await self._request("GET", f"/api/v1/users/{user_id}/subscription")
@@ -277,7 +320,7 @@ class WGGuardClient:
         data = await self._request(
             "PUT",
             f"/api/v1/users/{user_id}/next-plan",
-            json={"plan_id": plan_id, "carry_unused_traffic": carry_unused_traffic},
+            json={"template_id": plan_id, "carry_unused_traffic": carry_unused_traffic},
             idempotency_key=idempotency_key,
         )
         return NextPlan.model_validate(data)
@@ -360,6 +403,7 @@ class WGGuardClient:
         )
 
     async def user_stats(self, user_id: str) -> dict[str, Any]:
+        """Charged byte counters; absent observations remain absent."""
         return await self._request("GET", f"/api/v1/users/{user_id}/stats")
 
     # -- traffic -----------------------------------------------------------
@@ -451,24 +495,25 @@ class WGGuardClient:
     async def device_stats(self, device_id: str) -> dict[str, Any]:
         return await self._request("GET", f"/api/v1/devices/{device_id}/stats")
 
+
     # -- plans -------------------------------------------------------------
     async def list_plans(self) -> list[Plan]:
-        data = await self._request("GET", "/api/v1/plans")
+        data = await self._request("GET", "/api/v1/templates")
         return [Plan.model_validate(item) for item in (data or {}).get("items", [])]
 
     async def get_plan(self, plan_id: str) -> Plan:
-        return Plan.model_validate(await self._request("GET", f"/api/v1/plans/{plan_id}"))
+        return Plan.model_validate(await self._request("GET", f"/api/v1/templates/{plan_id}"))
 
     async def create_plan(self, patch: PlanPatch | dict[str, Any]) -> Plan:
         body = patch.model_dump(exclude_none=True) if isinstance(patch, PlanPatch) else patch
-        return Plan.model_validate(await self._request("POST", "/api/v1/plans", json=body))
+        return Plan.model_validate(await self._request("POST", "/api/v1/templates", json=body))
 
     async def update_plan(self, plan_id: str, patch: PlanPatch | dict[str, Any]) -> Plan:
-        body = patch.model_dump(exclude_none=True) if isinstance(patch, PlanPatch) else patch
-        return Plan.model_validate(await self._request("PATCH", f"/api/v1/plans/{plan_id}", json=body))
+        body = patch.model_dump(exclude_unset=True) if isinstance(patch, PlanPatch) else patch
+        return Plan.model_validate(await self._request("PATCH", f"/api/v1/templates/{plan_id}", json=body))
 
     async def delete_plan(self, plan_id: str) -> None:
-        await self._request("DELETE", f"/api/v1/plans/{plan_id}", expect="none")
+        await self._request("DELETE", f"/api/v1/templates/{plan_id}", expect="none")
 
     # -- interfaces --------------------------------------------------------
     async def list_interfaces(self) -> list[Interface]:

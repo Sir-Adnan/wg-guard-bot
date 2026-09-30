@@ -19,18 +19,20 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import time
 
 from aiogram.types import Update
 from fastapi import Depends, FastAPI, Header, Request, Response
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.jalali import now_utc
 from app.core.logging import get_logger
 from app.core.security import constant_time_compare, decrypt_secret
-from app.db.models import Panel, Service, ServiceEvent, ServiceStatus, WebhookEvent
+from app.db.models import Panel, Service, ServiceEvent, WebhookEvent
 from app.db.session import get_db
 from app.services.notifications import notifier
 
@@ -49,7 +51,7 @@ async def handle_telegram_update(request: Request, secret: str) -> Response:
         return Response(status_code=403)
 
     header_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-    if header_token and not constant_time_compare(header_token, settings.webhook_secret):
+    if not header_token or not constant_time_compare(header_token, settings.webhook_secret):
         log.warning("Rejected Telegram webhook: bad secret token header")
         return Response(status_code=403)
 
@@ -67,7 +69,7 @@ async def handle_telegram_update(request: Request, secret: str) -> Response:
         update = Update.model_validate(payload, context={"bot": runtime.bot})
         await dispatcher.feed_update(runtime.bot, update)
     except Exception as exc:  # pragma: no cover - never fail the webhook itself
-        log.exception("Failed to process a Telegram update: %s", exc)
+        log.error("Failed to process a Telegram update (%s)", type(exc).__name__)
         await notifier.report_error(exc, source="telegram-webhook", notify=False)
     return Response(status_code=200)
 
@@ -84,10 +86,18 @@ def verify_wg_signature(secret: str, header: str | None, body: bytes) -> bool:
     for chunk in header.split(","):
         key, sep, value = chunk.partition("=")
         if sep:
-            parts[key.strip()] = value.strip()
+            key = key.strip()
+            if key in parts:
+                return False
+            parts[key] = value.strip()
 
     timestamp, signature = parts.get("t"), parts.get("v1")
-    if not timestamp or not signature:
+    if (
+        not timestamp
+        or not signature
+        or not re.fullmatch(r"[0-9]{1,12}", timestamp)
+        or not re.fullmatch(r"[a-fA-F0-9]{64}", signature)
+    ):
         return False
     try:
         age = abs(time.time() - int(timestamp))
@@ -114,16 +124,13 @@ async def handle_wg_event(
     if panel is None or not panel.is_active:
         return Response(status_code=404)
 
-    body = await request.body()
-    secret = (
-        (
-            decrypt_secret(panel.webhook_secret_encrypted, purpose="webhook-secret")
-            if getattr(panel, "webhook_secret_encrypted", None)
-            else None
-        )
-        or decrypt_secret(panel.api_token_encrypted, purpose="panel-token")
-        or ""
-    )
+    chunks = bytearray()
+    async for chunk in request.stream():
+        chunks.extend(chunk)
+        if len(chunks) > 65536:
+            return Response(status_code=413)
+    body = bytes(chunks)
+    secret = decrypt_secret(panel.webhook_secret_encrypted, purpose="webhook-secret") or ""
 
     if not verify_wg_signature(secret, signature, body):
         log.warning("WG-Guard webhook signature rejected for panel %s", panel.name)
@@ -133,35 +140,50 @@ async def handle_wg_event(
         payload = json.loads(body or b"{}")
     except ValueError:
         return Response(status_code=400)
-
-    event_id = str(payload.get("id") or delivery or "")
-    event_type = str(payload.get("type") or event_header or "unknown")
-    if not event_id:
+    if not isinstance(payload, dict) or not isinstance(payload.get("data", {}), dict):
         return Response(status_code=400)
-
-    if await session.get(WebhookEvent, event_id) is not None:
-        return Response(status_code=200)  # redelivery: already applied
-
-    record = WebhookEvent(
-        id=event_id,
-        event_type=event_type,
-        node_id=payload.get("node_id"),
-        payload=payload,
-    )
-    session.add(record)
-
+    event_id, event_type = payload.get("id"), payload.get("type")
+    if (
+        not isinstance(event_id, str)
+        or not 1 <= len(event_id) <= 128
+        or not isinstance(event_type, str)
+        or not 1 <= len(event_type) <= 48
+    ):
+        return Response(status_code=400)
+    if event_header and event_header != event_type:
+        return Response(status_code=400)
+    # Persist only non-secret reconciliation identifiers; never retain arbitrary
+    # signed JSON or unknown future fields as a plaintext payload.
+    safe_data = {
+        k: v
+        for k, v in payload.get("data", {}).items()
+        if k in ("user_id", "device_id") and isinstance(v, str) and len(v) <= 128
+    }
+    payload = {"id": event_id, "type": event_type, "data": safe_data}
+    dedupe_id = hashlib.sha256(f"{panel_id}:{event_id}".encode()).hexdigest()
     try:
+        inserted = await session.scalar(
+            insert(WebhookEvent)
+            .values(id=dedupe_id, event_type=event_type, payload=payload)
+            .on_conflict_do_nothing(index_elements=[WebhookEvent.id])
+            .returning(WebhookEvent.id)
+        )
+        if inserted is None:
+            await session.rollback()
+            return Response(status_code=200)
+        record = await session.get(WebhookEvent, dedupe_id)
         await apply_wg_event(session, panel, event_type, payload)
         record.processed_at = now_utc()
-    except Exception as exc:  # pragma: no cover - the node must still receive its 2xx
-        log.exception("WG-Guard event %s failed: %s", event_type, exc)
-        record.error = f"{type(exc).__name__}: {exc}"[:1000]
-    await session.commit()
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        log.warning("WG-Guard event reconciliation failed (%s)", type(exc).__name__)
+        return Response(status_code=503)
     return Response(status_code=200)
 
 
 async def apply_wg_event(session: AsyncSession, panel: Panel, event_type: str, payload: dict) -> None:
-    """Fold a node event into local state (and let the reminder jobs react)."""
+    """An unordered event signals a resource read, never a state transition."""
     data = payload.get("data") or {}
     wg_user_id = data.get("user_id")
 
@@ -184,17 +206,14 @@ async def apply_wg_event(session: AsyncSession, panel: Panel, event_type: str, p
         )
 
     if service is not None:
-        if event_type == "user.traffic_exceeded":
-            service.status = ServiceStatus.TRAFFIC_EXCEEDED
-            service.remote_status = "traffic_exceeded"
-        elif event_type == "user.disabled":
-            service.remote_status = "disabled"
-        elif event_type == "user.enabled":
-            service.remote_status = "active"
-        elif event_type == "user.expired":
-            service.remote_status = "expired"
-            service.status = ServiceStatus.EXPIRED
-        elif event_type == "device.deleted":
+        from app.panels.manager import panel_manager
+        from app.services.provisioning import provisioning
+
+        provider = await panel_manager.provider_for(panel)
+        remote = await provider.get_user(service.wg_user_id)
+        provisioning.apply_remote_state(service, remote)
+        await provisioning.reconcile_next_plan(service, provider)
+        if event_type == "device.deleted":
             from app.db.models import ServiceDevice
 
             device = (
@@ -205,7 +224,8 @@ async def apply_wg_event(session: AsyncSession, panel: Panel, event_type: str, p
                     )
                 )
             ).scalar_one_or_none()
-            if device is not None:
+            remote_ids = {item.id for item in await provider.list_devices(service.wg_user_id)}
+            if device is not None and device.wg_device_id not in remote_ids:
                 await session.delete(device)
     elif event_type == "node.started":
         from app.panels.manager import panel_manager
@@ -243,7 +263,7 @@ def register_webhooks(app: FastAPI) -> None:
             event_header=x_wg_event,
         )
 
-    log.info("Webhook endpoints: %s and /wg/webhook/{panel_id}", settings.webhook_path)
+    log.info("Telegram and WG-Guard webhook endpoints registered")
 
 
 __all__ = ["apply_wg_event", "handle_telegram_update", "handle_wg_event", "register_webhooks", "verify_wg_signature"]

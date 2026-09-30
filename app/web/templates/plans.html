@@ -13,6 +13,7 @@
 
 {% macro plan_fields(p) -%}
 <div class="form-grid">
+  <h3 class="form-section field--full">{{ icon('box') }} مشخصات بسته</h3>
   <div class="field">
     <label class="label" for="name-{{ p.id if p else 'new' }}">نام پلن <span class="req">*</span></label>
     <input class="input" id="name-{{ p.id if p else 'new' }}" name="name" required
@@ -31,6 +32,7 @@
     </select>
   </div>
 
+  <h3 class="form-section field--full">{{ icon('wifi') }} محدودیت‌های سرویس</h3>
   <div class="field">
     <label class="label" for="panel-{{ p.id if p else 'new' }}">پنل (نود)</label>
     <select class="select" id="panel-{{ p.id if p else 'new' }}" name="panel_id">
@@ -79,6 +81,7 @@
            value="{{ p.speed_limit_up_kbps if p and p.speed_limit_up_kbps else '' }}" placeholder="خالی = بدون محدودیت">
   </div>
 
+  <h3 class="form-section field--full">{{ icon('money') }} قیمت‌گذاری</h3>
   <div class="field">
     <label class="label" for="price-{{ p.id if p else 'new' }}">قیمت ({{ currency_label }}) <span class="req">*</span></label>
     <input class="input input--num" id="price-{{ p.id if p else 'new' }}" name="price" required
@@ -98,6 +101,7 @@
            value="{{ p.cost_rial|toman if p and p.cost_rial else '' }}" placeholder="اختیاری — برای محاسبه سود">
   </div>
 
+  <h3 class="form-section field--full">{{ icon('settings') }} نمایش و تنظیمات پیشرفته</h3>
   <div class="field">
     <label class="label" for="badge-{{ p.id if p else 'new' }}">برچسب روی کارت پلن</label>
     <input class="input" id="badge-{{ p.id if p else 'new' }}" name="badge" maxlength="32"

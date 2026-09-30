@@ -30,7 +30,7 @@ from app.bot.menus import (
 from app.bot.utils import alert_text, answer_callback, paginate, show
 from app.core.errors import AppError
 from app.core.logging import get_logger
-from app.core.money import format_amount, format_gb
+from app.core.money import format_amount, format_gb, kbps_to_mbps
 from app.db.models import Plan, PlanCategory, User
 from app.services.catalog import catalog
 from app.services.categories import categories
@@ -290,7 +290,17 @@ async def render_plan(session: AsyncSession, plan: Plan, *, back: str | None = N
 
     volume = format_gb(plan.traffic_gb) if plan.traffic_gb else unlimited
     days_text = _duration_text(plan.duration_days, unlimited)
-    speed = fa(f"{plan.speed_limit_down_kbps // 1024} مگابیت بر ثانیه") if plan.speed_limit_down_kbps else unlimited
+    down = (
+        await texts.get("shop.speed_mbps", session, value=fa(kbps_to_mbps(plan.speed_limit_down_kbps)))
+        if plan.speed_limit_down_kbps
+        else unlimited
+    )
+    up = (
+        await texts.get("shop.speed_mbps", session, value=fa(kbps_to_mbps(plan.speed_limit_up_kbps)))
+        if plan.speed_limit_up_kbps
+        else unlimited
+    )
+    speed = await texts.get("shop.speed_limits", session, down=down, up=up)
 
     price = format_amount(plan.price_rial) if plan.price_rial else "رایگان"
     badge = ""

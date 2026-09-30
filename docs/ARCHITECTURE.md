@@ -96,13 +96,16 @@ under an `Idempotency-Key`.
 order.paid
    │
    ├─ pick panel           plan.panel_id → healthy node with free capacity
-   ├─ ensure node plan     POST /plans once, remember wg_plan_id
+   ├─ lock order/node      one pinned connection, survives checkpoint commits
+   ├─ technical template   POST /templates from immutable order terms
+   ├─ persist intent       original panel, template, username, key and variant
    ├─ username             render plan.username_template
    ├─ POST /purchases      key = order.idempotency_key   ← stable forever
    │     ├─ 409 USERNAME_EXISTS → new derived key (…-r1) + new username
    │     └─ timeout / 5xx       → GET /operations/result with the SAME key
    │                              ├─ found  → that purchase is ours, continue
-   │                              └─ 404    → not committed, retry safely
+   │                              ├─ OPERATION_NOT_FOUND → safe to retry same request
+   │                              └─ unavailable/forbidden → retain uncertainty
    ├─ GET /devices/{id}/config      → stored encrypted
    ├─ GET /users/{id}/subscription  → stored encrypted
    └─ service + device rows, then deliver to the customer

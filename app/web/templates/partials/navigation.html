@@ -1,0 +1,50 @@
+      {% set groups = [
+        ('عمومی', [
+          ('dashboard', '/', 'داشبورد', 'grid', None),
+          ('reports', '/reports', 'گزارش فروش', 'chart', None),
+        ]),
+        ('فروشگاه', [
+          ('plans', '/plans', 'پلن‌ها', 'box', None),
+          ('categories', '/categories', 'دسته‌بندی‌ها', 'folder', None),
+          ('orders', '/orders', 'سفارش‌ها', 'receipt', None),
+          ('services', '/services', 'سرویس‌ها', 'wifi', None),
+          ('receipts', '/receipts', 'رسیدهای پرداخت', 'card', counters.receipts),
+          ('discounts', '/discounts', 'کدهای تخفیف', 'tag', None),
+          ('gifts', '/gifts', 'کدهای هدیه', 'gift', None),
+        ]),
+        ('کاربران', [
+          ('users', '/users', 'کاربران', 'users', None),
+          ('tickets', '/tickets', 'تیکت‌های پشتیبانی', 'chat', counters.tickets),
+        ]),
+        ('شخصی‌سازی', [
+          ('buttons', '/buttons', 'دکمه‌ها و ایموجی', 'palette', None),
+          ('texts', '/texts', 'متن‌های ربات', 'type', None),
+          ('guides', '/guides', 'آموزش‌ها', 'book', None),
+          ('channels', '/channels', 'کانال‌ها', 'megaphone', None),
+          ('cards', '/cards', 'کارت‌های بانکی', 'credit', None),
+          ('settings', '/settings', 'تنظیمات فروشگاه', 'settings', None),
+        ]),
+        ('زیرساخت', [
+          ('panels', '/panels', 'پنل‌های VPN', 'server', panels_offline),
+          ('broadcast', '/broadcast', 'ارسال همگانی', 'send', None),
+          ('logs', '/logs', 'رویدادهای سیستم', 'activity', None),
+          ('staff', '/staff', 'کارکنان و دسترسی', 'key', None),
+        ]),
+      ] %}
+
+      {% for group_title, items in groups %}
+        {% set visible = namespace(any=false) %}
+        {% for key, href, label, ico, badge in items %}
+          {% if (key in ['dashboard', 'reports', 'orders', 'services', 'receipts', 'users', 'tickets'] or (staff and staff.role.value in ['owner', 'admin'])) and (key != 'staff' or (staff and staff.role.value == 'owner')) %}{% set visible.any = true %}{% endif %}
+        {% endfor %}
+        {% if visible.any %}<span class="nav__label">{{ group_title }}</span>{% endif %}
+        {% for key, href, label, ico, badge in items %}
+          {% if (key in ['dashboard', 'reports', 'orders', 'services', 'receipts', 'users', 'tickets'] or (staff and staff.role.value in ['owner', 'admin'])) and (key != 'staff' or (staff and staff.role.value == 'owner')) %}
+          <a class="nav__item {% if current_path == panel_prefix + href or (href != '/' and current_path.startswith(panel_prefix + href)) %}is-active{% endif %}"
+             href="{{ panel_prefix }}{{ href }}" title="{{ label }}" data-nav-link aria-label="{{ label }}{% if badge %} ({{ badge|fa }}){% endif %}" {% if current_path == panel_prefix + href or (href != '/' and current_path.startswith(panel_prefix + href)) %}aria-current="page"{% endif %}>
+            {{ icon(ico) }}<span>{{ label }}</span>
+            {% if badge %}<span class="nav__badge">{{ badge|fa }}</span>{% endif %}
+          </a>
+          {% endif %}
+        {% endfor %}
+      {% endfor %}

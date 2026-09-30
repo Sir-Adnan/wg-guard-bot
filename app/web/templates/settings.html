@@ -7,6 +7,10 @@
 
 {% block content %}
 
+<nav class="section-index" aria-label="تنظیمات فروشگاه">
+  {% for section in sections %}<a href="#group-{{ section.key }}">{{ icon(section.icon) }} {{ section.label }}</a>{% endfor %}
+</nav>
+
 {# ------------------------------------------------------------ deployment #}
 <div class="card">
   <div class="card__head">
