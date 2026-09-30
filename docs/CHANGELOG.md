@@ -151,7 +151,12 @@ Also on `main` since 1.0.0:
   **53.7 GB** — the same traffic in a different unit.  `shop.traffic_unit` now
   chooses the basis (1024³, the historical default, or 1000³ to match the node's
   own display), the plan form says which one is in force, and a change applies to
-  everything sent to a node afterwards.
+  everything sent to a node afterwards.  The plans list now labels the node-side
+  plan (`پلن نود: 01a0f170…`, or «هنوز روی نود ساخته نشده») so the two records read
+  as one product, and every row gained **«بهروزرسانی نود»**: it pushes the current
+  terms — volume, duration, device and speed limits, interface — to the node
+  immediately instead of waiting for the next sale, updating the same node plan
+  rather than creating a second one.
 
 - **A node that answers a shape this build does not know can no longer fail a
   sale.**  WG-Guard serialises "not set" as JSON `null`, so a strict `list[str]`

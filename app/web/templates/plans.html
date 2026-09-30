@@ -47,9 +47,10 @@
     <input class="input input--num" id="traffic-{{ p.id if p else 'new' }}" name="traffic_gb" type="number" min="0"
            value="{{ p.traffic_gb if p and p.traffic_gb else '' }}" placeholder="خالی = نامحدود">
     <div class="hint">
-      همین عدد روی نود WG-Guard ساخته می‌شود. اگر آن‌جا چیز دیگری می‌بینید
-      (مثلاً ۵۰ این‌جا و ۵۳.۷ آن‌جا)، واحد حجم را در
-      <a href="{{ panel_prefix }}/settings#group-shop">تنظیمات ← فروشگاه</a> عوض کنید.
+      همین عدد روی نود WG-Guard ساخته می‌شود{{ traffic_basis_hint }}.
+      اگر آن‌جا چیز دیگری می‌بینید، واحد حجم را در
+      <a href="{{ panel_prefix }}/settings#group-shop">تنظیمات ← فروشگاه</a> عوض کنید و بعد
+      دکمهٔ «به‌روزرسانی نود» را در فهرست پلن‌ها بزنید.
     </div>
   </div>
 
@@ -207,7 +208,15 @@
               <td>
                 <div class="strong">{{ plan.name }}</div>
                 {% if plan.badge %}<span class="badge badge--brand">{{ plan.badge }}</span>{% endif %}
-                {% if plan.wg_plan_id %}<div class="small dim mono">{{ plan.wg_plan_id[:12] }}…</div>{% endif %}
+                {% if plan.wg_plan_id %}
+                  <div class="small dim">
+                    پلن نود: <span class="mono" dir="ltr">{{ plan.wg_plan_id[:12] }}…</span>
+                  </div>
+                {% else %}
+                  <div class="small dim" title="ربات هنگام اولین فروش، پلن فنی را روی نود می‌سازد.">
+                    هنوز روی نود ساخته نشده
+                  </div>
+                {% endif %}
               </td>
               <td class="small muted">
                 {% if plan.category_node %}{{ plan.category_node.name }}{% else %}<span class="dim">بدون دسته</span>{% endif %}
@@ -247,6 +256,11 @@
                   <form method="post" action="{{ base_url }}/{{ plan.id }}/duplicate">
                     {{ csrf(csrf_token) }}
                     <button class="btn btn--sm" type="submit" title="کپی پلن">{{ icon('copy') }}</button>
+                  </form>
+
+                  <form method="post" action="{{ base_url }}/{{ plan.id }}/sync">
+                    {{ csrf(csrf_token) }}
+                    <button class="btn btn--sm" type="submit" title="به‌روزرسانی شرایط روی نود">{{ icon('refresh') }}</button>
                   </form>
 
                   <form method="post" action="{{ base_url }}/{{ plan.id }}/delete"

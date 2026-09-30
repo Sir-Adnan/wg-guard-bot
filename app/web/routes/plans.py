@@ -15,8 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import AppError, ValidationError
-from app.core.money import fa_digits
+from app.core.money import fa_digits, gb_basis_is_decimal
 from app.db.models import Order, Plan, Staff
+from app.panels.manager import panel_manager
 from app.services.catalog import catalog
 from app.services.categories import categories
 from app.services.ordering import next_sort_order
@@ -200,9 +201,22 @@ async def list_plans(
         "selected_category": selected_value,
         "extra": f"&category_id={selected_value}" if selected_value else "",
         "base_url": BASE,
+        "traffic_basis_hint": _traffic_basis_hint(),
     }
     context.update(await _form_context(session))
     return render(request, "plans.html", context)
+
+
+def _traffic_basis_hint() -> str:
+    """One clause naming the unit the operator's "GB" is sent to the node in.
+
+    The whole confusion this answers: 50 GB in the bot became 53.7 GB on the
+    node because the node prints decimal gigabytes.  The form now says which
+    basis is in force instead of leaving the operator to guess.
+    """
+    if gb_basis_is_decimal():
+        return " (هر گیگابایت ۱۰۰۰ به‌توان ۳ بایت؛ مثل نمایش پنل WG-Guard)"
+    return " (هر گیگابایت ۱۰۲۴ به‌توان ۳ بایت؛ همان چیزی که بیشتر ابزارهای لینوکسی گیگابایت می‌نامند)"
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +339,37 @@ async def duplicate_plan(
         return redirect(BASE, message=exc.message, level="danger")
 
     return redirect(BASE, message=f"پلن «{name}» ساخته شد؛ برای نمایش در فروشگاه آن را فعال کنید.")
+
+
+@router.post("/plans/{plan_id}/sync")
+async def sync_plan_to_node(
+    plan_id: int,
+    request: Request,
+    staff: Staff = Depends(require_manager()),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Push this plan's terms to the node now.
+
+    The same call provisioning makes before a sale (``ensure_node_plan``): it
+    creates the node-side plan if it does not exist yet and updates the drifted
+    fields if it does.  It exists because the node keeps its own copy of the
+    technical terms — so after changing a plan, or after switching the traffic
+    unit, the operator wants to see the node agree *without* waiting for the
+    next sale.
+    """
+    form = await form_dict(request)
+    verify_csrf(request, form.get("csrf_token"))
+
+    try:
+        plan = await catalog.get(session, plan_id)
+        panel = await panel_manager.pick_panel(session, plan)
+        await panel_manager.ensure_node_plan(session, plan, panel)
+        name, panel_name = plan.name, panel.name
+        await session.commit()
+    except AppError as exc:
+        return redirect(BASE, message=exc.message, level="danger")
+
+    return redirect(BASE, message=f"شرایط پلن «{name}» روی نود {panel_name} به‌روزرسانی شد.")
 
 
 @router.post("/plans/{plan_id}/delete")

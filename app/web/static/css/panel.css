@@ -697,8 +697,8 @@ td.drag-placeholder { background: rgba(124, 92, 255, 0.08); box-shadow: inset 0 
   font-size: 11px; line-height: 1; cursor: pointer;
   transition: color var(--speed) var(--ease), background var(--speed) var(--ease), border-color var(--speed) var(--ease);
 }
-.menu-chip__remove:hover { color: var(--danger); background: var(--danger-soft); border-color: rgba(251, 113, 133, 0.35); }
-.menu-chip__remove:focus-visible { outline: none; color: var(--text); box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.45); }
+.menu-chip__remove:hover { color: var(--danger); background: var(--danger-soft); border-color: var(--danger); }
+.menu-chip__remove:focus-visible { color: var(--text); outline: 2px solid var(--brand); outline-offset: 1px; }
 
 .color-swatch {
   width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--border-strong);
