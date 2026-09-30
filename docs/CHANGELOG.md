@@ -33,6 +33,14 @@ Also on `main` since 1.0.0:
   `python -m app.cli set-password` ([deployment](DEPLOYMENT.md#reset-owner-password)).
   The test suite now runs the real startup lifespan, which it never did before.
 
+- **An image reports the revision it was built from.**  `install.sh` and
+  `update.sh` pass the checkout's commit as the `GIT_COMMIT` build arg, `/healthz`
+  answers with it as `"commit"`, and the startup log prints it.  `update.sh` also
+  compares the two and **fails** the update when the container is still on the
+  previous revision — an update that pulled code but never rebuilt the image used
+  to look exactly like a fix that did not work.  `"unknown"` means the image was
+  built without the stamp.
+
 - The interactive installer works.  `ask()` printed its question to stdout while
   every caller captured it (`answer="$(ask ...)"`), so the question never reached
   the terminal **and** its text was prepended to the answer: no typed bot token

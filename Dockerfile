@@ -79,6 +79,21 @@ RUN set -eux; \
         ca-certificates; \
     rm -rf /var/lib/apt/lists/*
 
+# ---------------------------------------------------------------------------
+#  Revision stamp.
+#
+#  install.sh and update.sh pass the checked-out revision as
+#  `--build-arg GIT_COMMIT=$(git rev-parse --short HEAD)`; it is reported by
+#  /healthz and printed by the startup log, so "is my fix actually live?" is one
+#  command instead of a guess.  A plain `docker compose build` leaves it empty,
+#  which shows up as "unknown" — that alone tells you the image carries no
+#  provenance.  Declared after the apt layer on purpose: a new commit must not
+#  invalidate the slow dependency layers.
+# ---------------------------------------------------------------------------
+ARG GIT_COMMIT=""
+LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
+ENV WG_GUARD_COMMIT="${GIT_COMMIT}"
+
 # Unprivileged runtime user (uid/gid 1000) — matches the host user on a stock
 # Ubuntu/Debian VPS so bind-mounted files stay writable.
 RUN set -eux; \

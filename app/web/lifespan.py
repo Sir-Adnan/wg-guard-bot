@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from aiogram import Bot, Dispatcher
 from fastapi import FastAPI
 
+from app import __commit__, __version__
 from app.bot.setup import (
     announce_startup,
     create_bot,
@@ -53,7 +54,13 @@ async def _warm_caches() -> None:
 async def lifespan(app: FastAPI):
     """Boot every subsystem, then tear them down cleanly."""
     setup_logging(settings.log_level, log_dir=BASE_DIR / "logs", json_lines=settings.is_production)
-    log.info("Starting %s (env=%s)", settings.app_name, settings.env)
+    log.info(
+        "Starting %s %s (env=%s, commit=%s)",
+        settings.app_name,
+        __version__,
+        settings.env,
+        __commit__ or "unknown",
+    )
 
     runtime = Runtime()
     app.state.runtime = runtime

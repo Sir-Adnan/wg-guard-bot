@@ -107,6 +107,14 @@ bash uninstall.sh           # stop and remove the containers (data is kept)
 bash uninstall.sh --purge   # full removal including the data
 ```
 
+`update.sh` rebuilds the image from the revision it pulled and then checks that the
+container is running it — if the check fails, the old image is still live. You can
+always ask which revision is running:
+
+```bash
+curl -s localhost:8080/healthz        # → {"status":"ok",…,"commit":"<revision>"}
+```
+
 If you are inside the project directory:
 
 ```bash
@@ -436,7 +444,7 @@ pytest -q
 ```
 
 The database-backed tests are marked `db`; without a reachable database they are
-skipped rather than failed (83 pass, 108 skip), and every run prints which database
+skipped rather than failed (87 pass, 108 skip), and every run prints which database
 it probed. `make test-db` starts a throwaway PostgreSQL and `make test` runs the
 whole suite against it. Ports, containers and the exact environment block are in
 [`docs/VERIFICATION.md`](docs/VERIFICATION.md#4-the-environment-the-commands-need).

@@ -11,7 +11,7 @@ from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import __version__
+from app import __commit__, __version__
 from app.core.cache import cache
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -103,7 +103,16 @@ def create_app(*, start_background: bool = True) -> FastAPI:
     # -- health (never requires auth) --------------------------------------
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> JSONResponse:
-        return JSONResponse({"status": "ok", "version": __version__, "env": settings.env})
+        # ``commit`` answers "which code is live?" without a shell in the
+        # container — the first thing to check when a fix seems to have no effect.
+        return JSONResponse(
+            {
+                "status": "ok",
+                "version": __version__,
+                "commit": __commit__ or "unknown",
+                "env": settings.env,
+            }
+        )
 
     @app.get("/readyz", include_in_schema=False)
     async def readyz() -> JSONResponse:

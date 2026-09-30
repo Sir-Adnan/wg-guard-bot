@@ -85,6 +85,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Revision stamp, reported by /healthz.  install.sh and update.sh export
+      # GIT_COMMIT from the checkout; a bare `docker compose build` shows
+      # "unknown" at /healthz instead of a revision.
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-}
     image: ${IMAGE_NAME:-wgguard-bot}:${IMAGE_TAG:-latest}
     container_name: wgguard-bot
     init: true

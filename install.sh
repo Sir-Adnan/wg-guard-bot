@@ -1025,6 +1025,17 @@ write_env() {
 #  Bring the stack up
 # ===========================================================================
 compose_up() {
+    # Stamp the image with the revision it was built from.  /healthz then reports
+    # it, and update.sh refuses to call an update successful unless the running
+    # container reports the revision that was just pulled.
+    if [ -d "$INSTALL_DIR/.git" ] && command -v git >/dev/null 2>&1; then
+        GIT_COMMIT="$(git -C "$INSTALL_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+        export GIT_COMMIT
+        if [ -n "$GIT_COMMIT" ]; then
+            dim "  Building from revision ${GIT_COMMIT}."
+        fi
+    fi
+
     step "Pulling the base images (Postgres, Redis and Caddy)"
     # on a first run our own image may not be in the registry yet; ignore that error.
     $COMPOSE_PROFILE pull --ignore-pull-failures 2>/dev/null || $COMPOSE_PROFILE pull || true

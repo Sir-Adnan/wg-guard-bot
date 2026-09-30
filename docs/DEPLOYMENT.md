@@ -249,17 +249,26 @@ bash update.sh                 # from the main branch
 bash update.sh --branch develop
 ```
 
-The script pulls the code, rebuilds the image, runs the migrations and brings
-the service up.
+The script pulls the code, rebuilds the image, runs the migrations, brings the
+service up and then **checks that the container is running the revision it just
+pulled** — an update that pulled code but never rebuilt the image is reported as
+a failure, not as success.
 
 ### Manual update
 
 ```bash
 git pull
-docker compose build
+export GIT_COMMIT="$(git rev-parse --short HEAD)"   # stamps the image with the pulled revision
+docker compose build bot
 docker compose up -d
 docker compose exec bot alembic upgrade head
+curl -s localhost:8080/healthz                      # → {"status":"ok",…,"commit":"…"}
 ```
+
+`docker compose up -d` on its own does **not** rebuild anything — the container
+keeps the image it was created from, and `docker compose restart` does not either.
+Only `docker compose build` (or `up -d --build`) puts new code into the image;
+`--force-recreate` recreates the container from the image the stack points at.
 
 ---
 
@@ -300,6 +309,9 @@ curl -s localhost:8080/readyz           # readiness + database connectivity
 ```
 
 Both endpoints answer without authentication and are suitable for external monitoring.
+`/healthz` also reports the revision the image was built from as `"commit"` — the
+fastest answer to "which code is live?", and `"unknown"` means the image was built
+without the stamp (see [Updating](#updating)).
 
 Important events (panel errors, provisioning failures, system events) are also
 visible in **Panel → System events**.
@@ -384,7 +396,43 @@ docker compose logs --tail=60 bot
 ```
 
 Update to the latest release first (`bash update.sh`) — a keyboard with more than
-eight buttons in a row, for example, broke every screen until it was fixed.
+eight buttons in a row, for example, broke every screen until it was fixed. Then
+check that the container is really running the new code, because a fix that never
+reached the image looks exactly the same from the outside:
+
+```bash
+curl -s localhost:8080/healthz          # → {"status":"ok",…,"commit":"<revision>"}
+git log --oneline -1                    # the same revision, or the image is stale
+```
+
+</details>
+
+<details>
+<summary><b>An update finished, but the behaviour is unchanged</b></summary>
+
+Ask the container which revision it is running and compare it with your checkout:
+
+```bash
+curl -s localhost:8080/healthz
+docker compose exec bot python -c "import app; print(app.__commit__)"
+git log --oneline -1
+```
+
+`"unknown"` — or a revision that is not the one you pulled — means the image was
+never rebuilt from the new code. Rebuild it explicitly:
+
+```bash
+cd /root/wg-guard-bot
+git pull --ff-only
+export GIT_COMMIT="$(git rev-parse --short HEAD)"
+docker compose build --pull --no-cache bot
+docker compose up -d --force-recreate bot
+docker compose exec bot alembic upgrade head
+curl -s localhost:8080/healthz
+```
+
+`bash update.sh` does all of the above and does not report success while the
+container is still on an older revision.
 
 </details>
 

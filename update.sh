@@ -218,6 +218,15 @@ pull_code() {
 # ---------------------------------------------------------------------------
 rebuild_and_restart() {
     step "Building the new image and restarting"
+    # Stamp the image with the revision we just pulled; verify_running_commit()
+    # reads it back from the container afterwards.
+    if [ -d "$INSTALL_DIR/.git" ] && command -v git >/dev/null 2>&1; then
+        GIT_COMMIT="$(git -C "$INSTALL_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+        export GIT_COMMIT
+        if [ -n "$GIT_COMMIT" ]; then
+            dim "  Building from revision ${GIT_COMMIT}."
+        fi
+    fi
     $COMPOSE pull --ignore-pull-failures 2>/dev/null || true
     if ! $COMPOSE build --pull bot; then
         err "Building the image failed."
@@ -297,6 +306,60 @@ app_version() {
     return 0
 }
 
+# ---------------------------------------------------------------------------
+#  6) Prove that the container runs the code we just pulled
+# ---------------------------------------------------------------------------
+running_commit() {
+    # The revision the *image* was built from (Dockerfile ARG GIT_COMMIT).  An
+    # empty answer means the image carries no stamp — itself worth reporting.
+    local commit=""
+    commit="$($COMPOSE exec -T bot python -c 'import app; print(app.__commit__)' 2>/dev/null | tr -d '\r\n' || true)"
+    [ -n "$commit" ] || commit="unknown"
+    printf '%s' "$commit"
+    return 0
+}
+
+same_commit() {
+    # True when one revision is a prefix of the other (short vs. long sha).
+    [ -n "$1" ] && [ -n "$2" ] || return 1
+    case "$2" in "$1"*) return 0 ;; esac
+    case "$1" in "$2"*) return 0 ;; esac
+    return 1
+}
+
+verify_running_commit() {
+    # An update that silently keeps running the old image is the one failure that
+    # looks like success, so it is checked rather than assumed: a fix that "did
+    # not work" is usually a fix that never reached the container.
+    local checkout=""
+    if ! command -v git >/dev/null 2>&1 || [ ! -d "$INSTALL_DIR/.git" ]; then
+        return 0
+    fi
+    checkout="$(git -C "$INSTALL_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+    [ -n "$checkout" ] || return 0
+
+    RUNNING_COMMIT="$(running_commit)"
+    if [ "$RUNNING_COMMIT" = "unknown" ]; then
+        warn "The running image does not report the revision it was built from."
+        dim "  Rebuild it with:  cd $INSTALL_DIR && GIT_COMMIT=$checkout $COMPOSE build bot"
+        return 0
+    fi
+    if same_commit "$checkout" "$RUNNING_COMMIT"; then
+        ok "The container is running revision ${RUNNING_COMMIT}."
+        return 0
+    fi
+
+    err "The container is still running revision ${RUNNING_COMMIT}, but the checkout is at ${checkout}."
+    say "  The image was not rebuilt from the current code, so nothing that was pulled is live."
+    say "  Rebuild and recreate it by hand:"
+    dim "    cd $INSTALL_DIR"
+    dim "    git log --oneline -1"
+    dim "    GIT_COMMIT=$checkout $COMPOSE build --pull --no-cache bot"
+    dim "    GIT_COMMIT=$checkout $COMPOSE up -d --force-recreate bot"
+    dim "    curl -s http://127.0.0.1:$(panel_port)/healthz"
+    return 1
+}
+
 # ===========================================================================
 #  main
 # ===========================================================================
@@ -347,6 +410,14 @@ main() {
 
     wait_health "$(panel_port)" || true
 
+    # The last word on whether the update is real: what the container reports.
+    RUNNING_COMMIT="unknown"
+    if ! verify_running_commit; then
+        say ""
+        err "The update did not take effect: the old image is still running."
+        exit 1
+    fi
+
     VERSION_AFTER="$(app_version)"
     [ -n "$VERSION_AFTER" ] || VERSION_AFTER="unknown"
 
@@ -357,6 +428,8 @@ main() {
     say ""
     printf '  Previous version : %s\n' "$VERSION_BEFORE"
     printf '  New version      : %s%s%s\n' "$C_BOLD" "$VERSION_AFTER" "$C_RESET"
+    printf '  Source revision  : %s\n' "$(current_version)"
+    printf '  Running revision : %s%s%s\n' "$C_BOLD" "$RUNNING_COMMIT" "$C_RESET"
     printf '  Branch           : %s\n' "$BRANCH"
     say ""
     info "Useful commands:"

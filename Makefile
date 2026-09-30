@@ -11,6 +11,10 @@
 SHELL := /bin/sh
 COMPOSE := docker compose
 COMPOSE_TLS := docker compose --profile tls
+# Revision stamp baked into the image and reported by /healthz, so `make up`
+# produces an image that can say which code it is (see the Dockerfile).
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null)
+export GIT_COMMIT
 SERVICE ?= bot
 BACKUP_DIR ?= backups
 PY ?= .venv/bin/python
