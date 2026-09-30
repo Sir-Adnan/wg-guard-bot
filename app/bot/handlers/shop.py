@@ -11,13 +11,23 @@ always carries the category it belongs to.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot import nav
 from app.bot.callbacks import CatCB, MenuCB, PlanCB
 from app.bot.keyboards import KB
-from app.bot.menus import category_list, order_actions, payment_methods, plan_actions, plan_list
+from app.bot.menus import (
+    back_to_main,
+    category_list,
+    order_actions,
+    payment_methods,
+    plan_actions,
+    plan_list,
+)
 from app.bot.utils import answer_callback, paginate, show
 from app.core.errors import AppError
 from app.core.logging import get_logger
@@ -53,7 +63,13 @@ async def catalog_home(callback: CallbackQuery, session: AsyncSession) -> None:
 @router.callback_query(CatCB.filter(F.action == "open"))
 async def catalog_open(callback: CallbackQuery, callback_data: CatCB, session: AsyncSession) -> None:
     await answer_callback(callback)
-    await render_catalog(callback, session, action="open", category_id=callback_data.category_id)
+    await render_catalog(
+        callback,
+        session,
+        action="open",
+        category_id=callback_data.category_id,
+        page=callback_data.page or 1,
+    )
 
 
 @router.callback_query(CatCB.filter(F.action == "all"))
@@ -91,6 +107,12 @@ async def render_catalog(
     category_id: int = 0,
     page: int = 1,
 ) -> None:
+    """Render one screen of the shop.
+
+    A node shows **both** its own plans and its sub-categories: a parent that
+    held a single plan used to hide its children completely, so half the tree
+    was unreachable from the bot.
+    """
     roots = await categories.roots(session)
     featured_count = len(await catalog.list_plans(session, featured_only=True))
 
@@ -98,33 +120,44 @@ async def render_catalog(
     if not roots and action in ("home", "open"):
         plans = await catalog.list_plans(session)
         if not plans:
-            await show(event, await texts.get("shop.empty", session))
+            await show(event, await texts.get("shop.empty", session), keyboard=await _empty_keyboard(session))
             return
         slice_, page, total_pages = paginate(plans, page, PLANS_PER_PAGE)
         body = await texts.get("shop.title", session)
         if total_pages > 1:
             body += f"\n\n<i>صفحه {fa(page)} از {fa(total_pages)}</i>"
-        await show(event, body, keyboard=await plan_list(session, slice_, page, total_pages))
+        await show(
+            event,
+            body,
+            keyboard=await plan_list(session, slice_, page, total_pages, back=nav.main()),
+        )
         return
 
     if action == "featured":
         plans = await catalog.list_plans(session, featured_only=True)
         if not plans:
-            await show(event, await texts.get("shop.empty", session))
+            await show(event, await texts.get("shop.empty", session), keyboard=await _empty_keyboard(session))
             return
         slice_, page, total_pages = paginate(plans, page, PLANS_PER_PAGE)
         body = await texts.get("shop.featured_title", session) + "\n\n" + await texts.get("shop.choose_plan", session)
         await show(
             event,
             body,
-            keyboard=await plan_list(session, slice_, page, total_pages, page_action="featured"),
+            keyboard=await plan_list(
+                session,
+                slice_,
+                page,
+                total_pages,
+                page_action="featured",
+                back=nav.shop_home(),
+            ),
         )
         return
 
     if action == "all":
         plans = await catalog.list_plans(session)
         if not plans:
-            await show(event, await texts.get("shop.empty", session))
+            await show(event, await texts.get("shop.empty", session), keyboard=await _empty_keyboard(session))
             return
         slice_, page, total_pages = paginate(plans, page, PLANS_PER_PAGE)
         body = await texts.get("shop.all_title", session) + "\n\n" + await texts.get("shop.choose_plan", session)
@@ -133,7 +166,14 @@ async def render_catalog(
         await show(
             event,
             body,
-            keyboard=await plan_list(session, slice_, page, total_pages, page_action="all"),
+            keyboard=await plan_list(
+                session,
+                slice_,
+                page,
+                total_pages,
+                page_action="all",
+                back=nav.shop_home(),
+            ),
         )
         return
 
@@ -141,7 +181,7 @@ async def render_catalog(
     node: PlanCategory | None = None
     if action == "open" and category_id:
         try:
-            node = await categories.get(session, category_id)
+            node = await categories.get(session, category_id, require_visible=True)
         except AppError:
             node = None
 
@@ -151,30 +191,33 @@ async def render_catalog(
         plans = await catalog.list_plans(session, category_id=node.id, include_inactive=False)
 
     if not children and not plans:
-        await show(event, await texts.get("shop.empty", session))
+        await show(event, await texts.get("shop.empty", session), keyboard=await _empty_keyboard(session))
         return
 
     header = await _header(session, node)
+    # Where does «بازگشت» go from here?  Up one level, or out of the shop.
+    back = nav.main() if node is None else _parent_of(node)
 
     if plans:
         slice_, page, total_pages = paginate(plans, page, PLANS_PER_PAGE)
         body = header + "\n\n" + await texts.get("shop.choose_plan", session)
+        if children:
+            # The sub-categories stay reachable below the plans of this node.
+            body += "\n\n" + await texts.get("shop.subcategories", session)
         if total_pages > 1:
             body += f"\n\n<i>صفحه {fa(page)} از {fa(total_pages)}</i>"
-        back_to = node.parent_id if node is not None else None
-        await show(
-            event,
-            body,
-            keyboard=await plan_list(
-                session,
-                slice_,
-                page,
-                total_pages,
-                page_action="page",
-                category_id=node.id if node else 0,
-                back_category_id=back_to,
-            ),
+        kb = await plan_list(
+            session,
+            slice_,
+            page,
+            total_pages,
+            page_action="page",
+            category_id=node.id if node else 0,
+            back=back,
         )
+        if children:
+            kb = await _append_categories(session, kb, children, featured_count=featured_count, back=back)
+        await show(event, body, keyboard=kb)
         return
 
     kb = await category_list(
@@ -184,9 +227,33 @@ async def render_catalog(
         show_featured=featured_count > 0,
         page=page,
         total_pages=1,
-        back_action="open" if (node is not None and node.parent_id) else "home",
+        back=back,
     )
     await show(event, header, keyboard=kb)
+
+
+def _parent_of(node: PlanCategory) -> str:
+    """The payload of the level above ``node``."""
+    if node.parent_id:
+        return nav.shop_category(node.parent_id)
+    return nav.shop_home()
+
+
+async def _append_categories(session: AsyncSession, kb: KB, children: Sequence, *, featured_count: int, back: str):
+    """Add this node's sub-categories under its plans, reusing ``category_list``."""
+    nested = await category_list(
+        session,
+        list(children),
+        show_all=False,
+        show_featured=False,
+        back=back,
+    )
+    return kb.extend(nested)
+
+
+async def _empty_keyboard(session: AsyncSession) -> KB:
+    """An empty shelf still needs a way out."""
+    return await back_to_main(session)
 
 
 async def _header(session: AsyncSession, node: PlanCategory | None) -> str:
@@ -210,7 +277,7 @@ def fa(value: object) -> str:
 # ---------------------------------------------------------------------------
 # One plan
 # ---------------------------------------------------------------------------
-async def render_plan(session: AsyncSession, plan: Plan) -> tuple[str, KB]:
+async def render_plan(session: AsyncSession, plan: Plan, *, back: str | None = None) -> tuple[str, KB]:
     """Build the plan card text + keyboard (also used by deep links)."""
     unlimited = await texts.get("common.unlimited", session)
 
@@ -248,7 +315,10 @@ async def render_plan(session: AsyncSession, plan: Plan) -> tuple[str, KB]:
         body += "\n\n" + await texts.get("shop.sold_out", session)
 
     can_buy = available and (wallet_enabled() or card_payments_enabled())
-    keyboard = await plan_actions(session, plan, can_buy=can_buy)
+    if back is None:
+        # A deep link has no list behind it; land on the plan's own category.
+        back = nav.plan_parent(category_id=plan.category_id)
+    keyboard = await plan_actions(session, plan, can_buy=can_buy, back=back)
     return body, keyboard
 
 
@@ -267,9 +337,10 @@ async def view_plan(callback: CallbackQuery, callback_data: PlanCB, session: Asy
     try:
         plan = await catalog.get(session, callback_data.plan_id)
     except AppError:
-        await show(callback, await texts.get("error.not_found", session))
+        await show(callback, await texts.get("error.not_found", session), keyboard=await back_to_main(session))
         return
-    text, keyboard = await render_plan(session, plan)
+    back = nav.plan_parent(category_id=plan.category_id, page=callback_data.page)
+    text, keyboard = await render_plan(session, plan, back=back)
     await show(callback, text, keyboard=keyboard)
 
 

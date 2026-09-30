@@ -22,7 +22,7 @@
     <div class="strong">مطالب آموزشی چطور به مشتری نشان داده می‌شوند؟</div>
     <ul class="small mt-1">
       <li>هر مطلب در یک «بخش» دسته‌بندی می‌شود و مشتری از دکمه‌های ربات فقط مطالب <span class="strong">فعال</span> را می‌بیند.</li>
-      <li>ترتیب نمایش با فیلد «ترتیب» تعیین می‌شود؛ عدد کوچک‌تر بالاتر می‌آید.</li>
+      <li>ترتیب نمایش را با کشیدن ردیف‌ها تعیین می‌کنید؛ ردیف بالاتر، در ربات جلوتر دیده می‌شود.</li>
       <li>برای هر پلتفرم می‌توانید مطلب جدا بسازید؛ گزینه‌ی «همه دستگاه‌ها» به همه نشان داده می‌شود.</li>
     </ul>
   </div>
@@ -56,11 +56,12 @@
 <div class="card">
   <div class="card__body card__body--flush">
     {% if rows %}
+      <div class="hint" style="padding:12px 16px 0">برای تغییر ترتیب، ردیف‌ها را بکشید.</div>
       <div class="table-wrap">
         <table class="table" id="guides-table">
           <thead>
             <tr>
-              <th>ترتیب</th>
+              <th></th>
               <th>عنوان</th>
               <th>بخش</th>
               <th>پلتفرم</th>
@@ -69,10 +70,10 @@
               <th></th>
             </tr>
           </thead>
-          <tbody>
+          <tbody data-drag-list="guides" data-drag-next="{{ base_url }}?section={{ active_section }}{% if q %}&q={{ q|urlencode }}{% endif %}">
             {% for guide in rows %}
-            <tr>
-              <td class="num">{{ guide.sort_order|fa }}</td>
+            <tr data-drag-id="{{ guide.id }}">
+              <td class="drag-cell"><span class="drag-handle" data-drag-handle tabindex="0" title="برای جابه‌جایی بکشید" aria-hidden="true">⠿</span></td>
               <td>
                 <div class="strong truncate">{{ guide.title }}</div>
                 <div class="small dim truncate">{{ guide.body|striptags|trim|truncate(70)|none_dash }}</div>
@@ -160,10 +161,6 @@
               {% endfor %}
             </select>
           </div>
-          <div class="field">
-            <label class="label" for="new-sort">ترتیب</label>
-            <input class="input" id="new-sort" name="sort_order" type="number" value="0" step="1">
-          </div>
           <div class="field field--full">
             <label class="label" for="new-body">متن مطلب</label>
             <textarea class="textarea" id="new-body" name="body" rows="12" spellcheck="false"
@@ -238,11 +235,6 @@
               <option value="{{ key }}" {% if guide.platform == key %}selected{% endif %}>{{ label }}</option>
               {% endfor %}
             </select>
-          </div>
-          <div class="field">
-            <label class="label" for="sort-{{ guide.id }}">ترتیب</label>
-            <input class="input" id="sort-{{ guide.id }}" name="sort_order" type="number" step="1"
-                   value="{{ guide.sort_order }}">
           </div>
           <div class="field field--full">
             <label class="label" for="body-{{ guide.id }}">متن مطلب</label>

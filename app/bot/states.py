@@ -48,6 +48,7 @@ class AdminStates(StatesGroup):
     searching_user = State()
     user_card = State()
     entering_broadcast = State()
+    broadcast_audience = State()
     confirming_broadcast = State()
     entering_balance = State()
     entering_note = State()

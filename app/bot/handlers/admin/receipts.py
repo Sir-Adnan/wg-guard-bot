@@ -23,7 +23,7 @@ from app.core.money import format_amount, format_rial
 from app.db.models import Order, OrderStatus, Receipt, ReceiptStatus, Staff, User
 from app.services.notifications import notifier
 from app.services.receipts import receipt_service
-from app.services.texts import html_escape, texts
+from app.services.texts import html_escape
 
 log = get_logger(__name__)
 router = Router(name="admin_receipts")
@@ -51,15 +51,7 @@ async def approve_receipt(
 
     await receipt_service.refresh_copies(session, receipt, reviewer=staff, decision="approved")
     await callback.answer("✅ رسید تأیید شد.")
-    await notifier.to_user(
-        receipt.user,
-        await texts.get(
-            "receipt.approved",
-            session,
-            code=receipt.code,
-            amount=format_amount(receipt.amount_rial),
-        ),
-    )
+    await receipt_service.notify_customer(session, receipt, approved=True)
 
     # A purchase receipt that is approved must immediately become a service.
     order = receipt.order
@@ -156,10 +148,8 @@ async def reject_with_template(
 async def _reject(session: AsyncSession, receipt: Receipt, staff: Staff, reason: str, event) -> None:
     outcome = await receipt_service.reject(session, receipt, staff, reason=reason)
     if not outcome.accepted:
-        await notifier.send(
-            staff.telegram_id or 0,
-            f"⚠️ {outcome.message}",
-        )
+        who = outcome.already_reviewed_by or "یکی از همکاران"
+        await show(event, f"⚠️ {outcome.message}\n({who})")
         await receipt_service.refresh_copies(session, receipt, reviewer=None, decision=receipt.status.value)
         return
 
@@ -170,6 +160,8 @@ async def _reject(session: AsyncSession, receipt: Receipt, staff: Staff, reason:
             event,
             f"❌ رسید <code>{receipt.code}</code> رد شد و به کاربر اطلاع داده شد.",
         )
+    elif isinstance(event, CallbackQuery):
+        await event.answer("❌ رسید رد شد.")
 
 
 # ---------------------------------------------------------------------------

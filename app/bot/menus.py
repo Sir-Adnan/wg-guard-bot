@@ -12,6 +12,7 @@ from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot import nav
 from app.bot.callbacks import (
     AdminCB,
     BuyCB,
@@ -80,7 +81,9 @@ async def main_menu(
     kb.row()
     await kb.add("menu.channels", callback=MenuCB(action="channels").pack())
     if is_staff:
-        await kb.add("admin.broadcast", callback=AdminCB(action="menu", page=1).pack(), new_row=True)
+        # Straight to the broadcast flow: pointing this at the admin menu made
+        # the button look broken.
+        await kb.add("admin.broadcast", callback=AdminCB(action="broadcast").pack(), new_row=True)
     return kb.build()
 
 
@@ -113,12 +116,13 @@ async def category_list(
     total_pages: int = 1,
     show_all: bool = True,
     show_featured: bool = False,
-    back_action: str = "back",
+    back: str | None = None,
 ) -> KB:
     """Buttons for one level of the category tree.
 
     ``nodes`` may be :class:`~app.services.categories.CategoryNode` objects or
-    plain :class:`~app.db.models.PlanCategory` rows.
+    plain :class:`~app.db.models.PlanCategory` rows.  ``back`` is the payload of
+    the parent screen (see :mod:`app.bot.nav`) — never a guess.
     """
     kb = KeyboardBuilder(session=session, columns=2)
     for node in nodes:
@@ -134,7 +138,7 @@ async def category_list(
     if show_featured:
         await kb.add("shop.featured", callback=CatCB(action="featured").pack())
     if show_all:
-        await kb.add("shop.all_plans", callback=CatCB(action="root", category_id=0, page=1).pack())
+        await kb.add("shop.all_plans", callback=nav.shop_all())
     if total_pages > 1:
         kb.row()
         if page > 1:
@@ -142,7 +146,7 @@ async def category_list(
         if page < total_pages:
             await kb.add("common.next_page", callback=CatCB(action="page", page=page + 1).pack())
     kb.row()
-    await kb.add("menu.back", callback=CatCB(action=back_action, category_id=0, page=0).pack())
+    await kb.add("menu.back", callback=back or nav.main())
     return kb.build()
 
 
@@ -166,14 +170,14 @@ async def guide_sections(session: AsyncSession | None, counts: dict[str, int]) -
     return kb.build()
 
 
-async def guide_list(session: AsyncSession | None, items: Sequence, section: str) -> KB:
+async def guide_list(session: AsyncSession | None, items: Sequence, section: str, *, back: str | None = None) -> KB:
     from app.bot.callbacks import GuideCB
 
     kb = KeyboardBuilder(session=session, columns=1)
     for guide in items:
         await kb.add("guide.read", text=guide.title[:60], callback=GuideCB(action="read", guide_id=guide.id).pack())
     kb.row()
-    await kb.add("menu.back", callback=GuideCB(action="section", section="__root__").pack())
+    await kb.add("menu.back", callback=back or nav.guides_root())
     return kb.build()
 
 
@@ -196,13 +200,21 @@ async def plan_list(
     *,
     page_action: str = "page",
     category_id: int = 0,
-    back_category_id: int | None = None,
+    back: str | None = None,
 ) -> KB:
-    """A list of plans with optional pagination inside the category tree."""
+    """A list of plans with optional pagination inside the category tree.
+
+    ``back`` is the payload of the screen that opened this list; each plan
+    button carries the page so the plan card can offer the same one back.
+    """
     kb = KeyboardBuilder(session=session, columns=1)
     for plan in plans:
         visual = "shop.test_plan" if plan.is_test else "shop.plan"
-        await kb.add(visual, text=_plan_button_label(plan), callback=PlanCB(action="view", plan_id=plan.id).pack())
+        await kb.add(
+            visual,
+            text=_plan_button_label(plan),
+            callback=PlanCB(action="view", plan_id=plan.id, page=page).pack(),
+        )
     if total_pages > 1:
         kb.row()
         if page > 1:
@@ -216,10 +228,7 @@ async def plan_list(
                 callback=CatCB(action=page_action, category_id=category_id, page=page + 1).pack(),
             )
     kb.row()
-    if back_category_id is None:
-        await kb.add("menu.back", callback=CatCB(action="home", category_id=0, page=0).pack())
-    else:
-        await kb.add("menu.back", callback=CatCB(action="open", category_id=back_category_id).pack())
+    await kb.add("menu.back", callback=back or nav.shop_home())
     return kb.build()
 
 
@@ -231,12 +240,16 @@ def _plan_button_label(plan: Plan) -> str:
     return f"{plan.name} | {volume} | {price}"
 
 
-async def plan_actions(session: AsyncSession | None, plan: Plan, *, can_buy: bool = True) -> KB:
+async def plan_actions(
+    session: AsyncSession | None, plan: Plan, *, can_buy: bool = True, back: str | None = None
+) -> KB:
     kb = KeyboardBuilder(session=session, columns=1)
     if can_buy and plan.is_active:
         await kb.add("shop.buy_now", callback=PlanCB(action="buy", plan_id=plan.id).pack())
     kb.row()
-    await kb.add("menu.back", callback=PlanCB(action="page", page=1).pack())
+    # The plan card is reached from a category (or the full list); ``back`` says
+    # which one, so «بازگشت» returns to that list instead of a dead payload.
+    await kb.add("menu.back", callback=back or nav.shop_home())
     return kb.build()
 
 
@@ -278,12 +291,23 @@ STATUS_DOT = {
 }
 
 
-async def service_list(session: AsyncSession | None, services: Sequence[Service], page: int, total_pages: int) -> KB:
+async def service_list(
+    session: AsyncSession | None,
+    services: Sequence[Service],
+    page: int,
+    total_pages: int,
+    *,
+    back: str | None = None,
+) -> KB:
     kb = KeyboardBuilder(session=session, columns=1)
     for service in services:
         dot = STATUS_DOT.get(service.status, "⚪️")
         label = f"{dot} {service.wg_username}"
-        await kb.add("service.manage", text=label, callback=ServiceCB(action="view", service_id=service.id).pack())
+        await kb.add(
+            "service.manage",
+            text=label,
+            callback=ServiceCB(action="view", service_id=service.id, page=page).pack(),
+        )
     if total_pages > 1:
         kb.row()
         if page > 1:
@@ -291,11 +315,11 @@ async def service_list(session: AsyncSession | None, services: Sequence[Service]
         if page < total_pages:
             await kb.add("common.next_page", callback=ServiceCB(action="page", page=page + 1).pack())
     kb.row()
-    await kb.add("menu.main", callback=NavCB(to="main").pack())
+    await kb.add("menu.main", callback=back or nav.main())
     return kb.build()
 
 
-async def service_detail(session: AsyncSession | None, service: Service) -> KB:
+async def service_detail(session: AsyncSession | None, service: Service, *, page: int = 1) -> KB:
     kb = KeyboardBuilder(session=session, columns=2)
     await kb.add("service.config", callback=ServiceCB(action="config", service_id=service.id).pack())
     await kb.add("service.qr", callback=ServiceCB(action="qr", service_id=service.id).pack())
@@ -306,7 +330,8 @@ async def service_detail(session: AsyncSession | None, service: Service) -> KB:
     await kb.add("service.autorenew", callback=ServiceCB(action="autorenew", service_id=service.id).pack())
     await kb.add("service.rotate", callback=ServiceCB(action="rotate", service_id=service.id).pack())
     kb.row()
-    await kb.add("menu.back", callback=ServiceCB(action="list").pack())
+    # Back to the list *page* the customer came from, not always page one.
+    await kb.add("menu.back", callback=ServiceCB(action="list", page=page).pack())
     return kb.build()
 
 
@@ -389,7 +414,9 @@ async def ticket_actions(session: AsyncSession | None, ticket_id: int) -> KB:
     await kb.add("support.reply", callback=SupportCB(action="reply", ticket_id=ticket_id).pack())
     await kb.add("support.close_ticket", callback=SupportCB(action="close", ticket_id=ticket_id).pack())
     kb.row()
-    await kb.add("menu.back", callback=SupportCB(action="menu").pack())
+    # Back to the ticket *list*: the support menu would hide the ticket the
+    # customer is reading.
+    await kb.add("menu.back", callback=nav.tickets())
     return kb.build()
 
 

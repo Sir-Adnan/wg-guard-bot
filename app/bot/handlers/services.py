@@ -38,9 +38,11 @@ async def list_services(callback: CallbackQuery, session: AsyncSession, user: Us
 
 
 @router.callback_query(ServiceCB.filter(F.action == "list"))
-async def list_services_again(callback: CallbackQuery, session: AsyncSession, user: User) -> None:
+async def list_services_again(
+    callback: CallbackQuery, callback_data: ServiceCB, session: AsyncSession, user: User
+) -> None:
     await answer_callback(callback)
-    await _render_list(callback, session, user, page=1)
+    await _render_list(callback, session, user, page=callback_data.page or 1)
 
 
 @router.callback_query(ServiceCB.filter(F.action == "page"))
@@ -89,7 +91,9 @@ async def view_service(callback: CallbackQuery, callback_data: ServiceCB, sessio
         return
     await answer_callback(callback)
     await show(
-        callback, await delivery.service_summary(session, service), keyboard=await service_detail(session, service)
+        callback,
+        await delivery.service_summary(session, service),
+        keyboard=await service_detail(session, service, page=callback_data.page or 1),
     )
 
 
@@ -129,7 +133,11 @@ async def send_link(callback: CallbackQuery, callback_data: ServiceCB, session: 
         return
     await answer_callback(callback)
     if not await delivery.send_subscription(session, service):
-        await show(callback, await texts.get("error.panel_down", session))
+        await show(
+            callback,
+            await texts.get("error.panel_down", session),
+            keyboard=await service_detail(session, service, page=callback_data.page or 1),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -164,10 +172,18 @@ async def do_rotate(callback: CallbackQuery, callback_data: ServiceCB, session: 
     try:
         _config, _link = await provisioning.rotate_access(session, service)
     except AppError as exc:
-        await show(callback, f"⚠️ {html_escape(exc.message)}")
+        await show(
+            callback,
+            f"⚠️ {html_escape(exc.message)}",
+            keyboard=await service_detail(session, service, page=callback_data.page or 1),
+        )
         return
 
-    await show(callback, await texts.get("service.rotated", session))
+    await show(
+        callback,
+        await texts.get("service.rotated", session),
+        keyboard=await service_detail(session, service, page=callback_data.page or 1),
+    )
     device = delivery.primary_device(service)
     if device is not None:
         await session.refresh(device)
@@ -352,7 +368,7 @@ async def toggle_autorenew(
         return
 
     await answer_callback(callback, "انجام شد ✅")
-    await show(callback, message, keyboard=await service_detail(session, service))
+    await show(callback, message, keyboard=await service_detail(session, service, page=callback_data.page or 1))
 
 
 # ---------------------------------------------------------------------------

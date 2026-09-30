@@ -19,7 +19,10 @@ import os
 import sys
 from collections.abc import AsyncIterator
 from contextlib import suppress
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -47,7 +50,14 @@ os.environ["TEST_DATABASE_URL"] = TEST_DB_URL
 
 import httpx  # noqa: E402
 
+import app.db.models  # noqa: E402, F401  (registers every table on Base.metadata)
 from app.db.base import Base  # noqa: E402
+
+# Importing the models here is deliberate and load-bearing: ``database_schema``
+# builds the schema from ``Base.metadata`` at session start, so a test module
+# that never happens to import the models would otherwise see an *empty*
+# metadata, create no tables, and fail much later with a baffling
+# "relation users does not exist" from the first TRUNCATE.
 
 # ---------------------------------------------------------------------------
 # Database
@@ -385,3 +395,142 @@ def wire_panel_transport(panel_transport, monkeypatch):
 def settings_env():
     """Base URL + token of the mock panel as the client expects them."""
     return {"base_url": "http://panel.test", "token": "wg_test_token"}
+
+
+# ---------------------------------------------------------------------------
+# Panel session helpers
+# ---------------------------------------------------------------------------
+#: Password of the :func:`owner` fixture.  Tests that sign in to the panel use
+#: it directly, so it lives here rather than in one test module.
+PANEL_PASSWORD = "Owner-pass-123"
+
+
+@pytest.fixture
+async def owner(session):
+    """An owner staff row that can sign in to the panel."""
+    from app.core.security import hash_password
+    from app.db.models import Staff, StaffRole
+
+    row = Staff(
+        name="مالک تست",
+        role=StaffRole.OWNER,
+        login="owner",
+        password_hash=hash_password(PANEL_PASSWORD),
+        receive_receipts=True,
+        is_active=True,
+    )
+    session.add(row)
+    await session.commit()
+    return row
+
+
+@pytest.fixture
+async def app_client() -> AsyncIterator[httpx.AsyncClient]:
+    """An httpx client for the real panel app, without background workers."""
+    from app.web.app import create_app
+
+    app = create_app(start_background=False)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://panel.test", follow_redirects=False) as client:
+        yield client
+
+
+@pytest.fixture
+async def signed_in_client(app_client: httpx.AsyncClient, owner) -> httpx.AsyncClient:
+    """A panel client that has completed the real login flow."""
+    response = await app_client.post("/panel/login", data={"login": "owner", "password": PANEL_PASSWORD})
+    assert response.status_code == 303, response.text
+    return app_client
+
+
+# ---------------------------------------------------------------------------
+# Telegram doubles
+# ---------------------------------------------------------------------------
+@dataclass
+class RecordingBot:
+    """Minimal stand-in for ``aiogram.Bot`` that records what it was called with.
+
+    Every outbound message goes through :class:`~app.services.notifications.Notifier`,
+    which calls a different ``Bot`` method per media kind — so a test can assert
+    exactly which keywords reached which method.
+    """
+
+    calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+
+    def _record(self, name: str, kwargs: dict[str, Any]) -> Any:
+        self.calls.append((name, kwargs))
+        message = SimpleNamespace(message_id=len(self.calls), chat=SimpleNamespace(id=kwargs.get("chat_id")))
+        return message
+
+    async def send_message(self, **kwargs: Any) -> Any:
+        return self._record("send_message", kwargs)
+
+    async def send_photo(self, **kwargs: Any) -> Any:
+        return self._record("send_photo", kwargs)
+
+    async def send_document(self, **kwargs: Any) -> Any:
+        return self._record("send_document", kwargs)
+
+    async def send_video(self, **kwargs: Any) -> Any:
+        return self._record("send_video", kwargs)
+
+    async def send_animation(self, **kwargs: Any) -> Any:
+        return self._record("send_animation", kwargs)
+
+    async def send_media_group(self, **kwargs: Any) -> Any:
+        return self._record("send_media_group", kwargs)
+
+    async def edit_message_text(self, **kwargs: Any) -> Any:
+        return self._record("edit_message_text", kwargs)
+
+    async def edit_message_caption(self, **kwargs: Any) -> Any:
+        return self._record("edit_message_caption", kwargs)
+
+    async def edit_message_media(self, **kwargs: Any) -> Any:
+        return self._record("edit_message_media", kwargs)
+
+    async def copy_message(self, **kwargs: Any) -> Any:
+        return self._record("copy_message", kwargs)
+
+    async def forward_message(self, **kwargs: Any) -> Any:
+        return self._record("forward_message", kwargs)
+
+    def methods(self) -> list[str]:
+        return [name for name, _ in self.calls]
+
+    def kwargs_of(self, name: str) -> dict[str, Any]:
+        """The keywords of the first call to ``name`` (fails loudly if absent)."""
+        for called, kwargs in self.calls:
+            if called == name:
+                return kwargs
+        raise AssertionError(f"{name} was never called; saw {self.methods()}")
+
+
+@pytest.fixture
+def recording_bot() -> RecordingBot:
+    """A bot double that captures every outbound call."""
+    return RecordingBot()
+
+
+@pytest.fixture
+def sender(recording_bot: RecordingBot):
+    """A bound :class:`Notifier` wired to :func:`recording_bot`."""
+    from app.services.notifications import Notifier
+
+    notifier = Notifier()
+    notifier.bind(recording_bot)  # type: ignore[arg-type]
+    return notifier
+
+
+@pytest.fixture
+def bound_notifier(recording_bot: RecordingBot):
+    """Bind the *process-wide* notifier to the recording bot for one test.
+
+    Services reach for the singleton, so this is how a test observes what a
+    service sent without a Telegram connection.
+    """
+    from app.services.notifications import notifier
+
+    notifier.bind(recording_bot)  # type: ignore[arg-type]
+    yield notifier
+    notifier.unbind()

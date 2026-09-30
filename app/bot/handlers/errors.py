@@ -1,16 +1,24 @@
-"""Global error handling and the catch-all reply.
+"""Global error handling, the catch-all reply and the stale-button net.
 
 Registered last on the dispatcher so it only sees updates nothing else wanted.
+That is exactly why the callback catch-all belongs here: a button whose payload
+no handler answers (an old message from before an update, or a menu the owner
+reconfigured) is otherwise **silently ignored** — Telegram keeps the little
+clock spinning on the button and the customer assumes the bot is broken.
 """
 
 from __future__ import annotations
 
 from aiogram import Router
-from aiogram.types import ErrorEvent, Message
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, ErrorEvent, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.menus import default_main_menu
+from app.bot.utils import show
 from app.core.errors import AppError
 from app.core.logging import get_logger
+from app.db.models import User
 from app.services.notifications import notifier
 from app.services.texts import html_escape, texts
 
@@ -54,11 +62,39 @@ async def on_error(event: ErrorEvent) -> bool:
 
 
 @router.message()
-async def fallback(message: Message, session: AsyncSession) -> None:
+async def fallback(message: Message, session: AsyncSession, user: User, staff=None) -> None:
     """Anything the user types outside a flow gets a helpful nudge."""
     hint = "متوجه نشدم 🤔\n\nبرای ادامه از منوی زیر استفاده کنید. اگر سؤالی دارید، بخش «پشتیبانی» در خدمت شماست."
     body = await texts.get("common.back_menu_hint", session)
-    await notifier.send(message.chat.id, f"{hint}\n\n<i>{html_escape(body)}</i>")
+    await notifier.send(
+        message.chat.id,
+        f"{hint}\n\n<i>{html_escape(body)}</i>",
+        keyboard=await default_main_menu(session, is_staff=bool(staff)),
+    )
+
+
+@router.callback_query()
+async def stale_button(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    state: FSMContext,
+    user: User,
+    staff=None,
+) -> None:
+    """A button nothing answers: say so and hand the customer the main menu.
+
+    Also clears the FSM state — a stale button usually means the customer
+    wandered off mid-flow, and leaving them in ``awaiting_receipt`` would make
+    their next message disappear into a handler they are not expecting.
+    """
+    log.info("Unanswered callback data: %r", callback.data)
+    await state.clear()
+    await callback.answer(await texts.get("error.expired_action", session), show_alert=True)
+    await show(
+        callback,
+        await texts.get("error.expired_action", session),
+        keyboard=await default_main_menu(session, is_staff=bool(staff)),
+    )
 
 
 __all__ = ["router"]

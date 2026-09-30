@@ -8,9 +8,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot import nav
 from app.bot.callbacks import MenuCB, NavCB, ReferralCB
 from app.bot.keyboards import KeyboardBuilder
-from app.bot.menus import default_main_menu, wallet_menu
+from app.bot.menus import back_to_main, default_main_menu
 from app.bot.utils import answer_callback, show
 from app.core.config import settings
 from app.core.jalali import jalali_date
@@ -58,13 +59,13 @@ async def command_menu(message: Message, session: AsyncSession, user: User, staf
 
 @router.message(Command("help"))
 async def command_help(message: Message, session: AsyncSession) -> None:
-    await show(message, await texts.get("start.help", session))
+    await show(message, await texts.get("start.help", session), keyboard=await back_to_main(session))
 
 
 @router.message(Command("rules"))
 async def command_rules(message: Message, session: AsyncSession) -> None:
     """``/rules`` is advertised in the bot command menu — keep it answering."""
-    await show(message, await texts.get("rules.text", session))
+    await show(message, await texts.get("rules.text", session), keyboard=await back_to_main(session))
 
 
 @router.callback_query(NavCB.filter(F.to == "main"))
@@ -77,14 +78,9 @@ async def nav_main(
     )
 
 
-@router.callback_query(NavCB.filter(F.to == "wallet"))
-async def nav_wallet(callback: CallbackQuery, session: AsyncSession, user: User) -> None:
-    await answer_callback(callback)
-    await show(
-        callback,
-        await texts.get("wallet.title", session, balance=format_amount(user.balance_rial)),
-        keyboard=await wallet_menu(session),
-    )
+# ``NavCB(to="wallet")`` is owned by the wallet router, which checks the feature
+# gate first.  A second handler here used to shadow it, so the wallet stayed
+# reachable from a back button after the owner switched it off.
 
 
 @router.callback_query(MenuCB.filter(F.action == "profile"))
@@ -113,7 +109,7 @@ async def menu_profile(callback: CallbackQuery, session: AsyncSession, user: Use
 async def menu_referral(callback: CallbackQuery, session: AsyncSession, user: User) -> None:
     await answer_callback(callback)
     if not app_settings.get_bool("shop.referral_enabled", True):
-        await show(callback, await texts.get("error.not_found", session))
+        await show(callback, await texts.get("error.not_found", session), keyboard=await back_to_main(session))
         return
 
     from app.services.notifications import notifier as _notifier
@@ -123,7 +119,7 @@ async def menu_referral(callback: CallbackQuery, session: AsyncSession, user: Us
         try:
             username = (await _notifier.bot.get_me()).username
         except Exception:  # pragma: no cover - bot not running
-            await show(callback, await texts.get("error.generic", session))
+            await show(callback, await texts.get("error.generic", session), keyboard=await back_to_main(session))
             return
     link = f"https://t.me/{username}?start=ref{user.referral_code}"
     percent = app_settings.get_float("shop.referral_percent", 0.0)
@@ -136,13 +132,13 @@ async def menu_referral(callback: CallbackQuery, session: AsyncSession, user: Us
         count=str(stats.referrals),
         earnings=format_amount(user.referral_earnings_rial),
     )
-    await show(callback, body)
+    await show(callback, body, keyboard=await back_to_main(session))
 
 
 @router.callback_query(MenuCB.filter(F.action == "rules"))
 async def menu_rules(callback: CallbackQuery, session: AsyncSession) -> None:
     await answer_callback(callback)
-    await show(callback, await texts.get("rules.text", session))
+    await show(callback, await texts.get("rules.text", session), keyboard=await back_to_main(session))
 
 
 @router.callback_query(MenuCB.filter(F.action == "channels"))
@@ -150,7 +146,7 @@ async def menu_channels(callback: CallbackQuery, session: AsyncSession) -> None:
     await answer_callback(callback)
     channels = await membership.active_channels(session)
     if not channels:
-        await show(callback, await texts.get("error.not_found", session))
+        await show(callback, await texts.get("error.not_found", session), keyboard=await back_to_main(session))
         return
     kb = KeyboardBuilder(session=session, columns=1)
     for channel in channels:
@@ -232,7 +228,7 @@ async def _open_plan(message: Message, session: AsyncSession, plan_id: int) -> N
         return
     from app.bot.handlers.shop import render_plan
 
-    text, keyboard = await render_plan(session, plan)
+    text, keyboard = await render_plan(session, plan, back=nav.main())
     await show(message, text, keyboard=keyboard)
 
 
@@ -258,9 +254,9 @@ async def command_version(message: Message) -> None:
 
 
 @router.message(Command("cancel"))
-async def command_cancel(message: Message, state: FSMContext) -> None:
+async def command_cancel(message: Message, session: AsyncSession, state: FSMContext) -> None:
     await state.clear()
-    await show(message, await texts.get("common.canceled"))
+    await show(message, await texts.get("common.canceled", session), keyboard=await back_to_main(session))
 
 
 @router.callback_query(ReferralCB.filter())

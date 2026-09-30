@@ -174,6 +174,15 @@ def _specs() -> dict[str, SettingSpec]:
         ),
         SettingSpec("appearance.plan_columns", "تعداد پلن در هر ردیف", "appearance", "int", 1, minimum=1, maximum=2),
         SettingSpec("appearance.show_plan_price_in_list", "نمایش قیمت در فهرست پلن‌ها", "appearance", "bool", True),
+        SettingSpec(
+            "appearance.reply_keyboard",
+            "کیبورد فیزیکی",
+            "appearance",
+            "bool",
+            False,
+            "یک منوی متنی زیر کادر پیام نشان می‌دهد که بعد از بستن ربات هم می‌ماند. "
+            "منوی شیشه‌ای سر جای خودش است و هر دو با هم کار می‌کنند.",
+        ),
         # -- advanced ------------------------------------------------------
         SettingSpec(
             "advanced.panel_selection",
@@ -395,6 +404,15 @@ def premium_emoji_enabled() -> bool:
     return app_settings.get_bool("appearance.premium_emoji", True)
 
 
+def reply_keyboard_enabled() -> bool:
+    """Should the bot offer the physical (reply) keyboard as well?
+
+    Off by default: the inline menu already covers every screen, and a reply
+    keyboard occupies the bottom of the chat on a phone.
+    """
+    return app_settings.get_bool("appearance.reply_keyboard", False)
+
+
 __all__ = [
     "GROUP_LABELS",
     "SETTING_KEYS",
@@ -406,6 +424,7 @@ __all__ = [
     "card_payments_enabled",
     "maintenance_mode",
     "premium_emoji_enabled",
+    "reply_keyboard_enabled",
     "shop_name",
     "spec_groups",
     "test_service_enabled",

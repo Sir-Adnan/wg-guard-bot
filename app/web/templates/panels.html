@@ -90,16 +90,13 @@
   </div>
 
   <div class="field">
-    <label class="label" for="pprio-{{ key }}">اولویت</label>
+    <label class="label" for="pprio-{{ key }}">اولویت انتخاب</label>
     <input class="input input--num" id="pprio-{{ key }}" name="priority" type="number"
            value="{{ panel.priority if panel else 100 }}">
-    <div class="hint">عدد بزرگ‌تر یعنی زودتر انتخاب می‌شود.</div>
-  </div>
-
-  <div class="field">
-    <label class="label" for="psort-{{ key }}">ترتیب نمایش</label>
-    <input class="input input--num" id="psort-{{ key }}" name="sort_order" type="number"
-           value="{{ panel.sort_order if panel else 0 }}">
+    <div class="hint">
+      عدد بزرگ‌تر زودتر انتخاب می‌شود. اولویت تعیین می‌کند وقتی چند پنل می‌توانند یک پلن را بسازند کدام برنده است؛
+      ترتیب نمایش فهرست را با کشیدن ردیف‌ها عوض کنید.
+    </div>
   </div>
 
   <div class="field field--full">
@@ -144,17 +141,19 @@
   </div>
   <div class="card__body card__body--flush">
     {% if rows %}
+      <div class="hint" style="padding:12px 16px 0">برای تغییر ترتیب، ردیف‌ها را بکشید.</div>
       <div class="table-wrap">
         <table class="table">
           <thead>
             <tr>
-              <th>نام</th><th>نوع</th><th>آدرس</th><th>سلامت</th><th>سرویس</th>
+              <th></th><th>نام</th><th>نوع</th><th>آدرس</th><th>سلامت</th><th>سرویس</th>
               <th>نسخه</th><th>وضعیت</th><th></th>
             </tr>
           </thead>
-          <tbody>
+          <tbody data-drag-list="panels" data-drag-next="{{ base_url }}">
             {% for panel in rows %}
-            <tr>
+            <tr data-drag-id="{{ panel.id }}">
+              <td class="drag-cell"><span class="drag-handle" data-drag-handle tabindex="0" title="برای جابه‌جایی بکشید" aria-hidden="true">⠿</span></td>
               <td>
                 <div class="strong">
                   {{ panel.name }}

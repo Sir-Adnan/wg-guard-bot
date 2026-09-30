@@ -41,10 +41,18 @@ class CategoryService:
     """CRUD and traversal for :class:`~app.db.models.PlanCategory`."""
 
     # -- reads -------------------------------------------------------------
-    async def get(self, session: AsyncSession, category_id: int) -> PlanCategory:
+    async def get(self, session: AsyncSession, category_id: int, *, require_visible: bool = False) -> PlanCategory:
+        """Load one category.
+
+        ``require_visible`` is what the bot passes: a stale or hand-made callback
+        payload must not open a category the owner hid or switched off.  The
+        panel deliberately reads hidden rows too, so it is opt-in.
+        """
         node = await session.get(PlanCategory, category_id)
         if node is None:
             raise NotFoundError("دسته‌بندی مورد نظر پیدا نشد.")
+        if require_visible and not (node.is_active and node.is_visible):
+            raise NotFoundError("این دسته‌بندی در دسترس نیست.")
         return node
 
     async def all(self, session: AsyncSession, *, active_only: bool = False) -> list[PlanCategory]:

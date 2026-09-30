@@ -19,6 +19,7 @@ from app.core.errors import AppError, ValidationError
 from app.core.money import fa_digits
 from app.db.models import Staff
 from app.services.guides import PLATFORM_LABELS, SECTION_LABELS, guides
+from app.services.ordering import next_sort_order
 from app.web.deps import form_bool, form_dict, form_int, form_str
 from app.web.security import get_db_session, require_manager, verify_csrf
 from app.web.templating import redirect, render
@@ -46,7 +47,15 @@ ROW_LIMIT = 200
 # ---------------------------------------------------------------------------
 # کمک‌کننده‌ها
 # ---------------------------------------------------------------------------
-def _payload(form: dict[str, Any]) -> dict[str, Any]:
+def _submitted_sort_order(form: dict[str, Any]) -> int | None:
+    """``sort_order`` only when the form carried one; dragging owns it otherwise."""
+    raw = form.get("sort_order")
+    if raw is None or form_str(form, "sort_order") == "":
+        return None
+    return form_int(form, "sort_order", 0)
+
+
+async def _payload(session: AsyncSession, form: dict[str, Any], *, creating: bool) -> dict[str, Any]:
     """فیلدهای فرم را به ستون‌های :class:`~app.db.models.Guide` تبدیل می‌کند."""
     title = form_str(form, "title")
     if not title:
@@ -64,16 +73,22 @@ def _payload(form: dict[str, Any]) -> dict[str, Any]:
     if media_type not in MEDIA_VALUES:
         raise ValidationError("نوع پیوست نامعتبر است.")
 
-    return {
+    data: dict[str, Any] = {
         "title": title[:160],
         "section": section,
         "platform": platform,
         "body": form_str(form, "body"),
         "media_file_id": form_str(form, "media_file_id") or None,
         "media_type": None if media_type == "none" else media_type,
-        "sort_order": form_int(form, "sort_order", 0),
         "is_active": form_bool(form, "is_active"),
     }
+
+    submitted = _submitted_sort_order(form)
+    if submitted is not None:
+        data["sort_order"] = submitted
+    elif creating:
+        data["sort_order"] = await next_sort_order(session, "guides")
+    return data
 
 
 def _back(form: dict[str, Any]) -> str:
@@ -155,7 +170,7 @@ async def create_guide(
     verify_csrf(request, form.get("csrf_token"))
 
     try:
-        guide = await guides.create(session, **_payload(form))
+        guide = await guides.create(session, **await _payload(session, form, creating=True))
         title = guide.title
         await session.commit()
     except AppError as exc:
@@ -175,7 +190,7 @@ async def update_guide(
     verify_csrf(request, form.get("csrf_token"))
 
     try:
-        data = _payload(form)
+        data = await _payload(session, form, creating=False)
         # پیوست جداست: سرویس مقدار ``None`` را «تغییر نده» می‌فهمد، ولی
         # اپراتور باید بتواند پیوست را هم بردارد.
         guide = await guides.update(

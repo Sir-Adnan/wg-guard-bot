@@ -19,7 +19,9 @@
       ربات بین پیام‌ها به‌صورت خودکار فاصله می‌گذارد تا حساب ربات محدود یا مسدود نشود؛
       بنابراین ارسال به چند هزار کاربر چند دقیقه طول می‌کشد و کاملاً طبیعی است.
       می‌توانید این صفحه را ببندید: ارسال در پس‌زمینه ادامه پیدا می‌کند و ستون «ارسال‌شده/کل» به‌روز می‌شود.
-      هر کارزاری که لغو شود، بعداً با دکمه‌ی «ادامه» از همان‌جا که مانده پیگیری می‌شود.
+      لغو، ارسال را همان‌جا متوقف می‌کند؛ اگر بعداً «ارسال دوباره» را بزنید، پیام
+      <span class="strong">از ابتدا برای همه‌ی مخاطبان</span> فرستاده می‌شود،
+      چون ربات نمی‌داند کدام کاربر پیام را گرفته است.
     </div>
   </div>
 </div>
@@ -44,7 +46,10 @@
             تگ‌های <code class="code">&lt;b&gt;</code>، <code class="code">&lt;i&gt;</code> و
             <code class="code">&lt;code&gt;</code> پشتیبانی می‌شوند و جایگیرهای ایموجی پرمیوم
             مانند <code class="code">{e:cart}</code> با تصویر اختصاصی همان کلید فرستاده می‌شوند.
-            برای پاراگراف تازه یک خط خالی بگذارید.
+            برای پاراگراف تازه یک خط خالی بگذارید. نام کاربر با <code class="code">{name}</code>
+            و نام فروشگاه با <code class="code">{shop}</code> جای‌گذاری می‌شود.
+            اگر می‌خواهید پست آماده‌ای با ایموجی پرمیوم و دکمه‌های خودش برود، همان پیام را
+            از داخل ربات (منوی مدیریت ← پیام همگانی) برای ربات بفرستید؛ آن پیام عیناً کپی می‌شود.
           </div>
         </div>
 
@@ -89,6 +94,18 @@
           </div>
         </div>
 
+        <div class="field mt-3">
+          <label class="label" for="b-buttons">دکمه‌های زیر پیام (اختیاری)</label>
+          <textarea class="textarea" id="b-buttons" name="buttons" rows="3"
+                    placeholder="خرید سرویس | https://t.me/your_channel"></textarea>
+          <div class="hint">
+            هر خط یک دکمه: <code class="code">متن دکمه | لینک</code>. لینک باید با
+            <code class="code">https://</code> یا <code class="code">http://</code> شروع شود.
+            حداکثر ۶ دکمه، دو تا در هر ردیف. جایگیر ایموجی مثل <code class="code">{e:cart}</code>
+            در متن دکمه هم با تصویر اختصاصی همان کلید نمایش داده می‌شود.
+          </div>
+        </div>
+
         <div class="row row--between mt-3">
           <span class="hint">ارسال به‌صورت خودکار با فاصله انجام می‌شود؛ دکمه را چند بار نزنید.</span>
           <button class="btn btn--primary" type="submit">{{ icon('send') }} ثبت و ارسال</button>
@@ -108,9 +125,10 @@
         <div class="small dim">ربات WG-Guard</div>
         <div class="preview-bubble" id="preview-bubble">متن پیام شما همین‌جا نمایش داده می‌شود…</div>
         <div class="small dim" id="preview-media" hidden></div>
+        <div id="preview-keyboard" hidden></div>
       </div>
       <div class="hint mt-2">
-        پیش‌نمایش تقریبی است و فقط متن و نوع پیوست را نشان می‌دهد؛
+        پیش‌نمایش تقریبی است و فقط متن، پیوست و متن دکمه‌ها را نشان می‌دهد؛
         ایموجی‌های پرمیوم در تلگرام با تصویر اختصاصی نمایش داده می‌شوند.
       </div>
     </div>
@@ -147,7 +165,7 @@
               <div class="small text-info">زمان‌بندی: {{ row.scheduled_at|jdatetime }}</div>
               {% endif %}
             </td>
-            <td>{{ audience_labels.get(row.audience, row.audience) }}</td>
+            <td>{{ audience_label(row.audience) }}</td>
             <td style="min-width: 190px">
               <div class="bar-row">
                 <span class="bar-row__label">{{ row.sent|fa }} از {{ row.total|fa }}</span>
@@ -172,16 +190,19 @@
             <td class="actions">
               {% if broadcasts.is_running(row.id) %}
               <form method="post" action="{{ base_url }}/{{ row.id }}/cancel"
-                    data-confirm="ارسال همگانی «{{ audience_labels.get(row.audience, row.audience) }}» لغو شود؟ پیام‌های ارسال‌شده باقی می‌مانند و بعداً می‌توانید ادامه دهید.">
+                    data-confirm="ارسال همگانی «{{ audience_label(row.audience) }}» لغو شود؟ پیام‌های ارسال‌شده باقی می‌مانند و این کارزار بسته می‌شود.">
                 {{ csrf(csrf_token) }}
                 <button class="btn btn--sm btn--danger" type="submit">{{ icon('ban') }} لغو</button>
               </form>
               {% elif row.status.value in ('draft', 'canceled', 'failed', 'running') %}
-              <form method="post" action="{{ base_url }}/{{ row.id }}/start">
+              <form method="post" action="{{ base_url }}/{{ row.id }}/start"
+                    {% if row.status.value in ('canceled', 'failed', 'running') %}
+                    data-confirm="این کارزار از ابتدا برای همه‌ی مخاطبانش فرستاده می‌شود؛ ربات نمی‌داند چه کسی پیام را گرفته است. ادامه می‌دهید؟"
+                    {% endif %}>
                 {{ csrf(csrf_token) }}
                 <button class="btn btn--sm btn--success" type="submit">
                   {{ icon('play') }}
-                  {% if row.status.value in ('canceled', 'failed', 'running') %}ادامه
+                  {% if row.status.value in ('canceled', 'failed', 'running') %}ارسال دوباره
                   {% elif row.scheduled_at %}شروع فوری
                   {% else %}شروع{% endif %}
                 </button>
@@ -220,12 +241,15 @@
     var audience = form.querySelector("[name=audience]");
     var mediaType = form.querySelector("[name=media_type]");
     var mediaFile = form.querySelector("[name=media_file_id]");
+    var buttons = form.querySelector("[name=buttons]");
     var bubble = document.getElementById("preview-bubble");
     var mediaLine = document.getElementById("preview-media");
+    var keyboardLine = document.getElementById("preview-keyboard");
     var totalLine = document.getElementById("preview-total");
     var audienceHint = document.getElementById("audience-hint");
 
     var PLACEHOLDER = "متن پیام شما همین‌جا نمایش داده می‌شود…";
+    var MAX_BUTTONS = 6;
 
     function fa(value) {
       return String(value).replace(/[0-9]/g, function (digit) {
@@ -261,14 +285,38 @@
       }
     }
 
+    /* دکمه‌های زیر پیام — هر خط «متن | لینک»؛ فقط متن دکمه نمایش داده می‌شود. */
+    function renderKeyboard() {
+      var lines = (buttons.value || "")
+        .split("\n")
+        .map(function (line) { return line.trim(); })
+        .filter(Boolean)
+        .slice(0, MAX_BUTTONS);
+      keyboardLine.textContent = "";
+      if (!lines.length) {
+        keyboardLine.hidden = true;
+        return;
+      }
+      lines.forEach(function (line) {
+        var label = line.split("|")[0].trim() || "دکمه";
+        var chip = document.createElement("div");
+        chip.className = "preview-btn preview-btn--default mt-1";
+        chip.textContent = label;
+        keyboardLine.appendChild(chip);
+      });
+      keyboardLine.hidden = false;
+    }
+
     text.addEventListener("input", renderText);
     audience.addEventListener("change", renderAudience);
     mediaType.addEventListener("change", renderMedia);
     mediaFile.addEventListener("input", renderMedia);
+    buttons.addEventListener("input", renderKeyboard);
 
     renderText();
     renderAudience();
     renderMedia();
+    renderKeyboard();
   })();
 </script>
 {% endblock %}

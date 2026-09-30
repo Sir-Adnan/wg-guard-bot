@@ -15,6 +15,9 @@ from fastapi import APIRouter
 ROUTE_MODULES: tuple[str, ...] = (
     "auth",
     "dashboard",
+    # ``reorder`` owns one generic POST for every drag-and-drop list; it is
+    # listed early because it has a fixed path and nothing else may claim it.
+    "reorder",
     "plans",
     "categories",
     "cards",

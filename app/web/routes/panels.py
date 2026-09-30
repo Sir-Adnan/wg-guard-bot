@@ -23,6 +23,7 @@ from app.db.models import Panel, PanelHealth, Service, ServiceStatus, Staff
 from app.panels import registry
 from app.panels.manager import panel_manager
 from app.services.audit import audit
+from app.services.ordering import next_sort_order
 from app.web.deps import form_bool, form_dict, form_int, form_str
 from app.web.security import get_db_session, require_manager
 from app.web.templating import redirect, render
@@ -65,7 +66,15 @@ def _parse_options(raw: str) -> dict[str, Any]:
     return parsed
 
 
-def _payload(form: dict[str, Any], *, creating: bool) -> dict[str, Any]:
+def _submitted_sort_order(form: dict[str, Any]) -> int | None:
+    """``sort_order`` only when the form carried one; dragging owns it otherwise."""
+    raw = form.get("sort_order")
+    if raw is None or form_str(form, "sort_order") == "":
+        return None
+    return form_int(form, "sort_order", 0)
+
+
+async def _payload(session: AsyncSession, form: dict[str, Any], *, creating: bool) -> dict[str, Any]:
     name = form_str(form, "name")
     base_url = form_str(form, "base_url").rstrip("/")
     if not name:
@@ -88,13 +97,21 @@ def _payload(form: dict[str, Any], *, creating: bool) -> dict[str, Any]:
         "subscription_base_url": (form_str(form, "subscription_base_url").rstrip("/") or None),
         "default_interface_id": form_str(form, "default_interface_id") or None,
         "max_services": form_int(form, "max_services", 0) or None,
+        # اولویت انتخابِ پنل عددی می‌ماند: عدد بزرگ‌تر زودتر انتخاب می‌شود و
+        # ربطی به ترتیب نمایش فهرست (که با کشیدن ردیف‌ها تعیین می‌شود) ندارد.
         "priority": form_int(form, "priority", 100),
-        "sort_order": form_int(form, "sort_order", 0),
         "capacity_note": form_str(form, "capacity_note") or None,
         "note": form_str(form, "note") or None,
         "is_active": form_bool(form, "is_active"),
         "options": _parse_options(form_str(form, "options")),
     }
+
+    submitted = _submitted_sort_order(form)
+    if submitted is not None:
+        data["sort_order"] = submitted
+    elif creating:
+        data["sort_order"] = await next_sort_order(session, "panels")
+
     if token:
         data["api_token_encrypted"] = encrypt_secret(token, purpose="panel-token")
     secret = form_str(form, "webhook_secret")
@@ -149,7 +166,7 @@ async def create_panel(
     verify_csrf(request, form.get("csrf_token"))
 
     try:
-        data = _payload(form, creating=True)
+        data = await _payload(session, form, creating=True)
         if form_bool(form, "is_default"):
             for other in (await session.execute(select(Panel))).scalars():
                 other.is_default = False
@@ -189,7 +206,7 @@ async def update_panel(
     try:
         panel = await _get(session, panel_id)
         old_kind = panel.kind
-        data = _payload(form, creating=False)
+        data = await _payload(session, form, creating=False)
 
         if form_bool(form, "is_default"):
             for other in (await session.execute(select(Panel).where(Panel.id != panel_id))).scalars():

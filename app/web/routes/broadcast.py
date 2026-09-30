@@ -18,7 +18,14 @@ from app.core.errors import AppError, ValidationError
 from app.core.jalali import jalali_datetime, now_utc, to_utc
 from app.core.money import en_digits, fa_digits
 from app.db.models import BroadcastStatus, Staff
-from app.services.broadcast import AUDIENCES, broadcasts
+from app.services.broadcast import (
+    AUDIENCES,
+    audience_label,
+    broadcasts,
+    buttons_payload,
+    parse_button_rows,
+    validate_buttons,
+)
 from app.services.notifications import Media
 from app.web.deps import form_dict, form_str
 from app.web.security import get_db_session, require_manager, verify_csrf
@@ -43,10 +50,6 @@ ERROR_LEVEL = "error"
 # ---------------------------------------------------------------------------
 # کمک‌کننده‌ها
 # ---------------------------------------------------------------------------
-def _audience_label(key: str) -> str:
-    return AUDIENCES.get(key, key)
-
-
 def _media(form: dict[str, Any]) -> Media | None:
     """پیوست اختیاری پیام را از فرم می‌سازد (file_id تلگرام)."""
     kind = form_str(form, "media_type")
@@ -59,6 +62,14 @@ def _media(form: dict[str, Any]) -> Media | None:
     if not file_id:
         raise ValidationError("برای پیوست فایل، شناسه فایل (file_id) را هم وارد کنید.")
     return Media(kind=kind, file_id=file_id)  # type: ignore[arg-type]
+
+
+def _buttons(form: dict[str, Any]) -> list[dict[str, str]] | None:
+    """کیبورد شیشه‌ای اختیاری؛ هر خط «متن دکمه | لینک»."""
+    rows = parse_button_rows(form_str(form, "buttons"))
+    if not rows:
+        return None
+    return buttons_payload(validate_buttons(rows))
 
 
 def _scheduled_at(form: dict[str, Any]) -> datetime | None:
@@ -105,7 +116,8 @@ async def broadcast_page(
             "base_url": BASE,
             # قالب برای دکمه‌های شروع/لغو وضعیت زنده‌ی تسک‌ها را می‌پرسد.
             "broadcasts": broadcasts,
-            "audience_labels": AUDIENCES,
+            # برچسب فارسی مخاطب؛ کلید ناشناخته همان‌طور که هست نشان داده می‌شود.
+            "audience_label": audience_label,
             "media_types": MEDIA_TYPES,
         },
     )
@@ -133,6 +145,7 @@ async def create_broadcast(
             raise ValidationError("گروه مخاطبان نامعتبر است.")
 
         media = _media(form)
+        buttons = _buttons(form)
         scheduled_at = _scheduled_at(form)
 
         broadcast = await broadcasts.create(
@@ -141,11 +154,12 @@ async def create_broadcast(
             text=text,
             audience=audience,
             media=media,
+            buttons=buttons,
             start_immediately=False,
         )
         broadcast_id = broadcast.id
         total = broadcast.total
-        label = _audience_label(audience)
+        label = audience_label(audience)
 
         if scheduled_at is not None:
             # ارسال زمان‌بندی‌شده در وضعیت پیش‌نویس می‌ماند تا زمانش برسد.
@@ -161,10 +175,13 @@ async def create_broadcast(
 
         # بدون زمان‌بندی: اول ذخیره، بعد سپردن به سرویس (تسک پس‌زمینه سشن خودش را می‌سازد).
         await session.commit()
+
+        # شروع داخل همان try است: ربات خاموش یا توکن نامعتبر باید پیام فارسی
+        # بدهد، نه خطای ۵۰۰ و نه ردیفی که در وضعیت پیش‌نویس جا بماند.
+        started = await broadcasts.start(broadcast_id)
     except AppError as exc:
         return redirect(BASE, message=exc.message, level=ERROR_LEVEL)
 
-    started = await broadcasts.start(broadcast_id)
     if started:
         message = f"ارسال به «{label}» آغاز شد: {fa_digits(total)} مخاطب."
     else:
@@ -184,12 +201,14 @@ async def start_broadcast(
 
     try:
         broadcast = await broadcasts.get(session, broadcast_id)
-        label = _audience_label(broadcast.audience)
+        label = audience_label(broadcast.audience)
         total = broadcast.total
+        # مثل مسیر ساخت: نبودِ ربات باید پیام فارسی بدهد، نه ۵۰۰.
+        started = await broadcasts.start(broadcast_id)
     except AppError as exc:
         return redirect(BASE, message=exc.message, level=ERROR_LEVEL)
 
-    if not await broadcasts.start(broadcast_id):
+    if not started:
         return redirect(BASE, message="این ارسال همین حالا در حال اجراست.", level="info")
 
     return redirect(BASE, message=f"ارسال به «{label}» با {fa_digits(total)} مخاطب شروع شد.")
@@ -207,7 +226,7 @@ async def cancel_broadcast(
 
     try:
         broadcast = await broadcasts.get(session, broadcast_id)
-        label = _audience_label(broadcast.audience)
+        label = audience_label(broadcast.audience)
 
         if broadcast.status == BroadcastStatus.DRAFT:
             # کارزار زمان‌بندی‌شده هنوز تسکی ندارد؛ همان‌جا بسته می‌شود.

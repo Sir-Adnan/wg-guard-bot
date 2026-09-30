@@ -965,6 +965,11 @@ class Broadcast(Base, TimestampMixin):
     media_file_id: Mapped[str | None] = mapped_column(Text)
     media_type: Mapped[str | None] = mapped_column(String(16))
     buttons: Mapped[list | None] = mapped_column(JSONType)
+    #: Set when the campaign was composed inside the bot: the message the
+    #: operator sent or forwarded, which is then delivered with ``copyMessage``
+    #: so premium emoji, formatting and media arrive exactly as composed.
+    source_chat_id: Mapped[int | None] = mapped_column(BigInteger)
+    source_message_id: Mapped[int | None] = mapped_column(BigInteger)
     status: Mapped[BroadcastStatus] = mapped_column(
         _enum(BroadcastStatus), default=BroadcastStatus.DRAFT, nullable=False, index=True
     )

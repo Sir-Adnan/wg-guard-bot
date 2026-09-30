@@ -19,6 +19,7 @@ from app.core.money import fa_digits
 from app.db.models import Order, Plan, Staff
 from app.services.catalog import catalog
 from app.services.categories import categories
+from app.services.ordering import next_sort_order
 from app.web.deps import (
     Page,
     form_bool,
@@ -61,7 +62,21 @@ def _feature_lines(raw: str) -> list[str]:
     return [line.strip() for line in (raw or "").replace("\r", "").split("\n") if line.strip()]
 
 
-def _payload(form: dict[str, Any]) -> dict[str, Any]:
+def _submitted_sort_order(form: dict[str, Any]) -> int | None:
+    """``sort_order`` only when the form actually carried a number.
+
+    The create/edit modal no longer has a «ترتیب نمایش» field — order comes
+    from dragging on the list — so an absent field must mean "not my business":
+    ``next_sort_order`` appends on create, and an edit leaves the row where the
+    operator dragged it instead of resetting it behind their back.
+    """
+    raw = form.get("sort_order")
+    if raw is None or form_str(form, "sort_order") == "":
+        return None
+    return form_int(form, "sort_order", 0)
+
+
+async def _payload(session: AsyncSession, form: dict[str, Any], *, creating: bool) -> dict[str, Any]:
     """فیلدهای فرم را به ستون‌های ``Plan`` تبدیل می‌کند."""
     name = form_str(form, "name")
     if not name:
@@ -71,7 +86,7 @@ def _payload(form: dict[str, Any]) -> dict[str, Any]:
     if start_policy not in {key for key, _label in START_POLICIES}:
         start_policy = START_POLICIES[0][0]
 
-    return {
+    data: dict[str, Any] = {
         "name": name[:128],
         "description": form_str(form, "description") or None,
         "category_id": _optional_int(form, "category_id"),
@@ -86,7 +101,6 @@ def _payload(form: dict[str, Any]) -> dict[str, Any]:
         "cost_rial": _optional_money(form, "cost"),
         "badge": form_str(form, "badge") or None,
         "features": _feature_lines(form_str(form, "features")),
-        "sort_order": form_int(form, "sort_order", 0),
         "start_policy": start_policy,
         "username_template": form_str(form, "username_template") or DEFAULT_USERNAME_TEMPLATE,
         "is_active": form_bool(form, "is_active"),
@@ -95,6 +109,13 @@ def _payload(form: dict[str, Any]) -> dict[str, Any]:
         "is_unlimited_stock": form_bool(form, "is_unlimited_stock"),
         "stock": _optional_int(form, "stock"),
     }
+
+    submitted = _submitted_sort_order(form)
+    if submitted is not None:
+        data["sort_order"] = submitted
+    elif creating:
+        data["sort_order"] = await next_sort_order(session, "plans")
+    return data
 
 
 async def _form_context(session: AsyncSession) -> dict[str, Any]:
@@ -142,7 +163,7 @@ async def create_plan(
     verify_csrf(request, form.get("csrf_token"))
 
     try:
-        data = _payload(form)
+        data = await _payload(session, form, creating=True)
         plan = Plan(**data)
         session.add(plan)
         await session.flush()
@@ -166,7 +187,7 @@ async def update_plan(
 
     try:
         plan = await catalog.get(session, plan_id)
-        for key, value in _payload(form).items():
+        for key, value in (await _payload(session, form, creating=False)).items():
             setattr(plan, key, value)
         await session.flush()
         name = plan.name
@@ -233,7 +254,8 @@ async def duplicate_plan(
             is_test=plan.is_test,
             is_unlimited_stock=plan.is_unlimited_stock,
             stock=plan.stock,
-            sort_order=plan.sort_order,
+            # کپی به انتهای فهرست می‌رود تا ترتیبِ دستیِ اپراتور به‌هم نریزد.
+            sort_order=await next_sort_order(session, "plans"),
             badge=plan.badge,
             interface_id=plan.interface_id,
             username_template=plan.username_template,

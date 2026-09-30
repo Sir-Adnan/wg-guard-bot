@@ -86,6 +86,84 @@ Also on `main` since 1.0.0:
   boundaries and risk-proportional evidence (`AGENTS.md`, `docs/VERIFICATION.md`,
   `docs/UX-WRITING.md`, `docs/PROVIDERS.md`).
 
+- **«پیام همگانی» works — from the bot and from the panel.**  The audience button
+  packed `hash(key) & 0xFFFF`, which Python reads as
+  `hash(key) & (0xFFFF % len(keys))`; `0xFFFF % 5` is `0`, so *every* broadcast
+  went to every user whatever group was chosen.  The bot now packs the audience
+  **index** and says so when a stale button carries one it does not know.  A
+  message composed inside the bot is stored on the campaign (`source_chat_id` /
+  `source_message_id`, migration `c4b7d1e90a35`) and delivered with
+  `copyMessage`, so premium emoji, formatting, media and the forwarded post's
+  inline keyboard arrive exactly as composed; the panel's form renders
+  `{e:key}` into the configured premium emoji and fills `{name}`/`{shop}` per
+  recipient instead of sending the placeholders literally, and grew a
+  `label | url` keyboard editor (http/https only, six buttons, two per row).
+  The bot flow is compose → audience (with live counts) → preview (test send,
+  send, cancel) → progress with a cancel button, every screen carries a next
+  step, and starting a campaign with no bot bound explains itself in a Persian
+  flash instead of answering a 500.  The panel copy no longer promises that a
+  canceled campaign continues «از همانجا که مانده»: there is no per-recipient
+  table, so the button says «ارسال دوباره», warns that the message goes to the
+  whole audience again, and the bot's status screen says the same.
+
+- **A receipt can only be decided once.**  `approve()` and `reject()` read the
+  status, decided in Python, and wrote it back, so two reviewers pressing at the
+  same moment both saw `pending` — and a wallet top-up was credited **twice**.
+  The decision is now a single conditional `UPDATE … WHERE status = 'pending'`,
+  so exactly one caller wins the row and the other is told who decided.  The
+  reviewer's copies also keep their promise: an approved text receipt used to
+  hold on to its approve/reject buttons (`reply_markup=None` leaves the old
+  keyboard in place), and the «رسید جدید» header was printed twice.  Captions are
+  fitted to Telegram's 1024-character limit — an over-long one made the whole
+  send fail, which left the reviewer with no receipt at all.
+
+- **A node that answers a shape this build does not know can no longer fail a
+  sale.**  WG-Guard serialises "not set" as JSON `null`, so a strict `list[str]`
+  field rejected the entire read-back; `_safe_get_user` only caught `PanelError`,
+  so the exception escaped, marked an already-committed purchase as failed, and
+  showed the operator a raw pydantic dump — while a real VPN account existed on
+  the node.  `null` now means "use the default" for every response model, an
+  unknown vendor status name is mapped instead of rejected, and every best-effort
+  read-back tolerates any exception.  While in there: retrying after an ambiguous
+  transport failure rotated the idempotency key, which is how one order becomes
+  two VPN accounts; the key now follows the payload and only rotates after the
+  node definitively refuses it.
+
+- **Receipt photos reach the reviewers.**  `send_photo` has no
+  `link_preview_options` parameter, so every media receipt raised `TypeError`
+  inside the notifier before a single byte left the process: the customer's
+  receipt was stored, and no admin ever saw it.
+
+- **«بازگشت» goes where it says.**  Two back buttons shipped pointing at callback
+  actions no handler filtered on — the one on every plan card (`pl:page`) and the
+  one on «همه سرویسها» (`ct:root`) — so the button only spun.  Every parent
+  payload is now built in one place (`app/bot/nav.py`), the plan card returns to
+  the category (and page) it came from, the services list keeps its page, guides
+  return to their section and tickets to the ticket list, and a payload nothing
+  answers is caught by a new catch-all that says «این دکمه دیگر معتبر نیست» and
+  hands back the main menu instead of leaving the customer with a spinner.
+  A sub-category level that held a single plan used to hide its children
+  completely; a node now shows its plans *and* its sub-categories.  `tests/test_bot_nav.py`
+  runs every navigation payload through the real dispatcher, so the next dead
+  button fails the suite.
+
+- **Ordering is drag-and-drop.**  Every list that already had a `sort_order`
+  column (plans, categories, channels, cards, guides, panels) is reordered by
+  dragging a row — or with `Alt`+`↑`/`↓` on the focused handle — through one
+  generic endpoint (`POST /panel/reorder`) and one service
+  (`app/services/ordering.py`, dense gap-10 renumbering, scope-aware, one audit
+  entry per change).  The free-typed "ترتیب نمایش" number boxes are gone from the
+  forms and new rows append to the end; the numeric fields that remain
+  (`panels.priority`) explain what they do.  `tests/test_panel_drag_contract.py`
+  parses the rendered HTML and asserts the drag container really owns its rows —
+  the first version put `data-drag-list` on the `<table>`, where the script found
+  no items and dragging silently did nothing.
+
+- The test suite builds its schema from a complete model registry.  A db test
+  module that did not happen to import `app.db.models` made the session-scoped
+  `create_all` run against empty metadata, and every later `TRUNCATE` failed with
+  "relation users does not exist".
+
 ---
 
 ## [1.0.0] — 2026-09-29

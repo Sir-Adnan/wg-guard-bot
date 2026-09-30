@@ -81,6 +81,10 @@ class Notifier:
     def bind(self, bot: Bot) -> None:
         self._bot = bot
 
+    def unbind(self) -> None:
+        """Detach the bot — outbound messages are dropped instead of raised."""
+        self._bot = None
+
     @property
     def bound(self) -> bool:
         return self._bot is not None
@@ -212,11 +216,20 @@ class Notifier:
         *,
         keyboard: KeyboardLike = None,
         media: Media | None = None,
+        clear_keyboard: bool = False,
     ) -> bool:
-        """Edit a previously sent message; returns ``True`` on success."""
+        """Edit a previously sent message; returns ``True`` on success.
+
+        ``clear_keyboard`` sends an *empty* markup on purpose: passing ``None``
+        would leave the old buttons in place, which is how a decided receipt
+        kept offering approve/reject to the rest of the team.
+        """
         if self._bot is None:
             return False
         markup, plain_markup = self._markups(keyboard)
+        if clear_keyboard:
+            markup = InlineKeyboardMarkup(inline_keyboard=[])
+            plain_markup = None
         try:
             if media is None:
                 await self.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, reply_markup=markup)
@@ -246,6 +259,58 @@ class Notifier:
             return False
         except TelegramForbiddenError:
             return False
+
+    async def copy(
+        self,
+        chat_id: int,
+        from_chat_id: int,
+        message_id: int,
+        *,
+        keyboard: KeyboardLike = None,
+    ) -> Message | None:
+        """Copy a message verbatim.
+
+        ``copyMessage`` keeps everything the operator composed — premium/custom
+        emoji, formatting, media, a forwarded album — which is why the in-bot
+        broadcast composes a message and copies it instead of rebuilding it from
+        text.  ``reply_markup`` replaces the source keyboard when one is given;
+        Telegram's API has no "keep the original markup" option.
+        """
+        if self._bot is None:
+            self._unbound("copy")
+            return None
+
+        markup, plain_markup = self._markups(keyboard)
+        kwargs: dict[str, Any] = {
+            "chat_id": chat_id,
+            "from_chat_id": from_chat_id,
+            "message_id": message_id,
+        }
+        if markup is not None:
+            kwargs["reply_markup"] = markup
+        try:
+            return await self.bot.copy_message(**kwargs)
+        except TelegramForbiddenError:
+            log.info("Chat %s has blocked the bot", chat_id)
+            await self._mark_blocked(chat_id)
+            return None
+        except TelegramUnauthorizedError:
+            log.critical("Bot token is invalid — the bot cannot send messages")
+            raise
+        except TelegramBadRequest as exc:
+            if plain_markup is not None and self._is_style_error(exc):
+                self.disable_styling()
+                kwargs["reply_markup"] = plain_markup
+                try:
+                    return await self.bot.copy_message(**kwargs)
+                except Exception as retry_exc:  # pragma: no cover
+                    log.error("Plain-keyboard copy retry failed: %s", retry_exc)
+                    return None
+            log.warning("copy to %s failed: %s", chat_id, exc)
+            return None
+        except TelegramNetworkError as exc:
+            log.warning("network error copying to %s: %s", chat_id, exc)
+            return None
 
     async def send_upload(
         self,

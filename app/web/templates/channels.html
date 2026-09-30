@@ -68,12 +68,6 @@
     </select>
   </div>
 
-  <div class="field">
-    <label class="label" for="sort-{{ ch.id if ch else 'new' }}">ترتیب نمایش</label>
-    <input class="input input--num" id="sort-{{ ch.id if ch else 'new' }}" name="sort_order" type="number"
-           value="{{ ch.sort_order if ch else 0 }}">
-  </div>
-
   <div class="field field--full">
     <label class="label" for="note-{{ ch.id if ch else 'new' }}">یادداشت داخلی</label>
     <input class="input" id="note-{{ ch.id if ch else 'new' }}" name="note"
@@ -107,14 +101,16 @@
   </div>
   <div class="card__body card__body--flush">
     {% if rows %}
+      <div class="hint" style="padding:12px 16px 0">برای تغییر ترتیب، ردیف‌ها را بکشید.</div>
       <div class="table-wrap">
         <table class="table">
           <thead>
-            <tr><th>عنوان</th><th>شناسه</th><th>نوع</th><th>لینک دعوت</th><th>وضعیت</th><th></th></tr>
+            <tr><th></th><th>عنوان</th><th>شناسه</th><th>نوع</th><th>لینک دعوت</th><th>وضعیت</th><th></th></tr>
           </thead>
-          <tbody>
+          <tbody data-drag-list="channels" data-drag-next="{{ base_url }}">
             {% for channel in rows %}
-            <tr>
+            <tr data-drag-id="{{ channel.id }}">
+              <td class="drag-cell"><span class="drag-handle" data-drag-handle tabindex="0" title="برای جابه‌جایی بکشید" aria-hidden="true">⠿</span></td>
               <td class="strong">{{ channel.title or '—' }}</td>
               <td><span class="code copyable" data-copy="{{ channel.chat_id }}">{{ channel.chat_id }}</span></td>
               <td>

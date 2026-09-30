@@ -315,6 +315,13 @@ class Jobs:
         """Fire campaigns whose scheduled time has arrived."""
         from app.db.models import Broadcast, BroadcastStatus
         from app.services.broadcast import broadcasts
+        from app.services.notifications import notifier
+
+        if not notifier.bound:
+            # Nothing to send with: ``start`` would raise on every tick and the
+            # panel would collect one error event per minute until BOT_TOKEN is
+            # set.  The campaign stays queued and fires once the bot is back.
+            return 0
 
         started = 0
         async with session_scope() as session:

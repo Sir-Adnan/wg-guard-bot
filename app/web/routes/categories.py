@@ -18,6 +18,7 @@ from app.core.money import fa_digits
 from app.db.models import PlanCategory, Staff
 from app.services.appearance import CATALOG
 from app.services.categories import MAX_DEPTH, categories
+from app.services.ordering import next_sort_order
 from app.web.deps import form_bool, form_dict, form_int, form_str
 from app.web.security import get_db_session, require_manager, verify_csrf
 from app.web.templating import redirect, render
@@ -55,7 +56,7 @@ async def _options(session: AsyncSession) -> list[tuple[int, PlanCategory]]:
     return await categories.flatten(session, active_only=False)
 
 
-def _form_values(form: dict[str, Any]) -> dict[str, Any]:
+async def _form_values(session: AsyncSession, form: dict[str, Any]) -> dict[str, Any]:
     name = form_str(form, "name")
     if not name:
         raise ValidationError("نام دسته‌بندی نمی‌تواند خالی باشد.")
@@ -65,16 +66,25 @@ def _form_values(form: dict[str, Any]) -> dict[str, Any]:
         raise ValidationError("آیکون انتخابی معتبر نیست.")
 
     parent_raw = form_str(form, "parent_id")
-    return {
+    parent_id = int(parent_raw) if parent_raw.isdigit() else None
+
+    values: dict[str, Any] = {
         "name": name,
-        "parent_id": int(parent_raw) if parent_raw.isdigit() else None,
+        "parent_id": parent_id,
         # خالی‌بودن این دو فیلد یعنی «پاک شود»، پس رشته خالی (نه None) برمی‌گردد.
         "description": form_str(form, "description"),
         "icon": icon,
-        "sort_order": form_int(form, "sort_order", 0),
         "is_active": form_bool(form, "is_active"),
         "is_visible": form_bool(form, "is_visible"),
     }
+
+    # ترتیب دستی از کشیدن ردیف‌ها می‌آید. اگر فرم عددی نفرستاده باشد، تغییر
+    # نمی‌کنیم؛ «تغییر نده» برای ویرایش ``None`` است و برای ساخت، مقدار آخر فهرست.
+    if form_str(form, "sort_order"):
+        values["sort_order"] = form_int(form, "sort_order", 0)
+    else:
+        values["sort_order"] = await next_sort_order(session, "categories", scope=parent_id)
+    return values
 
 
 async def _move_to_root(session: AsyncSession, node: PlanCategory) -> None:
@@ -138,7 +148,7 @@ async def create_category(
     verify_csrf(request, form.get("csrf_token"))
 
     try:
-        values = _form_values(form)
+        values = await _form_values(session, form)
         values["description"] = values["description"] or None
         values["icon"] = values["icon"] or None
         node = await categories.create(session, **values)
@@ -161,7 +171,7 @@ async def update_category(
     verify_csrf(request, form.get("csrf_token"))
 
     try:
-        values = _form_values(form)
+        values = await _form_values(session, form)
         parent_id = values.pop("parent_id")
         node = await categories.update(
             session,

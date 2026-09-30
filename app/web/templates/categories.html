@@ -79,46 +79,68 @@
 </div>
 {%- endmacro %}
 
+{#
+  درخت دسته‌بندی‌ها یک فهرست کشیدنیِ تودرتو است: هر گروه از هم‌نیاها (ریشه‌ها یا
+  فرزندان یک والد) یک `data-drag-list` جدا با `data-drag-scope` همان والد است،
+  پس کشیدن یک دسته هرگز آن را به شاخه‌ی دیگری منتقل نمی‌کند و حلقه ساخته نمی‌شود.
+#}
+{% macro drag_list(scope, next_url) -%}
+<div class="tree__list" data-drag-list="categories"
+     {% if scope is not none %}data-drag-scope="{{ scope }}"{% endif %}
+     data-drag-next="{{ next_url }}">
+{%- endmacro %}
+
 {% macro render_node(node, depth) -%}
   {% set category = node.category %}
-  <div class="tree__row" style="margin-inline-start: {{ depth * 22 }}px">
-    <span style="font-size:18px">{{ emoji_chars.get(category.icon, '🗂') }}</span>
-    <div>
-      <span class="tree__name">{{ category.name }}</span>
-      <span class="tree__count">
-        · {{ node.plan_count|fa }} پلن
-        {% if node.children %}· {{ node.children|length|fa }} زیردسته{% endif %}
-      </span>
+  <div class="tree__item" data-drag-id="{{ category.id }}">
+    <div class="tree__row" style="margin-inline-start: {{ depth * 22 }}px">
+      <span class="drag-handle" data-drag-handle tabindex="0" title="برای جابه‌جایی بکشید" aria-hidden="true">⠿</span>
+      <span style="font-size:18px">{{ emoji_chars.get(category.icon, '🗂') }}</span>
+      <div>
+        <span class="tree__name">{{ category.name }}</span>
+        <span class="tree__count">
+          · {{ node.plan_count|fa }} پلن
+          {% if node.children %}· {{ node.children|length|fa }} زیردسته{% endif %}
+        </span>
+      </div>
+      {% if not category.is_active %}{{ badge('غیرفعال', 'danger') }}{% endif %}
+      {% if not category.is_visible %}{{ badge('مخفی', 'warning') }}{% endif %}
+
+      <div class="tree__actions">
+        <button class="btn btn--sm btn--ghost" type="button"
+                data-modal-open="category-{{ category.id }}" data-title="ویرایش «{{ category.name }}»">{{ icon('edit') }}</button>
+
+        <form method="post" action="{{ base_url }}/{{ category.id }}/move">
+          {{ csrf(csrf_token) }}
+          <input type="hidden" name="direction" value="-1">
+          <button class="btn btn--sm btn--ghost" type="submit" title="یک پله بالاتر">{{ icon('arrow-up') }}</button>
+        </form>
+        <form method="post" action="{{ base_url }}/{{ category.id }}/move">
+          {{ csrf(csrf_token) }}
+          <input type="hidden" name="direction" value="1">
+          <button class="btn btn--sm btn--ghost" type="submit" title="یک پله پایین‌تر">{{ icon('arrow-down') }}</button>
+        </form>
+
+        <form method="post" action="{{ base_url }}/{{ category.id }}/delete"
+              data-confirm="دسته‌بندی «{{ category.name }}» و همه زیردسته‌هایش حذف شوند؟ پلن‌های داخل آن‌ها به «بدون دسته» منتقل می‌شوند.">
+          {{ csrf(csrf_token) }}
+          <button class="btn btn--sm btn--danger" type="submit" title="حذف">{{ icon('trash') }}</button>
+        </form>
+      </div>
     </div>
-    {% if not category.is_active %}{{ badge('غیرفعال', 'danger') }}{% endif %}
-    {% if not category.is_visible %}{{ badge('مخفی', 'warning') }}{% endif %}
 
-    <div class="tree__actions">
-      <button class="btn btn--sm btn--ghost" type="button"
-              data-modal-open="category-{{ category.id }}" data-title="ویرایش «{{ category.name }}»">{{ icon('edit') }}</button>
-
-      <form method="post" action="{{ base_url }}/{{ category.id }}/move">
-        {{ csrf(csrf_token) }}
-        <input type="hidden" name="direction" value="-1">
-        <button class="btn btn--sm btn--ghost" type="submit" title="یک پله بالاتر">{{ icon('arrow-up') }}</button>
-      </form>
-      <form method="post" action="{{ base_url }}/{{ category.id }}/move">
-        {{ csrf(csrf_token) }}
-        <input type="hidden" name="direction" value="1">
-        <button class="btn btn--sm btn--ghost" type="submit" title="یک پله پایین‌تر">{{ icon('arrow-down') }}</button>
-      </form>
-
-      <form method="post" action="{{ base_url }}/{{ category.id }}/delete"
-            data-confirm="دسته‌بندی «{{ category.name }}» و همه زیردسته‌هایش حذف شوند؟ پلن‌های داخل آن‌ها به «بدون دسته» منتقل می‌شوند.">
-        {{ csrf(csrf_token) }}
-        <button class="btn btn--sm btn--danger" type="submit" title="حذف">{{ icon('trash') }}</button>
-      </form>
-    </div>
+    {% if node.children %}
+      {{ drag_list(category.id, base_url) }}
+      {% for child in node.children %}{{ render_node(child, depth + 1) }}{% endfor %}
+      </div>
+    {% endif %}
   </div>
+{%- endmacro %}
 
-  {% for child in node.children %}
-    {{ render_node(child, depth + 1) }}
-  {% endfor %}
+{% macro render_group(nodes, scope) -%}
+  {{ drag_list(scope, base_url) }}
+  {% for node in nodes %}{{ render_node(node, 0) }}{% endfor %}
+  </div>
 {%- endmacro %}
 
 <div class="card">
@@ -129,8 +151,9 @@
   </div>
   <div class="card__body">
     {% if nodes %}
+      <div class="hint mb-2">برای تغییر ترتیب، ردیف‌ها را بکشید.</div>
       <div class="tree">
-        {% for node in nodes %}{{ render_node(node, 0) }}{% endfor %}
+        {{ render_group(nodes, None) }}
       </div>
     {% else %}
       {{ empty_state('هنوز دسته‌بندی نساخته‌اید', 'با ساخت دسته‌بندی، فروشگاه ربات مرتب و حرفه‌ای‌تر می‌شود.', 'folder') }}

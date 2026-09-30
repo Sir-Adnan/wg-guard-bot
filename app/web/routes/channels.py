@@ -13,6 +13,7 @@ from app.core.errors import AppError, NotFoundError, ValidationError
 from app.core.money import fa_digits
 from app.db.models import Channel, Staff
 from app.services.notifications import notifier
+from app.services.ordering import next_sort_order
 from app.services.settings_store import app_settings
 from app.web.deps import form_bool, form_dict, form_int, form_str
 from app.web.security import get_db_session, require_manager, verify_csrf
@@ -31,7 +32,15 @@ KINDS: tuple[tuple[str, str], ...] = (
 # ---------------------------------------------------------------------------
 # کمک‌کننده‌ها
 # ---------------------------------------------------------------------------
-def _payload(form: dict[str, Any]) -> dict[str, Any]:
+def _submitted_sort_order(form: dict[str, Any]) -> int | None:
+    """``sort_order`` only when the form carried one; dragging owns it otherwise."""
+    raw = form.get("sort_order")
+    if raw is None or form_str(form, "sort_order") == "":
+        return None
+    return form_int(form, "sort_order", 0)
+
+
+async def _payload(session: AsyncSession, form: dict[str, Any], *, creating: bool) -> dict[str, Any]:
     chat_id = form_str(form, "chat_id")
     if not chat_id:
         raise ValidationError("شناسه کانال نمی‌تواند خالی باشد.")
@@ -46,17 +55,23 @@ def _payload(form: dict[str, Any]) -> dict[str, Any]:
     if invite_link and not invite_link.startswith(("https://", "http://", "tg://")):
         raise ValidationError("لینک دعوت باید با https:// یا tg:// شروع شود.")
 
-    return {
+    data: dict[str, Any] = {
         "chat_id": chat_id[:64],
         "title": form_str(form, "title")[:128],
         "invite_link": invite_link or None,
         "kind": kind,
         "auto_approve_joins": form_bool(form, "auto_approve_joins"),
         "show_in_menu": form_bool(form, "show_in_menu"),
-        "sort_order": form_int(form, "sort_order", 0),
         "is_active": form_bool(form, "is_active"),
         "note": form_str(form, "note") or None,
     }
+
+    submitted = _submitted_sort_order(form)
+    if submitted is not None:
+        data["sort_order"] = submitted
+    elif creating:
+        data["sort_order"] = await next_sort_order(session, "channels")
+    return data
 
 
 async def _get(session: AsyncSession, channel_id: int) -> Channel:
@@ -109,7 +124,7 @@ async def create_channel(
     verify_csrf(request, form.get("csrf_token"))
 
     try:
-        data = _payload(form)
+        data = await _payload(session, form, creating=True)
         channel = Channel(**data)
         session.add(channel)
         await session.flush()
@@ -133,7 +148,7 @@ async def update_channel(
 
     try:
         channel = await _get(session, channel_id)
-        for key, value in _payload(form).items():
+        for key, value in (await _payload(session, form, creating=False)).items():
             setattr(channel, key, value)
         await session.flush()
         label = _label(channel)

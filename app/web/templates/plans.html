@@ -99,13 +99,6 @@
   </div>
 
   <div class="field">
-    <label class="label" for="sort-{{ p.id if p else 'new' }}">ترتیب نمایش</label>
-    <input class="input input--num" id="sort-{{ p.id if p else 'new' }}" name="sort_order" type="number"
-           value="{{ p.sort_order if p else 0 }}">
-    <div class="hint">عدد کوچک‌تر بالاتر نمایش داده می‌شود.</div>
-  </div>
-
-  <div class="field">
     <label class="label" for="policy-{{ p.id if p else 'new' }}">شروع مدت‌زمان</label>
     <select class="select" id="policy-{{ p.id if p else 'new' }}" name="start_policy">
       {% for key, label in start_policies %}
@@ -170,17 +163,19 @@
   </div>
   <div class="card__body card__body--flush">
     {% if rows %}
+      <div class="hint" style="padding:12px 16px 0">برای تغییر ترتیب، ردیف‌ها را بکشید.</div>
       <div class="table-wrap">
         <table class="table">
           <thead>
             <tr>
-              <th>نام</th><th>دسته‌بندی</th><th>حجم</th><th>مدت</th><th>دستگاه</th>
+              <th></th><th>نام</th><th>دسته‌بندی</th><th>حجم</th><th>مدت</th><th>دستگاه</th>
               <th>قیمت</th><th>وضعیت</th><th>فروش</th><th></th>
             </tr>
           </thead>
-          <tbody>
+          <tbody data-drag-list="plans" data-drag-next="{{ base_url }}?page={{ page.number }}&size={{ page.size }}">
             {% for plan in rows %}
-            <tr>
+            <tr data-drag-id="{{ plan.id }}">
+              <td class="drag-cell"><span class="drag-handle" data-drag-handle tabindex="0" title="برای جابه‌جایی بکشید" aria-hidden="true">⠿</span></td>
               <td>
                 <div class="strong">{{ plan.name }}</div>
                 {% if plan.badge %}<span class="badge badge--brand">{{ plan.badge }}</span>{% endif %}

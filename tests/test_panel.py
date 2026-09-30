@@ -10,9 +10,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
-
-from app.core.security import hash_password
-from app.db.models import Staff, StaffRole
+from conftest import PANEL_PASSWORD
 
 pytestmark = pytest.mark.db
 
@@ -41,32 +39,7 @@ PAGES: tuple[str, ...] = (
     "/profile",
 )
 
-PASSWORD = "Owner-pass-123"
-
-
-@pytest.fixture
-async def owner(session):
-    row = Staff(
-        name="مالک تست",
-        role=StaffRole.OWNER,
-        login="owner",
-        password_hash=hash_password(PASSWORD),
-        receive_receipts=True,
-        is_active=True,
-    )
-    session.add(row)
-    await session.commit()
-    return row
-
-
-@pytest.fixture
-async def app_client() -> httpx.AsyncClient:
-    from app.web.app import create_app
-
-    app = create_app(start_background=False)
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://panel.test", follow_redirects=False) as client:
-        yield client
+PASSWORD = PANEL_PASSWORD
 
 
 # ---------------------------------------------------------------------------

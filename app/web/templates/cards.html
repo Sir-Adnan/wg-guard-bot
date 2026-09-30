@@ -46,12 +46,6 @@
            value="{{ card.iban if card and card.iban else '' }}" placeholder="IR..." dir="ltr">
   </div>
 
-  <div class="field">
-    <label class="label" for="sort-{{ card.id if card else 'new' }}">ترتیب نمایش</label>
-    <input class="input input--num" id="sort-{{ card.id if card else 'new' }}" name="sort_order" type="number"
-           value="{{ card.sort_order if card else 0 }}">
-  </div>
-
   <div class="field field--full">
     <label class="label" for="note-{{ card.id if card else 'new' }}">توضیح برای مشتری</label>
     <textarea class="textarea" id="note-{{ card.id if card else 'new' }}" name="instructions" rows="2"
@@ -75,21 +69,22 @@
   </div>
   <div class="card__body card__body--flush">
     {% if rows %}
+      <div class="hint" style="padding:12px 16px 0">برای تغییر ترتیب، ردیف‌ها را بکشید.</div>
       <div class="table-wrap">
         <table class="table">
           <thead>
-            <tr><th>شماره کارت</th><th>صاحب کارت</th><th>بانک</th><th>شبا</th><th>ترتیب</th><th>وضعیت</th><th></th></tr>
+            <tr><th></th><th>شماره کارت</th><th>صاحب کارت</th><th>بانک</th><th>شبا</th><th>وضعیت</th><th></th></tr>
           </thead>
-          <tbody>
+          <tbody data-drag-list="cards" data-drag-next="{{ base_url }}">
             {% for card in rows %}
-            <tr>
+            <tr data-drag-id="{{ card.id }}">
+              <td class="drag-cell"><span class="drag-handle" data-drag-handle tabindex="0" title="برای جابه‌جایی بکشید" aria-hidden="true">⠿</span></td>
               <td>
                 <span class="code copyable" data-copy="{{ card.card_number }}">{{ card.masked }}</span>
               </td>
               <td class="strong">{{ card.holder_name }}</td>
               <td class="muted">{{ card.bank_name|none_dash }}</td>
               <td class="mono small">{{ card.iban|none_dash }}</td>
-              <td class="num">{{ card.sort_order|fa }}</td>
               <td>
                 {% if card.is_active %}{{ badge('فعال', 'success') }}{% else %}{{ badge('غیرفعال', 'danger') }}{% endif %}
               </td>

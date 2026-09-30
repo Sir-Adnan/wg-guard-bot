@@ -215,6 +215,245 @@
     });
   }
 
+  /* -- drag & drop ordering ---------------------------------------------
+     Opt-in contract, also documented in `docs/PANEL-CONTRACT.md` §6:
+
+       [data-drag-list="<entity>"]   the list; its children may be dragged
+       [data-drag-scope="<id>"]      optional partition (a category's parent_id)
+       [data-drag-next="/panel/..."] optional return URL for the no-JS path
+       [data-drag-id]                one row/item of that list
+       [data-drag-handle]            the visible grip inside the item
+
+     The list may be a <table>, a <div> or a <ul>; anything else on the page (a
+     form, a modal, a filter) keeps working exactly as before.
+  --------------------------------------------------------------------- */
+  var DRAG_SELECTOR = "[data-drag-list]";
+  var DRAG_ITEM_SELECTOR = "[data-drag-id]";
+  var DRAG_HANDLE_SELECTOR = "[data-drag-handle]";
+  var REORDER_PATH = "/reorder";
+
+  function dragState() {
+    if (!window.__panelDrag) {
+      window.__panelDrag = { row: null, startOrder: null, placeholder: null, list: null, busy: false };
+    }
+    return window.__panelDrag;
+  }
+
+  function csrfToken() {
+    return (doc.body && doc.body.getAttribute("data-csrf")) || "";
+  }
+
+  /* Direct children of the list that are draggable — a nested list's items are
+     not children of the outer list, so a category tree stays safe. */
+  function dragItems(list) {
+    var out = [];
+    for (var i = 0; i < list.children.length; i++) {
+      var child = list.children[i];
+      if (child.hasAttribute && child.hasAttribute("data-drag-id")) out.push(child);
+    }
+    return out;
+  }
+
+  function dragOrder(list) {
+    return dragItems(list).map(function (item) { return item.getAttribute("data-drag-id"); }).join(",");
+  }
+
+  /* The list a nested item belongs to: the closest ancestor, not the outer one. */
+  function listOf(item) {
+    return item && item.closest ? item.closest(DRAG_SELECTOR) : null;
+  }
+
+  function clearDragState() {
+    var state = dragState();
+    if (state.placeholder) state.placeholder.remove();
+    if (state.list) state.list.classList.remove("drop-target");
+    if (state.row) state.row.classList.remove("is-dragging");
+    state.row = null;
+    state.placeholder = null;
+    state.list = null;
+  }
+
+  function restoreDragOrder(list, markup) {
+    if (list && markup != null) list.innerHTML = markup;
+  }
+
+  /* Which side of `item` the pointer is on (RTL safe: the horizontal midpoint
+     only decides for tiles, rows are decided vertically). */
+  function midpointPast(item, event) {
+    var box = item.getBoundingClientRect();
+    var vertical = box.height > 0 ? (event.clientY - box.top) / box.height : 0;
+    if (box.width <= 0) return vertical > 0.5;
+    var horizontal = Math.abs(box.width - box.height) < 4 ? 0.5 : (event.clientX - box.left) / box.width;
+    return horizontal > 0.5 || vertical > 0.5;
+  }
+
+  function placePlaceholder(state, item, event) {
+    var list = state.list;
+    var after = midpointPast(item, event);
+    if (after) {
+      var next = item.nextElementSibling;
+      list.insertBefore(state.placeholder, next);
+    } else {
+      list.insertBefore(state.placeholder, item);
+    }
+  }
+
+  /* The gap the row will land in: cloning it keeps the height honest so the
+     list does not jump while the operator drags. */
+  function makePlaceholder(row) {
+    var clone = row.cloneNode(true);
+    clone.removeAttribute("data-drag-id");
+    clone.removeAttribute("draggable");
+    clone.classList.add("drag-placeholder");
+    clone.setAttribute("aria-hidden", "true");
+    var handle = clone.querySelector(DRAG_HANDLE_SELECTOR);
+    if (handle) handle.removeAttribute("tabindex");
+    return clone;
+  }
+
+  /* Optimistic DOM move for the keyboard path, before the POST goes out. */
+  function moveItem(item, direction) {
+    var list = item.parentNode;
+    var items = dragItems(list);
+    var index = items.indexOf(item);
+    var target = index + direction;
+    if (index < 0 || target < 0 || target >= items.length) return null;
+    var other = items[target];
+    if (direction < 0) list.insertBefore(item, other);
+    else list.insertBefore(other, item);
+    return list;
+  }
+
+  async function postOrder(list, markup) {
+    var state = dragState();
+    var entity = list.getAttribute("data-drag-list");
+    var scope = list.getAttribute("data-drag-scope");
+    var next = list.getAttribute("data-drag-next");
+    var failed = "ترتیب ذخیره نشد؛ صفحه را دوباره باز کنید و دوباره تلاش کنید.";
+
+    var body = new FormData();
+    body.append("entity", entity || "");
+    body.append("csrf_token", csrfToken());
+    body.append("ids", dragOrder(list));
+    if (scope) body.append("scope", scope);
+    if (next) body.append("next", next);
+
+    try {
+      var response = await fetch(REORDER_PATH, {
+        method: "POST",
+        headers: { "X-Requested-With": "fetch", Accept: "application/json" },
+        body: body,
+        credentials: "same-origin"
+      });
+      var payload = null;
+      try { payload = await response.json(); } catch (err) { payload = null; }
+      /* A redirect to the login page answers with HTML, so an unreadable body
+         means "not saved" — restore the order the operator started from. */
+      if (!payload || payload.ok !== true) {
+        restoreDragOrder(list, markup);
+        toast((payload && payload.message) || failed, "error");
+        return;
+      }
+      toast(payload.message || "ترتیب ذخیره شد.");
+    } catch (err) {
+      restoreDragOrder(list, markup);
+      toast(failed, "error");
+    } finally {
+      state.busy = false;
+    }
+  }
+
+  function initDragLists() {
+    $$(DRAG_SELECTOR).forEach(function (list) {
+      dragItems(list).forEach(function (item) {
+        if (item.querySelector(DRAG_HANDLE_SELECTOR)) item.setAttribute("draggable", "true");
+      });
+
+      list.addEventListener("dragstart", function (event) {
+        var state = dragState();
+        var handle = event.target.closest ? event.target.closest(DRAG_HANDLE_SELECTOR) : null;
+        var item = handle && handle.closest(DRAG_ITEM_SELECTOR);
+        if (!item || item.parentNode !== list || state.busy) {
+          event.preventDefault();
+          return;
+        }
+        state.row = item;
+        state.list = list;
+        state.startOrder = dragOrder(list);
+        state.placeholder = makePlaceholder(item);
+        item.classList.add("is-dragging");
+        list.classList.add("drop-target");
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = "move";
+          /* Firefox refuses to start a drag with an empty payload. */
+          event.dataTransfer.setData("text/plain", item.getAttribute("data-drag-id") || "");
+        }
+      });
+
+      list.addEventListener("dragover", function (event) {
+        var state = dragState();
+        if (!state.row || state.list !== list) return;
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+        var over = event.target.closest ? event.target.closest(DRAG_ITEM_SELECTOR) : null;
+        if (over && over.parentNode === list && over !== state.row && over !== state.placeholder) {
+          placePlaceholder(state, over, event);
+        }
+      });
+
+      list.addEventListener("drop", function (event) {
+        var state = dragState();
+        if (!state.row || state.list !== list) return;
+        event.preventDefault();
+        var markup = list.innerHTML;
+        var startedFrom = state.startOrder;
+        if (state.placeholder && state.placeholder.parentNode) {
+          list.insertBefore(state.row, state.placeholder);
+        }
+        var order = dragOrder(list);
+        clearDragState();
+        if (order === startedFrom) {
+          restoreDragOrder(list, markup);
+          return;
+        }
+        state.busy = true;
+        postOrder(list, markup);
+      });
+
+      list.addEventListener("dragend", function () {
+        clearDragState();
+      });
+    });
+
+    /* Keyboard path: the handle owns focus, Alt+Arrow moves the row through the
+       same POST, so a reorder never needs a mouse. */
+    doc.addEventListener("keydown", function (event) {
+      if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+      var target = event.target;
+      var item = target && target.closest ? target.closest(DRAG_ITEM_SELECTOR) : null;
+      if (!item || !item.querySelector(DRAG_HANDLE_SELECTOR)) return;
+      var list = listOf(item);
+      if (!list) return;
+
+      var state = dragState();
+      if (state.busy) return;
+      event.preventDefault();
+
+      var markup = list.innerHTML;
+      var previousOrder = dragOrder(list);
+      moveItem(item, event.key === "ArrowUp" ? -1 : 1);
+      if (dragOrder(list) === previousOrder) {
+        restoreDragOrder(list, markup);
+        return;
+      }
+
+      state.busy = true;
+      postOrder(list, markup);
+      var handle = item.querySelector(DRAG_HANDLE_SELECTOR);
+      if (handle) handle.focus();
+    });
+  }
+
   /* -- boot ------------------------------------------------------------- */
   function boot() {
     initNav();
@@ -226,6 +465,7 @@
     initTheme();
     initCharts();
     initShortcuts();
+    initDragLists();
     var flash = $("#server-flash");
     if (flash) toast(flash.getAttribute("data-message"), flash.getAttribute("data-level"));
   }

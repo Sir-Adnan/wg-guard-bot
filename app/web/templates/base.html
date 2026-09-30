@@ -15,7 +15,11 @@
   <link rel="stylesheet" href="{{ panel_prefix }}/static/css/panel.css?v=1">
   {% block head_extra %}{% endblock %}
 </head>
-<body>
+{#
+  The CSRF token also rides on <body> so panel.js can send it with a background
+  POST (drag-and-drop reordering) without inventing a second secret channel.
+#}
+<body data-csrf="{{ csrf_token }}">
 {% include "partials/icons.html" %}
 
 <div class="shell">

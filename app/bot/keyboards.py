@@ -75,6 +75,26 @@ class KB:
         except Exception:  # pragma: no cover - builder must never break sending
             return None
 
+    def extend(self, other: KB) -> KB:
+        """Append another keyboard's rows to this one.
+
+        Screens that mix two layouts (a node's plans, then its sub-categories)
+        build each part with the column count it deserves and join them here.
+        Rows are copied verbatim, so the per-row limits were already enforced by
+        the builders that produced them.
+        """
+        rows = list(self.markup.inline_keyboard) + list(other.markup.inline_keyboard)
+        own_plain, other_plain = self.plain(), other.plain()
+        if own_plain is None and other_plain is None:
+            return KB(markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        plain_rows = list((own_plain or self.markup).inline_keyboard) + list(
+            (other_plain or other.markup).inline_keyboard
+        )
+        return KB(
+            markup=InlineKeyboardMarkup(inline_keyboard=rows),
+            _plain_factory=lambda: InlineKeyboardMarkup(inline_keyboard=plain_rows),
+        )
+
 
 def _split_label(label: str, fallback: str) -> tuple[str, str | None, str]:
     """Return ``(clean_text, emoji_key, unicode_fallback)`` for a raw label."""
