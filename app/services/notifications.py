@@ -28,7 +28,7 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
     TelegramUnauthorizedError,
 )
-from aiogram.types import InlineKeyboardMarkup, Message
+from aiogram.types import InlineKeyboardMarkup, LinkPreviewOptions, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -146,14 +146,15 @@ class Notifier:
 
         markup, plain_markup = self._markups(keyboard)
 
-        send_kwargs: dict[str, Any] = {
-            "chat_id": chat_id,
-            "reply_markup": markup,
-            "link_preview_options": {"is_disabled": True} if disable_preview else None,
-            **kwargs,
-        }
+        send_kwargs: dict[str, Any] = {"chat_id": chat_id, "reply_markup": markup, **kwargs}
         if media is None:
             send_kwargs["text"] = text
+            if disable_preview:
+                # ``link_preview_options`` exists on ``sendMessage`` only: passing
+                # it to ``sendPhoto``/``sendVideo``/… raises ``TypeError`` before
+                # a single byte leaves the process, so a receipt photo would never
+                # reach a reviewer.  Captions have no link preview anyway.
+                send_kwargs["link_preview_options"] = LinkPreviewOptions(is_disabled=True)
             method = self.bot.send_message
         else:
             if media.kind == "photo":

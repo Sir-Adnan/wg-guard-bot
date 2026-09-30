@@ -167,3 +167,62 @@ async def test_retry_on_transient_failure(panel_transport: httpx.ASGITransport, 
     async with client:
         node = await client.node()
     assert node is not None
+
+
+# ---------------------------------------------------------------------------
+# The additive contract: "not set" arrives as null
+# ---------------------------------------------------------------------------
+def test_a_null_collection_is_an_empty_collection() -> None:
+    """A node that serialises an empty ``tags`` as ``null`` must not fail us.
+
+    This is the shape that aborted a committed purchase in production: the
+    read-back raised, the order was marked failed, and the operator saw a raw
+    pydantic dump instead of a service.
+    """
+    from app.panels.schemas import User
+
+    user = User.model_validate({"id": "u1", "username": None, "tags": None, "status": None})
+
+    assert user.tags == []
+    assert user.username == ""
+    assert user.status == "active"
+
+
+def test_a_null_does_not_override_an_explicit_value() -> None:
+    from app.panels.schemas import User
+
+    user = User.model_validate({"id": "u1", "tags": ["vip"], "username": "dave", "enabled": False})
+
+    assert user.tags == ["vip"]
+    assert user.username == "dave"
+    assert user.enabled is False
+
+
+def test_a_required_field_is_still_required() -> None:
+    """Dropping nulls must not turn a broken payload into a silent success."""
+    import pydantic
+
+    from app.panels.schemas import User
+
+    with pytest.raises(pydantic.ValidationError):
+        User.model_validate({"id": None, "tags": []})
+
+
+def test_nested_and_envelope_nulls_are_tolerated() -> None:
+    from app.panels.schemas import ListResponse, Node, Telemetry, UserPage
+
+    assert Node.model_validate({"interfaces": None}).interfaces == []
+    assert Telemetry.model_validate({"points": None}).points == []
+    assert UserPage.model_validate({"items": None}).items == []
+    assert ListResponse.model_validate({"items": None}).items == []
+
+
+def test_an_unknown_vendor_status_is_mapped_not_rejected() -> None:
+    """A node may add a status this build has never seen; it must still read."""
+    from app.panels.providers.wgguard import normalise_status
+    from app.panels.schemas import User
+
+    user = User.model_validate({"id": "u1", "status": "brand_new_state", "start_policy": "whenever"})
+
+    assert user.status == "brand_new_state"
+    assert normalise_status(user.status) == "active"  # the canonical mapping decides

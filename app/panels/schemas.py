@@ -2,6 +2,20 @@
 
 The upstream document is an additive-only V1 contract, so every model allows
 unknown fields (``extra="allow"``) — a newer node never breaks an older bot.
+
+Two more tolerance rules follow from the same contract, and both have bitten
+this deployment in production:
+
+* **"Not set" arrives as ``null``.**  The node serialises an empty ``tags``
+  list (or a missing ``username``) as JSON ``null``, which a strict field
+  rejects — and a rejected read-back used to abort a *committed* purchase.  The
+  shared :meth:`_Model._null_means_default` validator therefore turns ``null``
+  into the field's default for every model here, once.
+* **A state name may be one this build has never heard of.**  Response fields
+  such as ``status``, ``start_policy``, ``preset`` and ``backend_mode`` are
+  plain ``str``: the canonical mapping happens in the provider
+  (``normalise_status``), not in validation.  Request payloads keep their
+  ``Literal`` types, because there *we* choose the value.
 """
 
 from __future__ import annotations
@@ -9,8 +23,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+#: Vendor statuses this build understands.  A node may introduce more, and an
+#: unknown name must never fail a read-back, so :attr:`User.status` is typed as
+#: ``str`` and mapped by ``normalise_status`` instead.
 UserStatus = Literal[
     "active",
     "disabled",
@@ -20,6 +37,9 @@ UserStatus = Literal[
     "waiting_first_connection",
 ]
 StartPolicy = Literal["immediate", "first_connection"]
+#: Vocabulary the node documents.  Response fields stay ``str`` on purpose (see
+#: the module docstring): these aliases exist so request payloads, and anyone
+#: reading the code, see the exact accepted spellings.
 BackendMode = Literal["kernel", "userspace"]
 InterfacePreset = Literal[
     "plain", "recommended", "performance", "balanced", "resilient", "suggested", "randomized", "custom"
@@ -40,6 +60,25 @@ WebhookEvent = Literal[
 
 class _Model(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_means_default(cls, data: Any) -> Any:
+        """Treat an explicit ``null`` as "the node did not set this field".
+
+        One rule for the whole additive contract: an empty ``tags`` list or a
+        missing ``username`` comes over the wire as ``null``, and every model
+        here declares a sensible default for exactly that case.  Required
+        fields keep ``null`` (and therefore still fail loudly, as they should).
+        """
+        if not isinstance(data, dict):
+            return data
+        fields = cls.model_fields
+        return {
+            key: value
+            for key, value in data.items()
+            if not (value is None and key in fields and not fields[key].is_required())
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +136,9 @@ class User(_Model):
     display_name: str | None = None
     note: str | None = None
     tags: list[str] = Field(default_factory=list)
-    status: UserStatus = "active"
+    #: Vendor status.  Unknown values are mapped by ``normalise_status`` rather
+    #: than rejected here — see the module docstring.
+    status: str = "active"
     disable_reason: str | None = None
     traffic_limit_bytes: int | None = None
     traffic_used_rx: int = 0
@@ -108,7 +149,7 @@ class User(_Model):
     device_limit: int | None = None
     plan_id: str | None = None
     interface_id: str | None = None
-    start_policy: StartPolicy = "immediate"
+    start_policy: str = "immediate"
     duration_seconds: int | None = None
     activated_at: datetime | None = None
     expires_at: datetime | None = None
@@ -188,7 +229,7 @@ class Plan(_Model):
     name: str = ""
     traffic_limit_bytes: int | None = None
     duration_seconds: int | None = None
-    start_policy: StartPolicy = "immediate"
+    start_policy: str = "immediate"
     device_limit: int | None = None
     speed_limit_down_kbps: int | None = None
     speed_limit_up_kbps: int | None = None
@@ -247,9 +288,9 @@ class Interface(_Model):
     mtu: int | None = None
     public_key: str | None = None
     obfuscation: Obfuscation | None = None
-    preset: InterfacePreset | None = None
+    preset: str | None = None
     enabled: bool = True
-    backend_mode: BackendMode | None = None
+    backend_mode: str | None = None
     endpoint_override: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

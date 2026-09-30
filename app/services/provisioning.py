@@ -34,7 +34,6 @@ from app.core.errors import (
     NotFoundError,
     PanelConflict,
     PanelError,
-    PanelNotFound,
     PanelUnavailable,
     ProvisioningFailed,
 )
@@ -57,6 +56,7 @@ from app.panels.base import PanelProvider
 from app.panels.manager import panel_manager
 from app.panels.models import PurchaseResult, RemoteUser
 from app.services.catalog import catalog
+from app.services.notifications import notifier
 from app.services.orders import order_service
 
 log = get_logger(__name__)
@@ -113,8 +113,13 @@ class ProvisioningService:
                 return ProvisionResult(order_id, ok=False, error=exc.message)
             except Exception as exc:  # pragma: no cover - defensive
                 log.exception("Unexpected provisioning failure for %s", order.order_code)
-                await order_service.mark_failed(session, order, f"{type(exc).__name__}: {exc}")
-                return ProvisionResult(order_id, ok=False, error=str(exc))
+                await notifier.report_error(exc, source="provisioning", notify=False)
+                message = (
+                    "ساخت سرویس با خطای غیرمنتظره‌ای روبه‌رو شد. مبلغ پرداختی محفوظ است؛ "
+                    "همکاران ما در حال بررسی هستند و سرویس به‌زودی ساخته می‌شود."
+                )
+                await order_service.mark_failed(session, order, message)
+                return ProvisionResult(order_id, ok=False, error=message)
 
             await order_service.mark_completed(session, order, service)
             service_id = service.id
@@ -200,9 +205,13 @@ class ProvisioningService:
         """Provision exactly once, honouring the provider's idempotency contract."""
         base = self._idem_base(order)
         username = await self._make_username(session, order, plan)
+        # The key follows the *payload*: it stays ``base`` for every retry of the
+        # same request and only rotates once the node has definitively refused
+        # it (a taken username), because a new payload must not be answered from
+        # the idempotency cache of the old one.
+        key = base
 
         for attempt in range(MAX_USERNAME_ATTEMPTS):
-            key = base if attempt == 0 else f"{base}-r{attempt}"
             order.idempotency_key = key
             await session.flush()
 
@@ -212,8 +221,9 @@ class ProvisioningService:
                 )
             except PanelConflict as exc:
                 if self._is_username_conflict(exc):
-                    log.info("Username %s taken on %s — retrying", username, panel.name)
+                    log.info("Username %s taken on %s — retrying with a new username", username, panel.name)
                     username = self._variant_username(username, attempt)
+                    key = f"{base}-r{attempt + 1}"
                     continue
                 raise ProvisioningFailed(self._explain(exc)) from exc
             except PanelUnavailable as exc:
@@ -231,8 +241,12 @@ class ProvisioningService:
             except Exception as exc:  # network layer surprises
                 recovered = await self._recover(provider, key)
                 if recovered is not None:
+                    log.info("Recovered committed purchase for order %s after an unexpected error", order.order_code)
                     return recovered
-                raise ProvisioningFailed(f"خطای غیرمنتظره در ارتباط با پنل: {exc}") from exc
+                log.exception("Unexpected error while purchasing for order %s", order.order_code)
+                raise ProvisioningFailed(
+                    "ارتباط با پنل ناگهان قطع شد و سفارش نیمه‌کاره ماند. چند دقیقه بعد دوباره تلاش کنید."
+                ) from exc
 
             if not self._username_matches(username):
                 username = self._sanitise(username)
@@ -254,11 +268,15 @@ class ProvisioningService:
         """Ask the node whether a purchase under ``key`` already committed.
 
         A provider without purchase recovery returns ``None``, which means
-        "not committed" — the caller may then retry safely.
+        "not committed" — the caller may then retry safely.  A recovery call
+        that *fails* is the same answer: the retry reuses the same idempotency
+        key, so the node replays its committed operation instead of duplicating
+        the account.
         """
         try:
             return await provider.recover_purchase(key)
-        except (PanelNotFound, PanelError):
+        except Exception as exc:
+            log.warning("Purchase recovery for key %s failed: %s", key, exc)
             return None
 
     # ------------------------------------------------------------------
@@ -417,17 +435,24 @@ class ProvisioningService:
         return days_to_seconds(order.duration_days)
 
     async def _safe_get_user(self, provider: PanelProvider, user_id: str) -> RemoteUser | None:
+        """Read the user back, tolerating *any* failure.
+
+        The account already exists on the node at this point; a read-back that
+        fails (transport hiccup, a node answering a shape this build does not
+        know yet) must not mark a committed purchase as failed — the caller
+        falls back to the values it already has.
+        """
         try:
             return await provider.get_user(user_id)
-        except PanelError as exc:
-            log.warning("Could not read back user %s: %s", user_id, exc.message)
+        except Exception as exc:
+            log.warning("Could not read back user %s (continuing with local values): %s", user_id, exc)
             return None
 
     async def _safe_subscription(self, provider: PanelProvider, user_id: str) -> str | None:
         try:
             link = await provider.subscription_link(user_id)
-        except PanelError as exc:
-            log.warning("Could not read subscription link for %s: %s", user_id, exc.message)
+        except Exception as exc:
+            log.warning("Could not read subscription link for %s: %s", user_id, exc)
             return None
         return link.path
 

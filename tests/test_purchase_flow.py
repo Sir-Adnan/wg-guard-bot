@@ -156,6 +156,101 @@ async def test_plan_is_synced_to_the_node_before_purchase(session, customer, pla
     assert plan.wg_plan_id  # created on the node and remembered
 
 
+async def test_a_broken_read_back_cannot_fail_a_committed_purchase(
+    session, customer, plan, panel_row, monkeypatch
+) -> None:
+    """The account exists on the node; reading it back is best effort.
+
+    A node that answers a shape this build cannot parse used to raise out of
+    ``_safe_get_user``, fail the order, and leak a pydantic dump to the panel —
+    while a real VPN account was already created.
+    """
+    from app.panels.providers.wgguard import WGGuardProvider
+
+    async def exploding(self, user_ref: str):
+        raise RuntimeError("the node answered a shape this build does not know")
+
+    monkeypatch.setattr(WGGuardProvider, "get_user", exploding)
+
+    order = await order_service.create(session, customer, plan, free=True)
+    await session.commit()
+
+    result = await provisioning.provision_order(order.id)
+    assert result.ok, result.error
+
+    service = await session.get(Service, result.service_id)
+    await session.refresh(order)
+    assert service is not None
+    assert service.wg_username  # falls back to the username we asked for
+    assert service.status is ServiceStatus.ACTIVE
+    assert order.status is OrderStatus.COMPLETED
+    assert order.failure_reason is None
+
+
+async def test_an_ambiguous_failure_retries_with_the_same_idempotency_key(
+    session, customer, plan, panel_row, monkeypatch
+) -> None:
+    """Rule 2 of the provisioning contract: a transport failure keeps the key.
+
+    Rotating it after a dropped connection is how a shop ends up with two VPN
+    accounts for one order.
+    """
+    from app.core.errors import PanelUnavailable
+    from app.panels.providers.wgguard import WGGuardProvider
+
+    keys: list[str] = []
+    real = WGGuardProvider.purchase
+
+    async def flaky(self, *, plan_ref, username, device_name, idempotency_key):
+        keys.append(idempotency_key)
+        if len(keys) == 1:
+            raise PanelUnavailable("connection dropped mid-flight")
+        return await real(
+            self, plan_ref=plan_ref, username=username, device_name=device_name, idempotency_key=idempotency_key
+        )
+
+    monkeypatch.setattr(WGGuardProvider, "purchase", flaky)
+
+    order = await order_service.create(session, customer, plan, free=True)
+    await session.commit()
+
+    result = await provisioning.provision_order(order.id)
+    assert result.ok, result.error
+    assert len(keys) == 2
+    assert keys[0] == keys[1]
+    assert len((await session.execute(select(Service).where(Service.user_id == customer.id))).scalars().all()) == 1
+
+
+async def test_a_taken_username_rotates_the_idempotency_key(session, customer, plan, panel_row, monkeypatch) -> None:
+    """A refused payload is the one case where a *derived* key is correct."""
+    from app.core.errors import PanelConflict
+    from app.panels.providers.wgguard import WGGuardProvider
+
+    keys: list[str] = []
+    usernames: list[str] = []
+    real = WGGuardProvider.purchase
+
+    async def conflicted(self, *, plan_ref, username, device_name, idempotency_key):
+        keys.append(idempotency_key)
+        usernames.append(username)
+        if len(keys) == 1:
+            raise PanelConflict("username already exists", panel_code="USERNAME_EXISTS")
+        return await real(
+            self, plan_ref=plan_ref, username=username, device_name=device_name, idempotency_key=idempotency_key
+        )
+
+    monkeypatch.setattr(WGGuardProvider, "purchase", conflicted)
+
+    order = await order_service.create(session, customer, plan, free=True)
+    await session.commit()
+
+    result = await provisioning.provision_order(order.id)
+    assert result.ok, result.error
+    assert keys[0] != keys[1]
+    assert keys[1].startswith(keys[0])
+    assert usernames[0] != usernames[1]
+
+
 async def test_service_sync_and_rotation(session, customer, plan, panel_row) -> None:
     order = await order_service.create(session, customer, plan, free=True)
     await session.commit()
